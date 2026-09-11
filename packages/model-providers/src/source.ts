@@ -22,7 +22,9 @@ import type { AgentKind, Catalog, Provider, ProviderPreset } from "./types.js";
 
 /** 公共模型目录 API 路径。发布版由 model-access-server 匿名提供完整 Catalog。 */
 export const CATALOG_API_PATH =
-  "/api/model-catalog/catalog?registrySchemaVersion=4";
+  "/api/model-catalog/catalog?registrySchemaVersion=4&catalogCapabilities=registry-v4-media";
+/** Explicit contract capability; a bare V4 query also identifies older strict readers. */
+export const CATALOG_CAPABILITY = "registry-v4-media";
 /** 旧客户端目录的 OSS 相对路径。迁移期作为公共 API 失败后的兼容回退。 */
 export const CATALOG_CFG_PATH = "/cfg/providers.json";
 
@@ -125,6 +127,7 @@ export function resolveCatalogUrl(cfg: CatalogSourceConfig): string | null {
       const url = new URL(explicit);
       if (url.pathname.endsWith("/api/model-catalog/catalog")) {
         url.searchParams.set("registrySchemaVersion", "4");
+        url.searchParams.set("catalogCapabilities", CATALOG_CAPABILITY);
         return url.toString();
       }
     } catch {
@@ -135,6 +138,21 @@ export function resolveCatalogUrl(cfg: CatalogSourceConfig): string | null {
   if (cfg.baseUrl && cfg.baseUrl.trim()) {
     return trimTrailingSlashes(cfg.baseUrl.trim()) + CATALOG_API_PATH;
   }
+  return null;
+}
+
+/** One-way cache compatibility on upgrade. Old scopes are read, never rewritten. */
+async function readCatalogCache(io: CatalogIO, scope: string): Promise<string | null> {
+  if (!io.readCache) return null;
+  const current = await io.readCache(scope);
+  if (current !== null) return current;
+  try {
+    const url = new URL(scope);
+    if (url.pathname.endsWith('/api/model-catalog/catalog') && url.searchParams.get('catalogCapabilities') === CATALOG_CAPABILITY) {
+      url.searchParams.delete('catalogCapabilities');
+      return await io.readCache(url.toString());
+    }
+  } catch { /* Non-URL scopes retain their existing behavior. */ }
   return null;
 }
 
@@ -653,7 +671,7 @@ export async function loadCatalogWithSource(
           const remoteRegistryUpdatedAt = registryUpdatedAt(parsed);
           if (io.readCache) {
             try {
-              const cachedText = await io.readCache(remoteUrl);
+              const cachedText = await readCatalogCache(io, remoteUrl);
               if (cachedText !== null) {
                 const cached = parseRemoteCatalog(
                   cachedText,
@@ -759,7 +777,7 @@ export async function loadCatalogWithSource(
       }
       if (io.readCache) {
         try {
-          const cached = await io.readCache(remoteUrl);
+          const cached = await readCatalogCache(io, remoteUrl);
           if (cached !== null) {
             const parsed = parseRemoteCatalog(cached, allowLegacyModelMeta);
             log(io, "info", "loaded last-known-good catalog snapshot", {

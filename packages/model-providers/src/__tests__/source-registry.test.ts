@@ -106,6 +106,12 @@ function runtimeCatalog(): Catalog {
 }
 
 describe("resolveCatalogUrl", () => {
+  it("negotiates only the existing API and leaves explicit files and OSS URLs intact", () => {
+    expect(resolveCatalogUrl({ url: "https://api.example.test/api/model-catalog/catalog?extra=yes&registrySchemaVersion=2" }))
+      .toBe("https://api.example.test/api/model-catalog/catalog?extra=yes&registrySchemaVersion=4&catalogCapabilities=registry-v4-media");
+    expect(resolveCatalogUrl({ url: "https://cdn.example.test/cfg/providers.json?version=1" }))
+      .toBe("https://cdn.example.test/cfg/providers.json?version=1");
+  });
   it("prefers explicit url", () => {
     expect(
       resolveCatalogUrl({ url: "https://x/y.json", baseUrl: "https://b" }),
@@ -115,7 +121,7 @@ describe("resolveCatalogUrl", () => {
     expect(
       resolveCatalogUrl({ baseUrl: "https://model-access.example.com/" }),
     ).toBe(
-      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=4",
+      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=4&catalogCapabilities=registry-v4-media",
     );
   });
   it("builds the migration OSS fallback URL", () => {
@@ -127,6 +133,30 @@ describe("resolveCatalogUrl", () => {
   });
   it("returns null when neither given", () => {
     expect(resolveCatalogUrl({})).toBeNull();
+  });
+});
+
+describe("catalog capability cache migration", () => {
+  const baseUrl = "https://catalog.example.test";
+  const modern = baseUrl + "/api/model-catalog/catalog?registrySchemaVersion=4&catalogCapabilities=registry-v4-media";
+  const legacy = baseUrl + "/api/model-catalog/catalog?registrySchemaVersion=4";
+  it("reads the old scope after upgrade while offline, without writing or deleting it", async () => {
+    const readCache = vi.fn(async (scope: string) => scope === legacy ? JSON.stringify(MINIMAL) : null);
+    const writeCache = vi.fn();
+    const result = await loadCatalogWithSource({ baseUrl }, {
+      fetchText: async () => { throw new Error("offline"); }, readCache, writeCache,
+    });
+    expect(result.source).toBe("cache");
+    expect(readCache.mock.calls.map(call => call[0])).toEqual([modern, legacy]);
+    expect(writeCache).not.toHaveBeenCalled();
+  });
+  it("prefers the capable scope and writes successful responses only to that scope", async () => {
+    const readCache = vi.fn(async (scope: string) => scope === modern ? JSON.stringify(MINIMAL) : null);
+    await loadCatalogWithSource({ baseUrl }, { fetchText: async () => { throw new Error("offline"); }, readCache });
+    expect(readCache).toHaveBeenCalledTimes(1);
+    const writeCache = vi.fn(async () => undefined);
+    await loadCatalogWithSource({ baseUrl }, { fetchText: async () => JSON.stringify(MINIMAL), readCache: async () => null, writeCache });
+    expect(writeCache).toHaveBeenCalledWith(modern, expect.any(String));
   });
 });
 
@@ -1042,7 +1072,7 @@ describe("loadCatalog", () => {
     );
     expect(fetchText).toHaveBeenNthCalledWith(
       1,
-      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=4",
+      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=4&catalogCapabilities=registry-v4-media",
       15_000,
     );
     expect(fetchText).toHaveBeenNthCalledWith(
@@ -1102,7 +1132,7 @@ describe("loadCatalog", () => {
     );
     expect(fetchText).toHaveBeenNthCalledWith(
       1,
-      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=4",
+      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=4&catalogCapabilities=registry-v4-media",
       15_000,
     );
     expect(fetchText).toHaveBeenNthCalledWith(
@@ -1160,7 +1190,7 @@ describe("loadCatalog", () => {
     );
     expect(fetchText).toHaveBeenNthCalledWith(
       1,
-      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=4",
+      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=4&catalogCapabilities=registry-v4-media",
       15_000,
     );
     expect(fetchText).toHaveBeenNthCalledWith(
@@ -1189,7 +1219,7 @@ describe("loadCatalog", () => {
     );
     expect(fetchText).toHaveBeenCalledTimes(1);
     expect(fetchText).toHaveBeenCalledWith(
-      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=4",
+      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=4&catalogCapabilities=registry-v4-media",
       15_000,
     );
     expect(cat.version).toBe(BUNDLED_CATALOG.version);
