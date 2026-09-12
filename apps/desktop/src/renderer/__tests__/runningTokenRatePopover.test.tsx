@@ -55,6 +55,7 @@ it('keeps pinned history while its trigger falls back to tokens or elapsed-only'
     history: {
       startedAt: 1,
       baseline: null,
+      lastReport: null,
       peak: 100,
       latestRate: 100,
       samples: [{ durationMs: 1000, outputTokens: 100, rate: 100 }],
@@ -96,6 +97,7 @@ it('pins the card on click and dismisses with Escape, returning focus to the spe
       history={{
         startedAt: 1,
         baseline: { durationMs: 10000, outputTokens: 1000 },
+        lastReport: { durationMs: 10000, outputTokens: 1000 },
         peak: 120,
         latestRate: 100,
         samples: [
@@ -128,7 +130,14 @@ it.each(['Escape', 'close'] as const)(
         rateText="100 tok/s"
         averageRate="110"
         outputTokens={1000}
-        history={{ startedAt: 1, baseline: null, peak: 100, latestRate: null, samples: [] }}
+        history={{
+          startedAt: 1,
+          baseline: null,
+          lastReport: null,
+          peak: 100,
+          latestRate: null,
+          samples: [],
+        }}
       />,
     );
     const trigger = screen.getByRole('button');
@@ -200,6 +209,9 @@ it('keeps the pinned card across turns while awaiting a fresh rate', async () =>
   expect(screen.getByRole('dialog').textContent).toContain('—');
   const previousLine = chart.querySelectorAll('path')[2].getAttribute('d');
   rerender(<Harness startedAt={2} outputTokens={20} generationDurationMs={500} />);
+  expect(chart.querySelectorAll('path')[2].getAttribute('d')).toBe(previousLine);
+  expect(screen.getByRole('dialog').textContent).toContain('—');
+  rerender(<Harness startedAt={2} outputTokens={40} generationDurationMs={1000} />);
   expect(screen.getByRole('dialog').textContent).toContain('40');
   const nextLine = screen.getByRole('img').querySelectorAll('path')[2].getAttribute('d');
   expect(nextLine).not.toBe(previousLine);
@@ -217,7 +229,14 @@ it('keeps a clicked panel open through outside clicks, focus changes and repeate
         rateText="100 tok/s"
         averageRate="110"
         outputTokens={1000}
-        history={{ startedAt: 1, baseline: null, peak: 0, latestRate: null, samples: [] }}
+        history={{
+          startedAt: 1,
+          baseline: null,
+          lastReport: null,
+          peak: 0,
+          latestRate: null,
+          samples: [],
+        }}
         onPinnedChange={onPinnedChange}
       />
     </>,
@@ -294,7 +313,7 @@ it('restores speed history from the per-session cache after remounting', () => {
   second.unmount();
 
   // 另一个会话没有历史：从零等待，不串会话。
-  const third = render(
+  render(
     <Harness sessionKey="cache-b" startedAt={1} outputTokens={0} generationDurationMs={0} />,
   );
   fireEvent.click(screen.getByRole('button'));
@@ -342,7 +361,7 @@ it('does not fabricate a rate when restoring an idle session whose next turn fin
   first.unmount();
 
   // 切离期间会话在后台跑完新一轮；切回时已空闲，store 里是新轮的累计计数。
-  const second = render(
+  render(
     <Harness sessionKey="idle-a" startedAt={null} outputTokens={500} generationDurationMs={10000} />,
   );
   fireEvent.click(screen.getByRole('button'));
