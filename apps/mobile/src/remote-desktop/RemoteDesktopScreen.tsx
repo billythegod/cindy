@@ -85,6 +85,7 @@ import { useInputModePreference } from "./useInputModePreference";
 import { useAutoUnlockSettings } from "./useAutoUnlockSettings";
 import { supportsAutoUnlock } from "./autoUnlockSupport";
 import { useLockOnExitPreference } from "./useLockOnExitPreference";
+import { useRemoteDesktopSafety } from "./useRemoteDesktopSafety";
 import { useVideoSettingsPreference } from "./useVideoSettingsPreference";
 import { PermissionGuide } from "./PermissionGuide";
 import { RemoteDesktopBackButton } from "./RemoteDesktopBackButton";
@@ -259,6 +260,13 @@ export default function RemoteDesktopScreen() {
   const [error, setError] = useState<string | null>(null);
   const takeoverPromptOpen = useRef(false);
   const takeoverAction = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (error === "hostDisconnected")
+      Alert.alert(
+        t("remoteDesktop.disconnected"),
+        t("remoteDesktop.hostDisconnected"),
+      );
+  }, [error, t]);
   const [frameReady, setFrameReady] = useState(false);
   const [controlReady, setControlReady] = useState(false);
   const connectionPending = !error && (!lease || !frameReady || !controlReady);
@@ -401,6 +409,15 @@ export default function RemoteDesktopScreen() {
         },
       }),
     [request, send, t],
+  );
+  const safety = useRemoteDesktopSafety(
+    deviceId,
+    lease,
+    !connectionPending && !error,
+    focused,
+    caps,
+    request,
+    exitLock.current,
   );
   const transferClipboard = async (action: "copy" | "paste") => {
     const current = active.current;
@@ -552,7 +569,9 @@ export default function RemoteDesktopScreen() {
       console.debug("[remote-desktop] connection failed", {
         code: code ?? "UNKNOWN",
       });
-      const blocked = remoteDesktopFailureKey(code ?? message);
+      const blocked = /DESKTOP_STOPPED/.test(code ?? message)
+        ? "hostDisconnected"
+        : remoteDesktopFailureKey(code ?? message);
       stop(!blocked);
       setError(blocked);
       if (
@@ -584,6 +603,7 @@ export default function RemoteDesktopScreen() {
           ],
         );
       }
+      if (blocked === "hostDisconnected") setOperations(false);
       if (blocked) recovery.current.enabled = false;
       else {
         recovery.current.at = Date.now() + recovery.current.delay;
@@ -1896,6 +1916,7 @@ export default function RemoteDesktopScreen() {
                   onPage={setControlPage}
                   security={{
                     ...security,
+                    ...safety,
                     hostPlatform: caps?.platform,
                     lockOnExit,
                     lockOnExitAvailable:
