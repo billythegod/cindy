@@ -1129,3 +1129,13 @@ it('isolates an unresponsive peer with an overloaded mutation replay from anothe
   expect(handler).toHaveBeenCalledTimes(1);
   expect(client.closeLink).not.toHaveBeenCalled();
 });
+
+it('lets a controller fall back to individual reads when a detail batch exceeds the frame budget', () => {
+  const client = mkClient();
+  client.sendInvokeResult.mockImplementationOnce(() => { throw tooLarge(); });
+  expect(__testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'batch',
+    { ok: true, result: [{ id: 'large' }] }, 'local-db:sessions:get-many')).toBe(true);
+  expect(client.sendInvokeResult).toHaveBeenLastCalledWith('ctrl-1', 'batch', {
+    ok: false, error: { code: 'IPC_ERROR', message: '[PRECONDITION_FAILED] REMOTE_SESSION_BATCH_TOO_LARGE' },
+  });
+});

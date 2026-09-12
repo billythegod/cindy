@@ -63,6 +63,8 @@ vi.mock('../../../worktree/recycleEvents', () => ({ notifyWorktreeRecycleOpportu
 
 import { registerSessionIpc } from '../sessions';
 import { setSessionRouteLockImplementation } from '../../sessionRouteLock';
+import { getDbClient } from '../../client/current';
+import { selectSessionsByIds, selectSessionWithCount, selectSessionListRows, flattenSessionReadRow } from '../../sessionQueries';
 
 type ExpectedIdentity = {
   workingDir: string | null;
@@ -302,5 +304,47 @@ describe('local-db:sessions:restore-if-archived', () => {
     await expect(restore()).rejects.toThrow(/Bot task lifecycle/);
     expect(readStatus()).toBe('archived');
     expect(h.tapWindowBroadcast).not.toHaveBeenCalled();
+  });
+});
+
+describe('bounded reconciliation read', () => {
+  it('shares exact database projection across single, batch and list reads without retaining stale results', async () => {
+    const db = getDbClient().drizzle;
+    const select = vi.spyOn(db, 'select');
+    const batch = await selectSessionsByIds(db, ['target', 'missing', 'target']);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(batch).toHaveLength(1);
+    expect(await selectSessionWithCount(db, 'target')).toEqual(batch[0]);
+    expect((await selectSessionListRows(db, undefined, 20)).map(flattenSessionReadRow)).toEqual(batch);
+    h.sqlite!.prepare("UPDATE sessions SET title = 'fresh title' WHERE id = 'target'").run();
+    expect((await selectSessionsByIds(db, ['target']))[0].title).toBe('fresh title');
+    select.mockRestore();
+  });
+
+  it('does not query for empty input and bounds larger internal reads', async () => {
+    const db = getDbClient().drizzle;
+    const select = vi.spyOn(db, 'select');
+    expect(await selectSessionsByIds(db, [])).toEqual([]);
+    expect(select).not.toHaveBeenCalled();
+    expect(await selectSessionsByIds(db, Array.from({ length: 600 }, (_, i) => `missing-${i}`))).toEqual([]);
+    expect(select).toHaveBeenCalledTimes(3);
+    select.mockRestore();
+  });
+
+  it('returns the same projection as GET, deduplicates ids and omits missing rows', async () => {
+    const { runDeviceLinkInvokeContext } = await import('../../../device-link/invoke-context.js');
+    const get = h.handlers.get('local-db:sessions:get')!;
+    const batch = h.handlers.get('local-db:sessions:get-many')!;
+    const expected = await get({}, 'target');
+    const result = await runDeviceLinkInvokeContext({ controllerDeviceId: 'phone', channel: 'local-db:sessions:get-many' },
+      () => batch({}, ['target', 'missing', 'target']));
+    expect(result).toEqual([expected]);
+  });
+  it('rejects untrusted local callers and oversized remote batches before querying', async () => {
+    const { runDeviceLinkInvokeContext } = await import('../../../device-link/invoke-context.js');
+    const batch = h.handlers.get('local-db:sessions:get-many')!;
+    await expect(batch({}, ['target'])).rejects.toThrow();
+    await expect(runDeviceLinkInvokeContext({ controllerDeviceId: 'phone', channel: 'local-db:sessions:get-many' },
+      () => batch({}, Array.from({ length: 33 }, () => 'target')))).rejects.toThrow('INVALID_PARAMS');
   });
 });
