@@ -218,7 +218,7 @@ describe('sessions:list messageCount source', () => {
       /WHEN \$\{sessions\.listMessageCount\} IS NOT NULL THEN \$\{sessions\.listMessageCount\}/,
     );
     expect(source).toMatch(
-      /SELECT count\(\*\) FROM messages m WHERE m\.session_id = \$\{sessions\.id\}/,
+      /SELECT count\(\*\) FROM messages m WHERE m\.session_id = \$\{OUTER_SESSION_ID_SQL\}/,
     );
     expect(source).toMatch(/ORDER BY m\.created_at DESC, m\.rowid DESC LIMIT 1/);
 

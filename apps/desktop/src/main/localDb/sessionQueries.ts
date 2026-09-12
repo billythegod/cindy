@@ -6,6 +6,13 @@ import { LIST_PREVIEW_EXTRACT_SQL, LATEST_VISIBLE_PREVIEW_FILTER_SQL } from './s
 import { sessionToCamel, type SessionRowWithCount } from './mapper';
 import { projectSessionContextWindow, type ContextWindowSession } from '../../shared/sessionContextWindow';
 
+// Drizzle strips table names from Column chunks in single-table SELECT projections,
+// including nested SQL. An unqualified "id" inside the messages subquery resolves
+// to messages.id, not the outer session: wrong results and a full messages scan.
+// Identifier fragments retain the outer scope in both single-table and joined reads.
+const OUTER_SESSION_ID_SQL = sql`${sql.identifier('sessions')}.${sql.identifier('id')}`;
+const OUTER_SESSION_CLEARED_AT_SQL = sql`${sql.identifier('sessions')}.${sql.identifier('cleared_at')}`;
+
 /**
  * list / get / update 共用的 messageCount：标量子查询。口径是该会话的全部 messages 行数，
  * 不过滤 role / rewind_at / cleared_at（口径要动就得连手机端卡片上的「N 条消息」一起想，
@@ -29,7 +36,7 @@ const SESSION_MESSAGE_COUNT_SQL = sql<number>`(
   CASE
     WHEN ${sessions.listMessageCount} IS NOT NULL THEN ${sessions.listMessageCount}
     ELSE (
-      SELECT count(*) FROM messages m WHERE m.session_id = ${sessions.id}
+      SELECT count(*) FROM messages m WHERE m.session_id = ${OUTER_SESSION_ID_SQL}
     )
   END
 )`.as('message_count');
@@ -44,9 +51,9 @@ const LATEST_MSG_EXTRACT_SQL = sql<string | null>`(
     WHEN ${sessions.listPreview} IS NOT NULL THEN NULL
     ELSE (
       SELECT ${sql.raw(LIST_PREVIEW_EXTRACT_SQL)} FROM messages m
-      WHERE m.session_id = ${sessions.id}
+      WHERE m.session_id = ${OUTER_SESSION_ID_SQL}
         AND ${sql.raw(LATEST_VISIBLE_PREVIEW_FILTER_SQL)}
-        AND (${sessions.clearedAt} IS NULL OR m.created_at > ${sessions.clearedAt})
+        AND (${OUTER_SESSION_CLEARED_AT_SQL} IS NULL OR m.created_at > ${OUTER_SESSION_CLEARED_AT_SQL})
       ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1
     )
   END
@@ -56,9 +63,9 @@ const LATEST_MSG_ROLE_SQL = sql<string | null>`(
     WHEN ${sessions.listPreviewRole} IS NOT NULL THEN ${sessions.listPreviewRole}
     ELSE (
       SELECT m.role FROM messages m
-      WHERE m.session_id = ${sessions.id}
+      WHERE m.session_id = ${OUTER_SESSION_ID_SQL}
         AND ${sql.raw(LATEST_VISIBLE_PREVIEW_FILTER_SQL)}
-        AND (${sessions.clearedAt} IS NULL OR m.created_at > ${sessions.clearedAt})
+        AND (${OUTER_SESSION_CLEARED_AT_SQL} IS NULL OR m.created_at > ${OUTER_SESSION_CLEARED_AT_SQL})
       ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1
     )
   END
