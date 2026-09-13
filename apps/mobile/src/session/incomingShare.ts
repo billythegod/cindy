@@ -57,27 +57,56 @@ function acknowledgeBatch(batch: IncomingShareBatch): void {
   }
 }
 
-function isFirstShareLogin(owner: MobileAuthOwnerGeneration): boolean {
-  const current = getMobileAuthOwner();
-  return !owner.accountKey && !!current.accountKey
-    && current.generation === owner.generation + 1;
+function canRetainShareOwner(
+  owner: MobileAuthOwnerGeneration,
+  current: MobileAuthOwnerGeneration,
+  restored?: MobileAuthOwnerGeneration,
+): boolean {
+  if (owner.switching || current.switching) return false;
+  return (owner.accountKey === current.accountKey && owner.generation === current.generation)
+    || (!owner.accountKey && !!current.accountKey && current.generation === owner.generation + 1)
+    || (!!restored && owner.accountKey === restored.accountKey && owner.generation === restored.generation);
 }
 
-function updateIncomingShareOwner(): void {
-  const owner = getMobileAuthOwner();
+/** Only unclaimed shares wait for a reversible switch; other auth listeners still cancel immediately. */
+function observeIncomingShareOwner(
+  listener: (previous: MobileAuthOwnerGeneration, current: MobileAuthOwnerGeneration,
+    restored?: MobileAuthOwnerGeneration) => void,
+  previous = getMobileAuthOwner(),
+): () => void {
+  let switching = !!previous.switching;
+  const changed = () => {
+    const current = getMobileAuthOwner();
+    if (current.switching) { switching = true; return; }
+    // An observer installed mid-switch has no known source account: fail closed.
+    const restored = switching && !previous.switching && previous.accountKey === current.accountKey
+      ? previous : undefined;
+    listener(previous, current, restored);
+    previous = current;
+    switching = false;
+  };
+  changed();
+  return subscribeMobileAuthOwner(changed);
+}
+
+function updateIncomingShareOwner(
+  _previous: MobileAuthOwnerGeneration,
+  owner: MobileAuthOwnerGeneration,
+  restored?: MobileAuthOwnerGeneration,
+): void {
   const discarded = pendingBatches.filter((batch) => {
-    // A share received while logged out may follow the first login only.
-    if (isFirstShareLogin(batch.owner)) {
-      batch.owner = owner;
-    }
-    return !isMobileAuthOwnerCurrent(batch.owner);
+    return !canRetainShareOwner(batch.owner, owner, restored);
   });
-  if (!discarded.length) return;
   for (const batch of discarded) {
     pendingBatches.splice(pendingBatches.indexOf(batch), 1);
     acknowledgeBatch(batch);
     void deleteIncomingSharedFiles(batch.payloads.map((payload) => payload.contentUri ?? payload.value))
       .catch(() => undefined);
+  }
+  // New snapshots also wake the focused consumer after a rollback/first login.
+  for (let index = 0; index < pendingBatches.length; index += 1) {
+    const batch = pendingBatches[index]!;
+    if (batch.owner !== owner) pendingBatches[index] = { ...batch, owner };
   }
   currentBatch = pendingBatches[0] ?? null;
   emit();
@@ -93,19 +122,15 @@ export function watchIncomingShareAccount(
   native: IncomingShareNative,
   previous = getMobileAuthOwner(),
 ): () => void {
-  const changed = () => {
-    const current = getMobileAuthOwner();
-    if (!isMobileAuthOwnerCurrent(previous) && !isFirstShareLogin(previous)) {
+  return observeIncomingShareOwner((previous, current, restored) => {
+    if (!canRetainShareOwner(previous, current, restored)) {
       try {
         const raw = native.getSharedPayloads();
         native.clearSharedPayloads(raw);
         void deleteIncomingSharedFiles(raw.map((payload) => payload.value)).catch(() => undefined);
       } catch { /* Sharing is unavailable in older native binaries. */ }
     }
-    previous = current;
-  };
-  changed();
-  return subscribeMobileAuthOwner(changed);
+  }, previous);
 }
 
 function emit(): void {
@@ -142,11 +167,11 @@ export function stageIncomingShareBatch(
   payloads: readonly ResolvedSharePayload[],
   acknowledge: () => void,
 ): IncomingShareBatch | null {
-  if (payloads.length === 0) return null;
+  if (payloads.length === 0 || getMobileAuthOwner().switching) return null;
   const id = incomingShareBatchId(payloads);
   const existing = pendingBatches.find((batch) => batch.id === id);
   if (existing) return existing;
-  unsubscribeOwner ??= subscribeMobileAuthOwner(updateIncomingShareOwner);
+  unsubscribeOwner ??= observeIncomingShareOwner(updateIncomingShareOwner);
   const batch = { id, payloads: [...payloads], acknowledge, owner: getMobileAuthOwner() };
   pendingBatches.push(batch);
   currentBatch = pendingBatches[0]!;
@@ -155,7 +180,7 @@ export function stageIncomingShareBatch(
 }
 
 export function consumeIncomingShareBatch(id: string): boolean {
-  if (!currentBatch || currentBatch.id !== id
+  if (getMobileAuthOwner().switching || !currentBatch || currentBatch.id !== id
     || !currentBatch.owner.accountKey || !isMobileAuthOwnerCurrent(currentBatch.owner)) return false;
   const consumed = currentBatch;
   pendingBatches.shift();
@@ -167,6 +192,7 @@ export function consumeIncomingShareBatch(id: string): boolean {
 
 /** Raw local files need no asynchronous resolver; the uploader stats their size. */
 export function receiveIncomingShare(native: IncomingShareNative): void {
+  if (getMobileAuthOwner().switching) return;
   const raw = native.getSharedPayloads();
   if (raw.length === 0) return;
   const payloads = raw.map((payload): ResolvedSharePayload => ({

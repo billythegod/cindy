@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ResolvedSharePayload } from 'expo-sharing';
-import { getMobileAuthOwner, setMobileAuthOwner, __testing as authOwnerTesting } from '@/auth/authOwnerGeneration';
+import { getMobileAuthOwner, invalidateMobileAuthOwnerForSwitch, isMobileAuthOwnerCurrent, setMobileAuthOwner, __testing as authOwnerTesting } from '@/auth/authOwnerGeneration';
 
 import {
   __resetIncomingShareForTest,
@@ -247,6 +247,83 @@ describe('incoming Share Extension payloads', () => {
     setMobileAuthOwner('account-b');
     const native = { getSharedPayloads: () => [], clearSharedPayloads: vi.fn() };
     const stop = watchIncomingShareAccount(native, initialOwner);
+    expect(native.clearSharedPayloads).toHaveBeenCalledOnce();
+    stop();
+  });
+
+  it.each(['rollback', 'commit', 'realm', 'logout', 'logout-relogin'])(
+    'settles unclaimed JS and native shares after switch %s without weakening cancellation',
+    async (outcome) => {
+      const before = getMobileAuthOwner();
+      let raw = [{ value: 'file:///shared/report.pdf', shareType: 'file' as const }];
+      const native = { getSharedPayloads: () => raw, clearSharedPayloads: vi.fn(() => { raw = []; }) };
+      const stop = watchIncomingShareAccount(native);
+      const acknowledge = vi.fn();
+      const batch = stageIncomingShareBatch([payload({})], acknowledge)!;
+      invalidateMobileAuthOwnerForSwitch();
+      expect(getMobileAuthOwner()).toMatchObject({ accountId: '', accountKey: '', switching: true });
+      expect(isMobileAuthOwnerCurrent(before)).toBe(false);
+      expect(consumeIncomingShareBatch(batch.id)).toBe(false);
+      expect(acknowledge).not.toHaveBeenCalled();
+      expect(native.clearSharedPayloads).not.toHaveBeenCalled();
+      await Promise.resolve();
+      expect(deleteAsync).not.toHaveBeenCalled();
+
+      if (outcome === 'rollback') setMobileAuthOwner('account-a');
+      else if (outcome === 'commit') setMobileAuthOwner('account-b');
+      else if (outcome === 'realm') setMobileAuthOwner('account-a', 'cn');
+      else {
+        setMobileAuthOwner(null);
+        if (outcome === 'logout-relogin') setMobileAuthOwner('account-a');
+      }
+      expect(getMobileAuthOwner().switching).toBeUndefined();
+      // Restoring a share must not revalidate any old auth-scoped operation.
+      expect(isMobileAuthOwnerCurrent(before)).toBe(false);
+      if (outcome === 'rollback') {
+        expect(native.clearSharedPayloads).not.toHaveBeenCalled();
+        expect(acknowledge).not.toHaveBeenCalled();
+        expect(consumeIncomingShareBatch(batch.id)).toBe(true);
+        expect(consumeIncomingShareBatch(batch.id)).toBe(false);
+        expect(acknowledge).toHaveBeenCalledOnce();
+        expect(deleteAsync).not.toHaveBeenCalled();
+      } else {
+        expect(raw).toEqual([]);
+        expect(consumeIncomingShareBatch(batch.id)).toBe(false);
+        expect(acknowledge).toHaveBeenCalledOnce();
+        await vi.waitFor(() => expect(deleteAsync).toHaveBeenCalled());
+      }
+      stop();
+    },
+  );
+
+  it.each(['rollback', 'commit'])('leaves shares arriving during a switch in native storage until %s', (outcome) => {
+    let raw = [{ value: 'file:///shared/report.pdf', shareType: 'file' as const }];
+    const native = { getSharedPayloads: () => raw, clearSharedPayloads: vi.fn(() => { raw = []; }) };
+    const stop = watchIncomingShareAccount(native);
+    invalidateMobileAuthOwnerForSwitch();
+    expect(stageIncomingShareBatch([payload({})], vi.fn())).toBeNull();
+    receiveIncomingShare(native);
+    expect(native.clearSharedPayloads).not.toHaveBeenCalled();
+    setMobileAuthOwner(outcome === 'rollback' ? 'account-a' : 'account-b');
+    if (outcome === 'rollback') {
+      receiveIncomingShare(native);
+      const batch = stageIncomingShareBatch([payload({})], vi.fn())!;
+      expect(batch.owner.accountId).toBe('account-a');
+      // receive uses raw metadata, so consume that batch first.
+      const rawId = incomingShareBatchId([payload({ mimeType: undefined, contentMimeType: null, contentSize: null })]);
+      expect(consumeIncomingShareBatch(rawId)).toBe(true);
+    }
+    expect(raw).toEqual([]);
+    stop();
+  });
+
+  it.each(['account-a', 'account-b'])('fails closed when the native watcher first mounts mid-switch, settling to %s', (account) => {
+    invalidateMobileAuthOwnerForSwitch();
+    const initial = getMobileAuthOwner();
+    const native = { getSharedPayloads: () => [], clearSharedPayloads: vi.fn() };
+    const stop = watchIncomingShareAccount(native, initial);
+    expect(native.clearSharedPayloads).not.toHaveBeenCalled();
+    setMobileAuthOwner(account);
     expect(native.clearSharedPayloads).toHaveBeenCalledOnce();
     stop();
   });

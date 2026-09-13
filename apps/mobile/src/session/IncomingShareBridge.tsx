@@ -3,7 +3,7 @@ import { AppState, Linking, Platform } from 'react-native';
 import { useRouter, useSegments } from 'expo-router';
 
 import { useAuth } from '@/auth/AuthContext';
-import { getMobileAuthOwner } from '@/auth/authOwnerGeneration';
+import { getMobileAuthOwner, subscribeMobileAuthOwner } from '@/auth/authOwnerGeneration';
 import {
   receiveIncomingShare,
   useIncomingShareBatch,
@@ -47,6 +47,9 @@ export function IncomingShareBridge() {
       subscriptions = [
         AppState.addEventListener('change', (state) => { if (state === 'active') refresh(); }),
         Linking.addEventListener('url', refresh),
+        { remove: subscribeMobileAuthOwner(() => {
+          if (!getMobileAuthOwner().switching && AppState.currentState === 'active') refresh();
+        }) },
       ];
       refresh();
     }).catch(() => undefined);
