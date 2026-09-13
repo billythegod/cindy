@@ -183,6 +183,7 @@ import { SheetModal } from '@/session/SheetModal';
 import { SheetGrabber, SheetSurface } from '@/session/SheetSurface';
 import { NativePermissionSheet } from '@/session/NativePermissionSheet';
 import { MobilePermissionPickerList } from '@/session/MobilePermissionPickerList';
+import { OrcaWorkerStatusCard } from '@/session/OrcaWorkerStatusCard';
 import { computeContextSheetSnapHeights, type ContextSheetSnap } from '@/session/contextSheetModel';
 import { permissionAccentColor, permissionPresentation } from '@/session/permissionPresentation';
 import {
@@ -9033,6 +9034,9 @@ export default function SessionScreen() {
                 recovery={contentRecoveryState}
                 variant="inline"
               />
+            ) : null}
+            {currentSession?.orcaRole === 'lead' ? (
+              <OrcaWorkerStatusCard leadSessionId={sessionId} maker={maker} />
             ) : null}
           </View>
         </View>
