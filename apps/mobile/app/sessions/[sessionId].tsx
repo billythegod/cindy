@@ -2811,6 +2811,15 @@ export default function SessionScreen() {
       guardedPush({ pathname: '/sessions/new', params: { deviceId, deviceName } });
     });
   }, [deviceId, deviceName, guardedPush, queueDrawerNavigation]);
+  // Lead 的 Worker 卡点行进入该 Worker 会话;只读口径由 collaboration.ts 按 orcaRole
+  // 自行判定,这里不额外传状态。沿用当前页的 deviceId/deviceName:Worker 与 Lead 同在
+  // 这台被控设备上。
+  const openWorkerSession = useCallback((workerSessionId: string) => {
+    guardedPush({
+      pathname: '/sessions/[sessionId]',
+      params: { sessionId: workerSessionId, deviceId, deviceName },
+    });
+  }, [deviceId, deviceName, guardedPush]);
   const handleComposerInputPressIn = useCallback(() => {
     if (voiceRecordingActiveRef.current || voiceState === 'listening') {
       finishVoiceRecordingRef.current?.();
@@ -9036,7 +9045,11 @@ export default function SessionScreen() {
               />
             ) : null}
             {currentSession?.orcaRole === 'lead' ? (
-              <OrcaWorkerStatusCard leadSessionId={sessionId} maker={maker} />
+              <OrcaWorkerStatusCard
+                leadSessionId={sessionId}
+                maker={maker}
+                onOpenWorker={openWorkerSession}
+              />
             ) : null}
           </View>
         </View>
