@@ -104,6 +104,7 @@ describe('sidebar display settings menu', () => {
       '任务信息',
     ]);
     for (const row of rows) expect(row.querySelector('svg')).not.toBeNull();
+    expect(rows[3].querySelector('.lucide-list-checks')).not.toBeNull();
     expect(rows[0].textContent).toContain('项目、对话、设备');
     expect(rows[2].textContent).toContain('跟随任务');
     const submenu = await openSubmenu(/^任务排序/);
@@ -116,6 +117,12 @@ describe('sidebar display settings menu', () => {
     expect(filter.setSortBy).toHaveBeenCalledWith('created');
     expect(screen.getAllByRole('menu')).toHaveLength(2);
     expect(within(submenu).getByRole('menuitem', { name: '创建时间' })).not.toBeNull();
+    const statusMenu = await openSubmenu(/^任务状态/);
+    expect(
+      within(statusMenu)
+        .getByRole('menuitem', { name: '活跃' })
+        .querySelector('.lucide-circle-dot'),
+    ).not.toBeNull();
   });
 
   it('keeps status independent from content filters and exposes a selectable Pi harness', async () => {

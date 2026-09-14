@@ -9570,7 +9570,7 @@
         "all": "All"
       },
       "filterSortBy": {
-        "created": "Created Time",
+        "created": "Creation Time",
         "activity": "Recent Activity",
         "recency": "By time",
         "manual": "Manual",
@@ -9849,7 +9849,7 @@
       "sortTaskBy": {
         "priority": "Priority",
         "activity": "Recent Activity",
-        "created": "Created Time"
+        "created": "Creation Time"
       }
     },
     "rename": {
