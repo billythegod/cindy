@@ -114,8 +114,8 @@ vi.mock('@/state/modelVisibilityPrefs', () => ({
   useModelVisibilityVersion: () => 0,
 }));
 
-vi.mock('@/components/settings/CustomProviderDialog', () => ({
-  CustomProviderDialog: (props: unknown) => {
+vi.mock('@/components/settings/ProviderConnectionDialog', () => ({
+  ProviderConnectionDialog: (props: unknown) => {
     customDialogSpy(props);
     return React.createElement('div', { 'data-testid': 'custom-provider-dialog-stub' });
   },
@@ -191,6 +191,7 @@ beforeEach(() => {
       listProviders: vi.fn(async () => ({ providers: providersState.providers, dataOwnerId: 'owner', ownerGeneration: 1 })),
       setProviderPresentation: vi.fn(async () => ({ ok: true })),
       providerOAuthLogout: vi.fn(async () => ({ ok: true })),
+      onProviderOAuthProgress: vi.fn(() => () => undefined),
       auth: { logout: codexAuthActions.logout },
       scanLocalCli: vi.fn(async () => ({ detections: [] })),
       localModelStatus: vi.fn(async () => ({ kind: 'ready' })),
@@ -297,6 +298,52 @@ describe('ProvidersSection — 深链定位', () => {
     expect(customDialogSpy).not.toHaveBeenCalled();
   });
 
+  it('renames an account when its sidebar row is double-clicked', async () => {
+    providersState.providers = [
+      makeProvider('openai-work', {
+        name: 'Work account',
+        source: 'user',
+        agents: ['codex'],
+        connected: true,
+        auth: { method: 'oauth', native: 'codex' },
+        models: { codex: [] },
+      }),
+    ];
+    renderAt('?tab=providers');
+
+    fireEvent.doubleClick(await screen.findByRole('button', { name: /Work account/ }));
+
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'settings.providers.pill.rename' }),
+    ));
+    await waitFor(() => expect(window.electronAPI.maker.setProviderPresentation).toHaveBeenCalledWith(
+      {
+        providerId: 'openai-work',
+        action: 'rename',
+        name: 'Work account',
+        dataOwnerId: 'owner',
+        ownerGeneration: 1,
+      },
+    ));
+  });
+
+  it('does not offer double-click rename for Cindy AI', async () => {
+    providersState.providers = [makeProvider('xd', {
+      name: 'Cindy AI',
+      auth: { method: 'managed' } as ProviderView['auth'],
+      agents: ['claude-code', 'codex'],
+      models: { 'claude-code': [], codex: [] },
+    })];
+    renderAt('?tab=providers');
+
+    fireEvent.doubleClick(
+      await screen.findByRole('button', { name: 'settings.providers.xd.title' }),
+    );
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(window.electronAPI.maker.setProviderPresentation).not.toHaveBeenCalled();
+  });
+
   it('API key presence is configured rather than authenticated', async () => {
     providersState.providers = [
       makeProvider('api-work', {
@@ -345,10 +392,14 @@ describe('ProvidersSection — 深链定位', () => {
 
   it('a cancelled login cannot clear a newer login on the same account', async () => {
     const completions: ((result: { ok: boolean }) => void)[] = [];
-    const login = vi.fn(() => new Promise<{ ok: boolean }>((resolve) => completions.push(resolve)));
+    const login = vi.fn((_id: string, _options?: { ownerId?: string }) => new Promise<{ ok: boolean }>((resolve) => completions.push(resolve)));
+    let progress!: Parameters<typeof window.electronAPI.maker.onProviderOAuthProgress>[0];
+    const openExternal = vi.fn(async () => ({ success: true }));
+    window.electronAPI.openExternal = openExternal;
     Object.assign(window.electronAPI.maker, {
       providerOAuthLogin: login,
       providerOAuthCancel: vi.fn(async () => ({ ok: true })),
+      onProviderOAuthProgress: vi.fn((callback) => { progress = callback; return () => undefined; }),
     });
     providersState.providers = [
       makeProvider('openai-work', {
@@ -365,7 +416,12 @@ describe('ProvidersSection — 深链定位', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'settings.providers.button.cancel' }));
     fireEvent.click(screen.getByRole('button', { name: 'settings.providers.button.authorize' }));
+    const url = 'https://auth.openai.com/authorize?fake=1';
+    act(() => progress({ providerId: 'openai-work', ownerId: login.mock.calls[1][1]!.ownerId!, phase: 'browser-url', url }));
     await act(async () => completions[0]({ ok: false }));
+    expect(openExternal).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'settings.providers.genericOAuth.reopenLoginPage' }));
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith(url);
     expect(screen.getByRole('button', { name: 'settings.providers.button.cancel' })).toBeTruthy();
     expect(toastError).not.toHaveBeenCalled();
     expect(login).toHaveBeenCalledTimes(2);
@@ -374,6 +430,7 @@ describe('ProvidersSection — 深链定位', () => {
       expect.objectContaining({ ownerId: expect.any(String) }),
     ]);
     await act(async () => completions[1]({ ok: false }));
+    expect(screen.queryByRole('button', { name: 'settings.providers.genericOAuth.reopenLoginPage' })).toBeNull();
     expect(
       screen.getByRole('button', { name: 'settings.providers.button.authorize' }),
     ).toBeTruthy();
@@ -648,7 +705,7 @@ describe('ProvidersSection — 深链定位', () => {
     },
   );
 
-  it('自定义供应商深链会打开编辑表单并定位模型上下文窗口', async () => {
+  it('自定义供应商深链定位统一模型列表，不打开连接编辑器', async () => {
     providersState.providers = [
       makeProvider('custom-provider', {
         name: 'Custom Provider',
@@ -671,14 +728,8 @@ describe('ProvidersSection — 深链定位', () => {
     ];
     renderAt('?tab=providers&connect=custom-provider&model=custom-model&agent=codex');
 
-    expect(await screen.findByTestId('custom-provider-dialog-stub')).not.toBeNull();
-    expect(customDialogSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        focusModelId: 'custom-model',
-        focusAgent: 'codex',
-        initial: expect.objectContaining({ id: 'custom-provider' }),
-      }),
-    );
+    await waitFor(() => expect(document.querySelector('[data-deep-link-target="true"]')).not.toBeNull());
+    expect(customDialogSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.getByTestId('search').textContent).toBe('?tab=providers'));
   });
 

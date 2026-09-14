@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 4,
-  "updatedAt": "2026-09-11T04:00:00.000Z",
+  "schemaVersion": 5,
+  "updatedAt": "2026-09-11T12:06:39.127Z",
   "models": [
     {
       "id": "openai/gpt-5.6-sol",
@@ -9,7 +9,14 @@
       "sortOrder": 18,
       "perAgent": {
         "codex": {
-          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
           "contextWindow": 272000
         },
         "claude-code": {
@@ -20,78 +27,24 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.6-sol",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 5,
-              "outputPerMtok": 30,
-              "cacheReadPerMtok": 0.5,
-              "cacheWritePerMtok": 6.25,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-07-09",
-              "effectiveUntil": "2026-08-21",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 10,
-              "outputPerMtok": 45,
-              "cacheReadPerMtok": 1,
-              "cacheWritePerMtok": 12.5,
-              "minInputTokens": 272001,
-              "effectiveFrom": "2026-07-09",
-              "effectiveUntil": "2026-08-21",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 4,
-              "outputPerMtok": 20,
-              "cacheReadPerMtok": 0.4,
-              "cacheWritePerMtok": 5,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-08-21",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-                "verifiedAt": "2026-08-28"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 8,
-              "outputPerMtok": 30,
-              "cacheReadPerMtok": 0.8,
-              "cacheWritePerMtok": 10,
-              "minInputTokens": 272001,
-              "effectiveFrom": "2026-08-21",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-                "verifiedAt": "2026-08-28"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "description": "GPT-5.6-Sol for coding tasks",
             "group": "gpt",
             "contextWindow": 1050000,
-            "efforts": ["low", "medium", "high", "xhigh", "max"],
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
             "supportsFastMode": true
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -106,79 +59,23 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.6-sol",
-          "agents": ["claude-code"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 5,
-              "outputPerMtok": 30,
-              "cacheReadPerMtok": 0.5,
-              "cacheWritePerMtok": 6.25,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-07-09",
-              "effectiveUntil": "2026-08-21",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 10,
-              "outputPerMtok": 45,
-              "cacheReadPerMtok": 1,
-              "cacheWritePerMtok": 12.5,
-              "minInputTokens": 272001,
-              "effectiveFrom": "2026-07-09",
-              "effectiveUntil": "2026-08-21",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 4,
-              "outputPerMtok": 20,
-              "cacheReadPerMtok": 0.4,
-              "cacheWritePerMtok": 5,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-08-21",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-                "verifiedAt": "2026-08-28"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 8,
-              "outputPerMtok": 30,
-              "cacheReadPerMtok": 0.8,
-              "cacheWritePerMtok": 10,
-              "minInputTokens": 272001,
-              "effectiveFrom": "2026-08-21",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-                "verifiedAt": "2026-08-28"
-              }
-            }
+          "agents": [
+            "claude-code"
           ],
           "defaults": {
             "name": "GPT-5.6-Sol (1M · Higher usage)",
             "description": "Explicit 1M context opt-in; inputs above 272K use higher long-context rates for the entire request",
             "group": "gpt",
             "contextWindow": 1000000,
-            "efforts": ["low", "medium", "high", "xhigh"],
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
             "supportsFastMode": true
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -196,19 +93,35 @@
         },
         "codex": {
           "contextWindow": 272000,
-          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
         }
       },
       "routes": [
         {
           "providerId": "xd",
           "modelId": "gpt-5.6-sol",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "description": "GPT-5.6-Sol for coding tasks",
             "group": "gpt",
             "contextWindow": 1050000,
-            "efforts": ["low", "medium", "high", "xhigh", "max"],
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
             "supportsFastMode": true
           }
         }
@@ -223,7 +136,14 @@
       "sortOrder": 19,
       "perAgent": {
         "codex": {
-          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
           "contextWindow": 272000
         },
         "claude-code": {
@@ -234,76 +154,16 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.6-terra",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2.5,
-              "outputPerMtok": 15,
-              "cacheReadPerMtok": 0.25,
-              "cacheWritePerMtok": 3.125,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-07-09",
-              "effectiveUntil": "2026-07-30",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
-                "verifiedAt": "2026-08-07"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 5,
-              "outputPerMtok": 22.5,
-              "cacheReadPerMtok": 0.5,
-              "cacheWritePerMtok": 6.25,
-              "minInputTokens": 272001,
-              "effectiveFrom": "2026-07-09",
-              "effectiveUntil": "2026-07-30",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
-                "verifiedAt": "2026-08-07"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2,
-              "outputPerMtok": 12,
-              "cacheReadPerMtok": 0.2,
-              "cacheWritePerMtok": 2.5,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-07-30",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
-                "verifiedAt": "2026-08-07"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 4,
-              "outputPerMtok": 18,
-              "cacheReadPerMtok": 0.4,
-              "cacheWritePerMtok": 5,
-              "minInputTokens": 272001,
-              "effectiveFrom": "2026-07-30",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
-                "verifiedAt": "2026-08-07"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "group": "gpt",
             "contextWindow": 1050000,
             "supportsFastMode": true
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -320,14 +180,24 @@
         },
         "codex": {
           "contextWindow": 272000,
-          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
         }
       },
       "routes": [
         {
           "providerId": "xd",
           "modelId": "gpt-5.6-terra",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "group": "gpt",
             "contextWindow": 1050000,
@@ -347,78 +217,24 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.6-luna",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1,
-              "outputPerMtok": 6,
-              "cacheReadPerMtok": 0.1,
-              "cacheWritePerMtok": 1.25,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-07-09",
-              "effectiveUntil": "2026-07-30",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
-                "verifiedAt": "2026-08-07"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2,
-              "outputPerMtok": 9,
-              "cacheReadPerMtok": 0.2,
-              "cacheWritePerMtok": 2.5,
-              "minInputTokens": 272001,
-              "effectiveFrom": "2026-07-09",
-              "effectiveUntil": "2026-07-30",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
-                "verifiedAt": "2026-08-07"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 0.2,
-              "outputPerMtok": 1.2,
-              "cacheReadPerMtok": 0.02,
-              "cacheWritePerMtok": 0.25,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-07-30",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
-                "verifiedAt": "2026-08-07"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 0.4,
-              "outputPerMtok": 1.8,
-              "cacheReadPerMtok": 0.04,
-              "cacheWritePerMtok": 0.5,
-              "minInputTokens": 272001,
-              "effectiveFrom": "2026-07-30",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
-                "verifiedAt": "2026-08-07"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "group": "gpt",
             "contextWindow": 1050000,
             "maxOutputTokens": 128000,
-            "efforts": ["low", "medium", "high", "xhigh", "max"],
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
             "defaultEffort": "medium"
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -446,12 +262,21 @@
         {
           "providerId": "xd",
           "modelId": "gpt-5.6-luna",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "group": "gpt",
             "contextWindow": 1050000,
             "maxOutputTokens": 128000,
-            "efforts": ["low", "medium", "high", "xhigh", "max"],
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
             "defaultEffort": "medium"
           }
         }
@@ -474,43 +299,17 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.5",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 5,
-              "outputPerMtok": 30,
-              "cacheReadPerMtok": 0.5,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-04-23",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.5",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 10,
-              "outputPerMtok": 45,
-              "cacheReadPerMtok": 1,
-              "minInputTokens": 272001,
-              "effectiveFrom": "2026-04-23",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.5",
-                "verifiedAt": "2026-08-01"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "description": "OpenAI Codex (GPT-5.5) for coding tasks",
             "group": "gpt",
             "contextWindow": 272000,
             "supportsFastMode": true
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -534,7 +333,10 @@
         {
           "providerId": "xd",
           "modelId": "gpt-5.5",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "description": "GPT-5.5 for coding tasks",
             "group": "gpt",
@@ -561,43 +363,17 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.4",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2.5,
-              "outputPerMtok": 15,
-              "cacheReadPerMtok": 0.25,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-03-05",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.4",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 5,
-              "outputPerMtok": 22.5,
-              "cacheReadPerMtok": 0.5,
-              "minInputTokens": 272001,
-              "effectiveFrom": "2026-03-05",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.4",
-                "verifiedAt": "2026-08-01"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "description": "OpenAI Codex (GPT-5.4) for coding tasks",
             "group": "gpt",
             "contextWindow": 272000,
             "supportsFastMode": true
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -621,7 +397,10 @@
         {
           "providerId": "xd",
           "modelId": "gpt-5.4",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "description": "GPT-5.4 for coding tasks",
             "group": "gpt",
@@ -651,28 +430,17 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.4-mini",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 0.75,
-              "outputPerMtok": 4.5,
-              "cacheReadPerMtok": 0.075,
-              "effectiveFrom": "2026-03-17",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
-                "verifiedAt": "2026-08-01"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "description": "Faster, lighter Codex variant — speed-optimized for quick edits",
             "group": "gpt",
             "contextWindow": 272000,
             "supportsFastMode": true
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -696,7 +464,10 @@
         {
           "providerId": "xd",
           "modelId": "gpt-5.4-mini",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "description": "GPT-5.4-Mini for coding tasks",
             "group": "gpt",
@@ -718,7 +489,11 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.4-pro",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -734,7 +509,11 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.5-pro",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -750,7 +529,11 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.6-cyber",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -762,7 +545,14 @@
       "status": "active",
       "perAgent": {
         "codex": {
-          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
           "contextWindow": 272000
         },
         "claude-code": {
@@ -773,104 +563,14 @@
         {
           "providerId": "openai",
           "modelId": "gpt-6-astra",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 10,
-              "outputPerMtok": 50,
-              "cacheReadPerMtok": 1,
-              "cacheWritePerMtok": 12.5,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-09-04",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
-                "verifiedAt": "2026-09-05"
-              },
-              "effectiveUntil": "2026-09-07"
-            },
-            {
-              "currency": "USD",
-              "variant": "fast",
-              "inputPerMtok": 20,
-              "outputPerMtok": 100,
-              "cacheReadPerMtok": 2,
-              "cacheWritePerMtok": 25,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-09-04",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
-                "verifiedAt": "2026-09-05"
-              },
-              "effectiveUntil": "2026-09-07"
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 10,
-              "outputPerMtok": 50,
-              "cacheReadPerMtok": 1,
-              "cacheWritePerMtok": 12.5,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-09-07",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
-                "verifiedAt": "2026-09-07"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 20,
-              "outputPerMtok": 75,
-              "cacheReadPerMtok": 2,
-              "cacheWritePerMtok": 25,
-              "effectiveFrom": "2026-09-07",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
-                "verifiedAt": "2026-09-07"
-              },
-              "minInputTokens": 272001
-            },
-            {
-              "currency": "USD",
-              "variant": "fast",
-              "inputPerMtok": 20,
-              "outputPerMtok": 100,
-              "cacheReadPerMtok": 2,
-              "cacheWritePerMtok": 25,
-              "maxInputTokens": 272001,
-              "effectiveFrom": "2026-09-07",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
-                "verifiedAt": "2026-09-07"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "fast",
-              "inputPerMtok": 40,
-              "outputPerMtok": 150,
-              "cacheReadPerMtok": 4,
-              "cacheWritePerMtok": 50,
-              "effectiveFrom": "2026-09-07",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
-                "verifiedAt": "2026-09-07"
-              },
-              "minInputTokens": 272001
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": true
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -884,7 +584,11 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-fable-5-1",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "anthropic-messages",
@@ -899,32 +603,21 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-fable-5",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 10,
-              "outputPerMtok": 50,
-              "cacheReadPerMtok": 1,
-              "cacheWritePerMtok": 12.5,
-              "cacheWrite1hPerMtok": 20,
-              "effectiveFrom": "2026-06-09",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-07-31"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "claude-fable-5",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -941,24 +634,11 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-mythos-5",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 10,
-              "outputPerMtok": 50,
-              "cacheReadPerMtok": 1,
-              "cacheWritePerMtok": 12.5,
-              "cacheWrite1hPerMtok": 20,
-              "effectiveFrom": "2026-06-09",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-07-31"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "anthropic-messages",
@@ -973,47 +653,21 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-opus-5",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 5,
-              "outputPerMtok": 25,
-              "cacheReadPerMtok": 0.5,
-              "cacheWritePerMtok": 6.25,
-              "cacheWrite1hPerMtok": 10,
-              "effectiveFrom": "2026-07-24",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-07-31"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "fast",
-              "inputPerMtok": 10,
-              "outputPerMtok": 50,
-              "cacheReadPerMtok": 1,
-              "cacheWritePerMtok": 12.5,
-              "cacheWrite1hPerMtok": 20,
-              "effectiveFrom": "2026-07-24",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-08-02"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "claude-opus-5",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -1031,47 +685,21 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-opus-4-8",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 5,
-              "outputPerMtok": 25,
-              "cacheReadPerMtok": 0.5,
-              "cacheWritePerMtok": 6.25,
-              "cacheWrite1hPerMtok": 10,
-              "effectiveFrom": "2026-05-28",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-07-31"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "fast",
-              "inputPerMtok": 10,
-              "outputPerMtok": 50,
-              "cacheReadPerMtok": 1,
-              "cacheWritePerMtok": 12.5,
-              "cacheWrite1hPerMtok": 20,
-              "effectiveFrom": "2026-05-28",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-08-02"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "claude-opus-4-8",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -1090,32 +718,21 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-opus-4-7",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 5,
-              "outputPerMtok": 25,
-              "cacheReadPerMtok": 0.5,
-              "cacheWritePerMtok": 6.25,
-              "cacheWrite1hPerMtok": 10,
-              "effectiveFrom": "2026-04-16",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-07-31"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "claude-opus-4-7",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -1134,32 +751,21 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-opus-4-6",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 5,
-              "outputPerMtok": 25,
-              "cacheReadPerMtok": 0.5,
-              "cacheWritePerMtok": 6.25,
-              "cacheWrite1hPerMtok": 10,
-              "effectiveFrom": "2026-02-05",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-07-31"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "claude-opus-4-6",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -1178,32 +784,21 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-opus-4-5",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 5,
-              "outputPerMtok": 25,
-              "cacheReadPerMtok": 0.5,
-              "cacheWritePerMtok": 6.25,
-              "cacheWrite1hPerMtok": 10,
-              "effectiveFrom": "2025-11-01",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-07-31"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "claude-opus-4-5",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -1221,32 +816,21 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-sonnet-5",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2,
-              "outputPerMtok": 10,
-              "cacheReadPerMtok": 0.2,
-              "cacheWritePerMtok": 2.5,
-              "cacheWrite1hPerMtok": 4,
-              "effectiveFrom": "2026-06-30",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-08-12"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "claude-sonnet-5",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -1265,32 +849,21 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-sonnet-4-6",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 3,
-              "outputPerMtok": 15,
-              "cacheReadPerMtok": 0.3,
-              "cacheWritePerMtok": 3.75,
-              "cacheWrite1hPerMtok": 6,
-              "effectiveFrom": "2026-02-17",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-07-31"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "claude-sonnet-4-6",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -1309,32 +882,21 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-sonnet-4-5",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 3,
-              "outputPerMtok": 15,
-              "cacheReadPerMtok": 0.3,
-              "cacheWritePerMtok": 3.75,
-              "cacheWrite1hPerMtok": 6,
-              "effectiveFrom": "2025-09-29",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-07-31"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "claude-sonnet-4-5",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -1353,32 +915,21 @@
         {
           "providerId": "anthropic",
           "modelId": "claude-haiku-4-5",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1,
-              "outputPerMtok": 5,
-              "cacheReadPerMtok": 0.1,
-              "cacheWritePerMtok": 1.25,
-              "cacheWrite1hPerMtok": 2,
-              "effectiveFrom": "2025-10-01",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-                "verifiedAt": "2026-07-31"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "claude-haiku-4-5",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -1396,37 +947,11 @@
         {
           "providerId": "xai",
           "modelId": "xai/grok-4.6",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2,
-              "outputPerMtok": 6,
-              "cacheReadPerMtok": 0.5,
-              "maxInputTokens": 200000,
-              "effectiveFrom": "2026-08-12",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-13"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 4,
-              "outputPerMtok": 12,
-              "cacheReadPerMtok": 1,
-              "minInputTokens": 200000,
-              "effectiveFrom": "2026-08-12",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-13"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -1441,37 +966,11 @@
         {
           "providerId": "xai",
           "modelId": "xai/grok-4.5",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2,
-              "outputPerMtok": 6,
-              "cacheReadPerMtok": 0.3,
-              "maxInputTokens": 200000,
-              "effectiveFrom": "2026-07-08",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 4,
-              "outputPerMtok": 12,
-              "cacheReadPerMtok": 0.6,
-              "minInputTokens": 200000,
-              "effectiveFrom": "2026-07-08",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -1484,44 +983,22 @@
       "sortOrder": 51,
       "perAgent": {
         "codex": {
-          "efforts": ["low", "medium", "high"]
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
         }
       },
       "routes": [
         {
           "providerId": "xai",
           "modelId": "xai/grok-4.3",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1.25,
-              "outputPerMtok": 2.5,
-              "cacheReadPerMtok": 0.2,
-              "maxInputTokens": 200000,
-              "effectiveFrom": "2026-05-15",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2.5,
-              "outputPerMtok": 5,
-              "cacheReadPerMtok": 0.4,
-              "minInputTokens": 200000,
-              "effectiveFrom": "2026-05-15",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -1537,37 +1014,11 @@
         {
           "providerId": "xai",
           "modelId": "xai/grok-build-0.1",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1,
-              "outputPerMtok": 2,
-              "cacheReadPerMtok": 0.2,
-              "maxInputTokens": 200000,
-              "effectiveFrom": "2026-05-15",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2,
-              "outputPerMtok": 4,
-              "cacheReadPerMtok": 0.4,
-              "minInputTokens": 200000,
-              "effectiveFrom": "2026-05-15",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -1583,37 +1034,11 @@
         {
           "providerId": "xai",
           "modelId": "xai/grok-4.20-multi-agent-0309",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1.25,
-              "outputPerMtok": 2.5,
-              "cacheReadPerMtok": 0.2,
-              "maxInputTokens": 200000,
-              "effectiveFrom": "2026-03-09",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2.5,
-              "outputPerMtok": 5,
-              "cacheReadPerMtok": 0.4,
-              "minInputTokens": 200000,
-              "effectiveFrom": "2026-03-09",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -1629,37 +1054,11 @@
         {
           "providerId": "xai",
           "modelId": "xai/grok-4.20-0309-reasoning",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1.25,
-              "outputPerMtok": 2.5,
-              "cacheReadPerMtok": 0.2,
-              "maxInputTokens": 200000,
-              "effectiveFrom": "2026-03-09",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2.5,
-              "outputPerMtok": 5,
-              "cacheReadPerMtok": 0.4,
-              "minInputTokens": 200000,
-              "effectiveFrom": "2026-03-09",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -1675,37 +1074,11 @@
         {
           "providerId": "xai",
           "modelId": "xai/grok-4.20-0309-non-reasoning",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1.25,
-              "outputPerMtok": 2.5,
-              "cacheReadPerMtok": 0.2,
-              "maxInputTokens": 200000,
-              "effectiveFrom": "2026-03-09",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2.5,
-              "outputPerMtok": 5,
-              "cacheReadPerMtok": 0.4,
-              "minInputTokens": 200000,
-              "effectiveFrom": "2026-03-09",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -1721,37 +1094,11 @@
         {
           "providerId": "xai",
           "modelId": "xai/grok-4.20",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1.25,
-              "outputPerMtok": 2.5,
-              "cacheReadPerMtok": 0.2,
-              "maxInputTokens": 200000,
-              "effectiveFrom": "2026-04-07",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2.5,
-              "outputPerMtok": 5,
-              "cacheReadPerMtok": 0.4,
-              "minInputTokens": 200000,
-              "effectiveFrom": "2026-04-07",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-08-01"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -1767,37 +1114,11 @@
         {
           "providerId": "xai",
           "modelId": "xai/grok-code-fast",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1,
-              "outputPerMtok": 2,
-              "cacheReadPerMtok": 0.2,
-              "maxInputTokens": 200000,
-              "effectiveFrom": "2026-05-15",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/migration/may-15-retirement",
-                "verifiedAt": "2026-08-01"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 2,
-              "outputPerMtok": 4,
-              "cacheReadPerMtok": 0.4,
-              "minInputTokens": 200000,
-              "effectiveFrom": "2026-05-15",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/migration/may-15-retirement",
-                "verifiedAt": "2026-08-01"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-responses",
@@ -1811,7 +1132,10 @@
         {
           "providerId": "xd",
           "modelId": "codex/gpt-5.6-luna",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "group": "gpt-budget"
           }
@@ -1830,19 +1154,35 @@
         },
         "codex": {
           "contextWindow": 272000,
-          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
         }
       },
       "routes": [
         {
           "providerId": "xd",
           "modelId": "codex/gpt-5.6-sol",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "description": "GPT-5.6-Sol for coding tasks",
             "group": "gpt-budget",
             "contextWindow": 372000,
-            "efforts": ["low", "medium", "high", "xhigh", "max"],
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
             "supportsFastMode": true
           }
         }
@@ -1860,14 +1200,24 @@
         },
         "codex": {
           "contextWindow": 272000,
-          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
         }
       },
       "routes": [
         {
           "providerId": "xd",
           "modelId": "codex/gpt-5.6-terra",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "group": "gpt-budget",
             "contextWindow": 372000,
@@ -1892,7 +1242,10 @@
         {
           "providerId": "xd",
           "modelId": "codex/gpt-5.5",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "description": "GPT-5.5 for coding tasks",
             "group": "gpt-budget",
@@ -1918,7 +1271,10 @@
         {
           "providerId": "xd",
           "modelId": "codex/gpt-5.4",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "description": "GPT-5.4 for coding tasks",
             "group": "gpt-budget",
@@ -1939,41 +1295,13 @@
         {
           "providerId": "xd",
           "modelId": "gemini-3.7-flash",
-          "agents": ["claude-code"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 0.75,
-              "outputPerMtok": 3.75,
-              "cacheReadPerMtok": 0.075,
-              "cacheWrite1hPerMtok": 0.5,
-              "effectiveFrom": "2026-08-13",
-              "effectiveUntil": "2027-01-01",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://ai.google.dev/gemini-api/docs/pricing",
-                "verifiedAt": "2026-08-13"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1.5,
-              "outputPerMtok": 7.5,
-              "cacheReadPerMtok": 0.15,
-              "cacheWrite1hPerMtok": 1,
-              "effectiveFrom": "2027-01-01",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://ai.google.dev/gemini-api/docs/pricing",
-                "verifiedAt": "2026-08-13"
-              }
-            }
+          "agents": [
+            "claude-code"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "google-generative-ai",
@@ -1988,41 +1316,13 @@
         {
           "providerId": "xd",
           "modelId": "gemini-3.6-flash",
-          "agents": ["claude-code"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 0.75,
-              "outputPerMtok": 3.75,
-              "cacheReadPerMtok": 0.075,
-              "cacheWrite1hPerMtok": 0.5,
-              "effectiveFrom": "2026-07-21",
-              "effectiveUntil": "2027-01-01",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://ai.google.dev/gemini-api/docs/pricing",
-                "verifiedAt": "2026-08-13"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1.5,
-              "outputPerMtok": 7.5,
-              "cacheReadPerMtok": 0.15,
-              "cacheWrite1hPerMtok": 1,
-              "effectiveFrom": "2027-01-01",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://ai.google.dev/gemini-api/docs/pricing",
-                "verifiedAt": "2026-08-13"
-              }
-            }
+          "agents": [
+            "claude-code"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "google-generative-ai",
@@ -2036,10 +1336,13 @@
         {
           "providerId": "xd",
           "modelId": "gemini-3.5-flash",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "google-generative-ai",
@@ -2054,7 +1357,9 @@
         {
           "providerId": "xd",
           "modelId": "gemini-3.1-pro-preview",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -2072,7 +1377,9 @@
         {
           "providerId": "xd",
           "modelId": "gemini-3-flash-preview",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -2090,10 +1397,13 @@
         {
           "providerId": "xd",
           "modelId": "gemini-3.5-flash-lite",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "google-generative-ai",
@@ -2108,10 +1418,13 @@
         {
           "providerId": "xd",
           "modelId": "gemini-3.1-flash-lite",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "google-generative-ai",
@@ -2122,14 +1435,21 @@
       "name": "Seed 2.1 Pro",
       "perAgent": {
         "claude-code": {
-          "efforts": ["low", "medium", "high"]
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
         }
       },
       "routes": [
         {
           "providerId": "xd",
           "modelId": "bytedance-seed/seed-2.1-pro",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -2145,7 +1465,10 @@
         {
           "providerId": "xd",
           "modelId": "qwen/qwen3.8-max",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -2162,7 +1485,10 @@
         {
           "providerId": "xd",
           "modelId": "qwen/qwen3.8-max-preview",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -2179,7 +1505,10 @@
         {
           "providerId": "xd",
           "modelId": "qwen/qwen3.7-max",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "supportsFastMode": false
           }
@@ -2198,12 +1527,20 @@
         {
           "providerId": "moonshot-kimi-cn",
           "modelId": "kimi-k2.7-code",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "moonshot-kimi-global",
           "modelId": "kimi-k2.7-code",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2219,12 +1556,20 @@
         {
           "providerId": "moonshot-kimi-cn",
           "modelId": "kimi-k2.7-code-highspeed",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "moonshot-kimi-global",
           "modelId": "kimi-k2.7-code-highspeed",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2239,10 +1584,13 @@
         {
           "providerId": "xd",
           "modelId": "moonshotai/kimi-k2.6",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2257,10 +1605,13 @@
         {
           "providerId": "xd",
           "modelId": "z-ai/glm-5.1",
-          "agents": ["claude-code"],
+          "agents": [
+            "claude-code"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2272,17 +1623,24 @@
       "sortOrder": 43,
       "perAgent": {
         "claude-code": {
-          "efforts": ["high", "max"]
+          "efforts": [
+            "high",
+            "max"
+          ]
         }
       },
       "routes": [
         {
           "providerId": "xd",
           "modelId": "z-ai/glm-5.2",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2297,10 +1655,14 @@
         {
           "providerId": "xd",
           "modelId": "z-ai/glm-5.3",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2314,12 +1676,19 @@
         {
           "providerId": "zhipu-glm-cn",
           "modelId": "glm-5.3-flash",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         },
         {
           "providerId": "zhipu-glm-global",
           "modelId": "glm-5.3-flash",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2333,7 +1702,20 @@
         {
           "providerId": "xd",
           "modelId": "z-ai/glm-5.3-flash",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "defaults": {
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "defaultEffort": "medium"
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2347,62 +1729,26 @@
         {
           "providerId": "xd",
           "modelId": "deepseek/deepseek-v4-pro",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1.32,
-              "outputPerMtok": 3.96,
-              "cacheReadPerMtok": 0.044,
-              "effectiveFrom": "2026-08-16",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://api-docs.deepseek.com/quick_start/pricing",
-                "verifiedAt": "2026-08-16"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "deepseek",
           "modelId": "deepseek-v4-pro",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 0.435,
-              "outputPerMtok": 0.87,
-              "cacheReadPerMtok": 0.003625,
-              "effectiveFrom": "2026-07-31",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://api-docs.deepseek.com/quick_start/pricing",
-                "verifiedAt": "2026-08-05"
-              },
-              "effectiveUntil": "2026-08-16"
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 1.32,
-              "outputPerMtok": 3.96,
-              "cacheReadPerMtok": 0.044,
-              "effectiveFrom": "2026-08-16",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://api-docs.deepseek.com/quick_start/pricing",
-                "verifiedAt": "2026-08-16"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2416,62 +1762,26 @@
         {
           "providerId": "xd",
           "modelId": "deepseek/deepseek-v4-flash",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 0.44,
-              "outputPerMtok": 1.32,
-              "cacheReadPerMtok": 0.014,
-              "effectiveFrom": "2026-08-16",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://api-docs.deepseek.com/quick_start/pricing",
-                "verifiedAt": "2026-08-16"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "deepseek",
           "modelId": "deepseek-v4-flash",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 0.14,
-              "outputPerMtok": 0.28,
-              "cacheReadPerMtok": 0.0028,
-              "effectiveFrom": "2026-07-31",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://api-docs.deepseek.com/quick_start/pricing",
-                "verifiedAt": "2026-08-05"
-              },
-              "effectiveUntil": "2026-08-16"
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 0.44,
-              "outputPerMtok": 1.32,
-              "cacheReadPerMtok": 0.014,
-              "effectiveFrom": "2026-08-16",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://api-docs.deepseek.com/quick_start/pricing",
-                "verifiedAt": "2026-08-16"
-              }
-            }
+          "agents": [
+            "claude-code",
+            "codex"
           ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2487,27 +1797,19 @@
         {
           "providerId": "openai",
           "modelId": "gpt-5.4-nano",
-          "agents": ["claude-code", "codex"],
-          "referencePrices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 0.2,
-              "outputPerMtok": 1.25,
-              "cacheReadPerMtok": 0.02,
-              "effectiveFrom": "2026-03-17",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://developers.openai.com/api/docs/models/gpt-5.4-nano",
-                "verifiedAt": "2026-08-01"
-              }
-            }
-          ]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "gpt-5.4-nano",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-responses",
@@ -2522,7 +1824,10 @@
         {
           "providerId": "xd",
           "modelId": "codex/gpt-5.4-mini",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "group": "gpt-budget",
             "contextWindow": 272000
@@ -2542,12 +1847,18 @@
         {
           "providerId": "minimax-cn",
           "modelId": "MiniMax-M3",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         },
         {
           "providerId": "minimax-global",
           "modelId": "MiniMax-M3",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "anthropic-messages",
@@ -2563,12 +1874,20 @@
         {
           "providerId": "minimax-cn",
           "modelId": "MiniMax-M2.7",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "minimax-global",
           "modelId": "MiniMax-M2.7",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "anthropic-messages",
@@ -2584,12 +1903,20 @@
         {
           "providerId": "minimax-cn",
           "modelId": "MiniMax-M2.7-highspeed",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "minimax-global",
           "modelId": "MiniMax-M2.7-highspeed",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "anthropic-messages",
@@ -2605,12 +1932,20 @@
         {
           "providerId": "minimax-cn",
           "modelId": "MiniMax-M2.5",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "minimax-global",
           "modelId": "MiniMax-M2.5",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "anthropic-messages",
@@ -2626,12 +1961,20 @@
         {
           "providerId": "minimax-cn",
           "modelId": "MiniMax-M2.5-highspeed",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "minimax-global",
           "modelId": "MiniMax-M2.5-highspeed",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "anthropic-messages",
@@ -2647,12 +1990,20 @@
         {
           "providerId": "minimax-cn",
           "modelId": "MiniMax-M2.1",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "minimax-global",
           "modelId": "MiniMax-M2.1",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "anthropic-messages",
@@ -2668,12 +2019,20 @@
         {
           "providerId": "minimax-cn",
           "modelId": "MiniMax-M2.1-highspeed",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "minimax-global",
           "modelId": "MiniMax-M2.1-highspeed",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "anthropic-messages",
@@ -2689,12 +2048,20 @@
         {
           "providerId": "minimax-cn",
           "modelId": "MiniMax-M2",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "minimax-global",
           "modelId": "MiniMax-M2",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "anthropic-messages",
@@ -2708,18 +2075,26 @@
         {
           "providerId": "moonshot-kimi-cn",
           "modelId": "kimi-k3",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "moonshot-kimi-global",
           "modelId": "kimi-k3",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2734,7 +2109,9 @@
         {
           "providerId": "xd",
           "modelId": "qwen/qwen3.6-plus",
-          "agents": ["claude-code"]
+          "agents": [
+            "claude-code"
+          ]
         }
       ],
       "nativeApi": "openai-completions",
@@ -2750,12 +2127,18 @@
         {
           "providerId": "aliyun-model-studio-cn",
           "modelId": "qwen3.6-plus",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         },
         {
           "providerId": "aliyun-model-studio-global",
           "modelId": "qwen3.6-plus",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-completions",
@@ -2771,12 +2154,18 @@
         {
           "providerId": "aliyun-model-studio-cn",
           "modelId": "qwen3.7-flash",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         },
         {
           "providerId": "aliyun-model-studio-global",
           "modelId": "qwen3.7-flash",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-completions",
@@ -2792,12 +2181,19 @@
         {
           "providerId": "aliyun-model-studio-cn",
           "modelId": "qwen3.8-flash",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
+          "referencePriceGroup": "cn"
         },
         {
           "providerId": "aliyun-model-studio-global",
           "modelId": "qwen3.8-flash",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-completions",
@@ -2813,12 +2209,18 @@
         {
           "providerId": "aliyun-model-studio-cn",
           "modelId": "qwen3.7-plus",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         },
         {
           "providerId": "aliyun-model-studio-global",
           "modelId": "qwen3.7-plus",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-completions",
@@ -2834,12 +2236,18 @@
         {
           "providerId": "aliyun-model-studio-cn",
           "modelId": "qwen3.6-flash",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         },
         {
           "providerId": "aliyun-model-studio-global",
           "modelId": "qwen3.6-flash",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-completions",
@@ -2854,7 +2262,10 @@
         {
           "providerId": "xd",
           "modelId": "codex/gpt-5.5:auto",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-responses",
@@ -2867,7 +2278,10 @@
         {
           "providerId": "xd",
           "modelId": "qwen/qwen3.8-27b",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-completions",
@@ -2880,7 +2294,10 @@
         {
           "providerId": "xd",
           "modelId": "tencent/hy3",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-completions",
@@ -2894,7 +2311,10 @@
         {
           "providerId": "xd",
           "modelId": "meta/muse-spark-1.2",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "modelRef": "meta/muse-spark-1.2"
@@ -2906,18 +2326,26 @@
         {
           "providerId": "xd",
           "modelId": "moonshot/kimi-k3",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         },
         {
           "providerId": "xd",
           "modelId": "moonshotai/kimi-k3",
-          "agents": ["claude-code", "codex"],
+          "agents": [
+            "claude-code",
+            "codex"
+          ],
           "defaults": {
             "supportsFastMode": false
-          }
+          },
+          "referencePriceGroup": "global"
         }
       ],
       "nativeApi": "openai-completions",
@@ -2931,7 +2359,10 @@
         {
           "providerId": "xd",
           "modelId": "deepseek/deepseek-v4-flash-vision-exp",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-completions",
@@ -2944,7 +2375,10 @@
         {
           "providerId": "xd",
           "modelId": "tencent/hy4-preview",
-          "agents": ["claude-code", "codex"]
+          "agents": [
+            "claude-code",
+            "codex"
+          ]
         }
       ],
       "nativeApi": "openai-completions",
@@ -3195,7 +2629,9 @@
   ],
   "localModels": {
     "version": 1,
-    "featuredIds": ["qwen38-27b"],
+    "featuredIds": [
+      "qwen38-27b"
+    ],
     "models": [
       {
         "id": "qwen38-27b",
@@ -3251,7 +2687,14 @@
       {
         "id": "qwen35-4b",
         "name": "Qwen3.5 4B",
-        "aliases": ["qwen", "qwen3.5", "通义", "通義", "千问", "千問"],
+        "aliases": [
+          "qwen",
+          "qwen3.5",
+          "通义",
+          "通義",
+          "千问",
+          "千問"
+        ],
         "variants": [
           {
             "libraryName": "qwen3.5:4b-mlx",
@@ -3284,7 +2727,14 @@
       {
         "id": "qwen35-9b",
         "name": "Qwen3.5 9B",
-        "aliases": ["qwen", "qwen3.5", "通义", "通義", "千问", "千問"],
+        "aliases": [
+          "qwen",
+          "qwen3.5",
+          "通义",
+          "通義",
+          "千问",
+          "千問"
+        ],
         "variants": [
           {
             "libraryName": "qwen3.5:9b-mlx",
@@ -3317,7 +2767,13 @@
       {
         "id": "gemma4-12b",
         "name": "Gemma 4 12B",
-        "aliases": ["gemma", "gemma4", "google", "宝石", "寶石"],
+        "aliases": [
+          "gemma",
+          "gemma4",
+          "google",
+          "宝石",
+          "寶石"
+        ],
         "variants": [
           {
             "libraryName": "gemma4:12b-mlx",
@@ -3350,7 +2806,13 @@
       {
         "id": "qwen36-35b",
         "name": "Qwen3.6 35B A3B",
-        "aliases": ["qwen", "qwen3.6", "通义", "通義", "moe"],
+        "aliases": [
+          "qwen",
+          "qwen3.6",
+          "通义",
+          "通義",
+          "moe"
+        ],
         "variants": [
           {
             "libraryName": "qwen3.6:35b-mlx",
@@ -3383,7 +2845,12 @@
       {
         "id": "nemotron35-30b",
         "name": "Nemotron 3.5 Lightning 30B",
-        "aliases": ["nemotron", "nvidia", "lightning", "moe"],
+        "aliases": [
+          "nemotron",
+          "nvidia",
+          "lightning",
+          "moe"
+        ],
         "variants": [
           {
             "libraryName": "nemotron-3.5-lightning:30b-mlx",
@@ -3416,7 +2883,13 @@
       {
         "id": "qwen38-flash-next",
         "name": "Qwen3.8 Flash-Next",
-        "aliases": ["qwen", "flash-next", "通义", "通義", "moe"],
+        "aliases": [
+          "qwen",
+          "flash-next",
+          "通义",
+          "通義",
+          "moe"
+        ],
         "variants": [
           {
             "libraryName": "qwen3.8-flash-next:125b-mlx",
@@ -3456,8 +2929,114 @@
       "defaults": {
         "maxOutputTokens": 128000,
         "defaultEffort": "medium",
-        "name": "GPT-5.6-Sol"
-      }
+        "name": "GPT-5.6-Sol",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 5,
+              "outputPerMtok": 30,
+              "cacheReadPerMtok": 0.5,
+              "cacheWritePerMtok": 6.25,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-07-09",
+              "effectiveUntil": "2026-08-21",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 10,
+              "outputPerMtok": 45,
+              "cacheReadPerMtok": 1,
+              "cacheWritePerMtok": 12.5,
+              "minInputTokens": 272001,
+              "effectiveFrom": "2026-07-09",
+              "effectiveUntil": "2026-08-21",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 4,
+              "outputPerMtok": 20,
+              "cacheReadPerMtok": 0.4,
+              "cacheWritePerMtok": 5,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-08-21",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+                "verifiedAt": "2026-08-28"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 8,
+              "outputPerMtok": 30,
+              "cacheReadPerMtok": 0.8,
+              "cacheWritePerMtok": 10,
+              "minInputTokens": 272001,
+              "effectiveFrom": "2026-08-21",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+                "verifiedAt": "2026-08-28"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 8,
+              "outputPerMtok": 40,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/pricing",
+                "verifiedAt": "2026-09-11"
+              },
+              "cacheReadPerMtok": 0.8,
+              "cacheWritePerMtok": 10,
+              "maxInputTokens": 272001
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 16,
+              "outputPerMtok": 60,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/pricing",
+                "verifiedAt": "2026-09-11"
+              },
+              "cacheReadPerMtok": 1.6,
+              "cacheWritePerMtok": 20,
+              "minInputTokens": 272001
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "openai/gpt-5.6-terra",
@@ -3471,9 +3050,114 @@
         "name": "GPT-5.6-Terra",
         "description": "GPT-5.6-Terra for coding tasks",
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2.5,
+              "outputPerMtok": 15,
+              "cacheReadPerMtok": 0.25,
+              "cacheWritePerMtok": 3.125,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-07-09",
+              "effectiveUntil": "2026-07-30",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+                "verifiedAt": "2026-08-07"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 5,
+              "outputPerMtok": 22.5,
+              "cacheReadPerMtok": 0.5,
+              "cacheWritePerMtok": 6.25,
+              "minInputTokens": 272001,
+              "effectiveFrom": "2026-07-09",
+              "effectiveUntil": "2026-07-30",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+                "verifiedAt": "2026-08-07"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2,
+              "outputPerMtok": 12,
+              "cacheReadPerMtok": 0.2,
+              "cacheWritePerMtok": 2.5,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-07-30",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+                "verifiedAt": "2026-08-07"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 4,
+              "outputPerMtok": 18,
+              "cacheReadPerMtok": 0.4,
+              "cacheWritePerMtok": 5,
+              "minInputTokens": 272001,
+              "effectiveFrom": "2026-07-30",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+                "verifiedAt": "2026-08-07"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 4,
+              "outputPerMtok": 24,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/pricing",
+                "verifiedAt": "2026-09-11"
+              },
+              "cacheReadPerMtok": 0.4,
+              "cacheWritePerMtok": 5,
+              "maxInputTokens": 272001
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 8,
+              "outputPerMtok": 36,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/pricing",
+                "verifiedAt": "2026-09-11"
+              },
+              "cacheReadPerMtok": 0.8,
+              "cacheWritePerMtok": 10,
+              "minInputTokens": 272001
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "openai/gpt-5.6-luna",
@@ -3484,28 +3168,225 @@
         "codex/gpt-5.6-luna"
       ],
       "defaults": {
-        "name": "GPT-5.6-Luna"
-      }
+        "name": "GPT-5.6-Luna",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "medium"
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1,
+              "outputPerMtok": 6,
+              "cacheReadPerMtok": 0.1,
+              "cacheWritePerMtok": 1.25,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-07-09",
+              "effectiveUntil": "2026-07-30",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+                "verifiedAt": "2026-08-07"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2,
+              "outputPerMtok": 9,
+              "cacheReadPerMtok": 0.2,
+              "cacheWritePerMtok": 2.5,
+              "minInputTokens": 272001,
+              "effectiveFrom": "2026-07-09",
+              "effectiveUntil": "2026-07-30",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+                "verifiedAt": "2026-08-07"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.2,
+              "outputPerMtok": 1.2,
+              "cacheReadPerMtok": 0.02,
+              "cacheWritePerMtok": 0.25,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-07-30",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+                "verifiedAt": "2026-08-07"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.4,
+              "outputPerMtok": 1.8,
+              "cacheReadPerMtok": 0.04,
+              "cacheWritePerMtok": 0.5,
+              "minInputTokens": 272001,
+              "effectiveFrom": "2026-07-30",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+                "verifiedAt": "2026-08-07"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 0.4,
+              "outputPerMtok": 2.4,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/pricing",
+                "verifiedAt": "2026-09-11"
+              },
+              "cacheReadPerMtok": 0.04,
+              "cacheWritePerMtok": 0.5,
+              "maxInputTokens": 272001
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 0.8,
+              "outputPerMtok": 3.6,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/pricing",
+                "verifiedAt": "2026-09-11"
+              },
+              "cacheReadPerMtok": 0.08,
+              "cacheWritePerMtok": 1,
+              "minInputTokens": 272001
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "openai/gpt-5.5",
-      "aliases": ["gpt-5.5", "xd/gpt-5.5", "xd/codex-gpt-5.5", "codex/gpt-5.5"],
+      "aliases": [
+        "gpt-5.5",
+        "xd/gpt-5.5",
+        "xd/codex-gpt-5.5",
+        "codex/gpt-5.5"
+      ],
       "defaults": {
         "name": "GPT-5.5",
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 5,
+              "outputPerMtok": 30,
+              "cacheReadPerMtok": 0.5,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-04-23",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.5",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 10,
+              "outputPerMtok": 45,
+              "cacheReadPerMtok": 1,
+              "minInputTokens": 272001,
+              "effectiveFrom": "2026-04-23",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.5",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "openai/gpt-5.4",
-      "aliases": ["gpt-5.4", "xd/gpt-5.4", "xd/codex-gpt-5.4", "codex/gpt-5.4"],
+      "aliases": [
+        "gpt-5.4",
+        "xd/gpt-5.4",
+        "xd/codex-gpt-5.4",
+        "codex/gpt-5.4"
+      ],
       "defaults": {
         "name": "GPT-5.4",
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2.5,
+              "outputPerMtok": 15,
+              "cacheReadPerMtok": 0.25,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-03-05",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.4",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 5,
+              "outputPerMtok": 22.5,
+              "cacheReadPerMtok": 0.5,
+              "minInputTokens": 272001,
+              "effectiveFrom": "2026-03-05",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.4",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "openai/gpt-5.4-mini",
@@ -3518,194 +3399,741 @@
       "defaults": {
         "name": "GPT-5.4-Mini",
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.75,
+              "outputPerMtok": 4.5,
+              "cacheReadPerMtok": 0.075,
+              "effectiveFrom": "2026-03-17",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "openai/gpt-5.4-pro",
-      "aliases": ["gpt-5.4-pro"],
+      "aliases": [
+        "gpt-5.4-pro"
+      ],
       "defaults": {
         "name": "GPT-5.4 Pro",
         "description": "OpenAI GPT-5.4 Pro for demanding reasoning tasks",
         "group": "gpt",
         "contextWindow": 1050000,
         "maxOutputTokens": 128000,
-        "efforts": [],
-        "defaultEffort": null
-      }
+        "efforts": [
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "defaultEffort": "medium"
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 30,
+              "outputPerMtok": 180,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.4-pro",
+                "verifiedAt": "2026-09-11"
+              },
+              "maxInputTokens": 272001
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 60,
+              "outputPerMtok": 270,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.4-pro",
+                "verifiedAt": "2026-09-11"
+              },
+              "minInputTokens": 272001
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "openai/gpt-5.5-pro",
-      "aliases": ["gpt-5.5-pro"],
+      "aliases": [
+        "gpt-5.5-pro"
+      ],
       "defaults": {
         "name": "GPT-5.5 Pro",
         "description": "OpenAI GPT-5.5 Pro for precise, high-quality reasoning",
         "group": "gpt",
         "contextWindow": 1050000,
         "maxOutputTokens": 128000,
-        "efforts": [],
-        "defaultEffort": null
-      }
+        "efforts": [
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "defaultEffort": "medium"
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 30,
+              "outputPerMtok": 180,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.5-pro",
+                "verifiedAt": "2026-09-11"
+              },
+              "cacheReadPerMtok": 30
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "openai/gpt-5.6-cyber",
-      "aliases": ["gpt-5.6-cyber"],
+      "aliases": [
+        "gpt-5.6-cyber"
+      ],
       "defaults": {
         "name": "GPT-5.6 Cyber",
         "description": "OpenAI cyber security reasoning model; access requires approval",
         "group": "gpt",
         "contextWindow": 400000,
-        "maxOutputTokens": 128000,
-        "efforts": [],
-        "defaultEffort": null
-      }
+        "maxOutputTokens": 128000
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 12.5,
+              "outputPerMtok": 75,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.6-cyber",
+                "verifiedAt": "2026-09-11"
+              },
+              "cacheReadPerMtok": 1.25,
+              "cacheWritePerMtok": 15.625,
+              "maxInputTokens": 272001
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "openai/gpt-6-astra",
-      "aliases": ["gpt-6-astra"],
+      "aliases": [
+        "gpt-6-astra"
+      ],
       "defaults": {
         "name": "GPT-6 Astra",
         "description": "OpenAI GPT-6 Astra for complex reasoning, coding, computer use, research, and document creation",
         "group": "gpt",
         "contextWindow": 1050000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 10,
+              "outputPerMtok": 50,
+              "cacheReadPerMtok": 1,
+              "cacheWritePerMtok": 12.5,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-09-04",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+                "verifiedAt": "2026-09-05"
+              },
+              "effectiveUntil": "2026-09-07"
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 20,
+              "outputPerMtok": 100,
+              "cacheReadPerMtok": 2,
+              "cacheWritePerMtok": 25,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-09-04",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+                "verifiedAt": "2026-09-05"
+              },
+              "effectiveUntil": "2026-09-07"
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 10,
+              "outputPerMtok": 50,
+              "cacheReadPerMtok": 1,
+              "cacheWritePerMtok": 12.5,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-09-07",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+                "verifiedAt": "2026-09-07"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 20,
+              "outputPerMtok": 75,
+              "cacheReadPerMtok": 2,
+              "cacheWritePerMtok": 25,
+              "effectiveFrom": "2026-09-07",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+                "verifiedAt": "2026-09-07"
+              },
+              "minInputTokens": 272001
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 20,
+              "outputPerMtok": 100,
+              "cacheReadPerMtok": 2,
+              "cacheWritePerMtok": 25,
+              "maxInputTokens": 272001,
+              "effectiveFrom": "2026-09-07",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+                "verifiedAt": "2026-09-07"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 40,
+              "outputPerMtok": 150,
+              "cacheReadPerMtok": 4,
+              "cacheWritePerMtok": 50,
+              "effectiveFrom": "2026-09-07",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+                "verifiedAt": "2026-09-07"
+              },
+              "minInputTokens": 272001
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-fable-5-1",
-      "aliases": ["claude-fable-5-1"],
+      "aliases": [
+        "claude-fable-5-1"
+      ],
       "defaults": {
         "name": "Fable 5.1",
         "description": "Claude Fable 5.1 for long-running agentic coding and research",
         "group": "anthropic",
         "contextWindow": 1000000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 10,
+              "outputPerMtok": 50,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-09-11"
+              },
+              "cacheReadPerMtok": 0.25,
+              "cacheWritePerMtok": 12.5,
+              "cacheWrite1hPerMtok": 20
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-fable-5",
-      "aliases": ["claude-fable-5"],
+      "aliases": [
+        "claude-fable-5"
+      ],
       "defaults": {
         "name": "Fable 5",
         "description": "Most capable, supports xhigh effort",
         "group": "anthropic",
         "contextWindow": 1000000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 10,
+              "outputPerMtok": 50,
+              "cacheReadPerMtok": 1,
+              "cacheWritePerMtok": 12.5,
+              "cacheWrite1hPerMtok": 20,
+              "effectiveFrom": "2026-06-09",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-07-31"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-mythos-5",
-      "aliases": ["claude-mythos-5"],
+      "aliases": [
+        "claude-mythos-5"
+      ],
       "defaults": {
         "name": "Mythos 5",
         "group": "anthropic",
         "contextWindow": 1000000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 10,
+              "outputPerMtok": 50,
+              "cacheReadPerMtok": 1,
+              "cacheWritePerMtok": 12.5,
+              "cacheWrite1hPerMtok": 20,
+              "effectiveFrom": "2026-06-09",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-07-31"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-opus-5",
-      "aliases": ["claude-opus-5"],
+      "aliases": [
+        "claude-opus-5"
+      ],
       "defaults": {
         "name": "Opus 5",
         "description": "Latest Opus for ambitious work",
         "group": "anthropic",
         "contextWindow": 1000000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 5,
+              "outputPerMtok": 25,
+              "cacheReadPerMtok": 0.5,
+              "cacheWritePerMtok": 6.25,
+              "cacheWrite1hPerMtok": 10,
+              "effectiveFrom": "2026-07-24",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-07-31"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 10,
+              "outputPerMtok": 50,
+              "cacheReadPerMtok": 1,
+              "cacheWritePerMtok": 12.5,
+              "cacheWrite1hPerMtok": 20,
+              "effectiveFrom": "2026-07-24",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-08-02"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-opus-4-8",
-      "aliases": ["claude-opus-4-8"],
+      "aliases": [
+        "claude-opus-4-8"
+      ],
       "defaults": {
         "name": "Opus 4.8",
         "description": "Most capable, supports xhigh effort",
         "group": "anthropic",
         "contextWindow": 1000000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 5,
+              "outputPerMtok": 25,
+              "cacheReadPerMtok": 0.5,
+              "cacheWritePerMtok": 6.25,
+              "cacheWrite1hPerMtok": 10,
+              "effectiveFrom": "2026-05-28",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-07-31"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "fast",
+              "inputPerMtok": 10,
+              "outputPerMtok": 50,
+              "cacheReadPerMtok": 1,
+              "cacheWritePerMtok": 12.5,
+              "cacheWrite1hPerMtok": 20,
+              "effectiveFrom": "2026-05-28",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-08-02"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-opus-4-7",
-      "aliases": ["claude-opus-4-7"],
+      "aliases": [
+        "claude-opus-4-7"
+      ],
       "defaults": {
         "name": "Opus 4.7",
         "description": "Most capable, supports xhigh effort",
         "group": "anthropic",
         "contextWindow": 1000000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 5,
+              "outputPerMtok": 25,
+              "cacheReadPerMtok": 0.5,
+              "cacheWritePerMtok": 6.25,
+              "cacheWrite1hPerMtok": 10,
+              "effectiveFrom": "2026-04-16",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-07-31"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-opus-4-6",
-      "aliases": ["claude-opus-4-6"],
+      "aliases": [
+        "claude-opus-4-6"
+      ],
       "defaults": {
         "name": "Opus 4.6",
         "description": "Most capable for ambitious work",
         "group": "anthropic",
         "contextWindow": 1000000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 5,
+              "outputPerMtok": 25,
+              "cacheReadPerMtok": 0.5,
+              "cacheWritePerMtok": 6.25,
+              "cacheWrite1hPerMtok": 10,
+              "effectiveFrom": "2026-02-05",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-07-31"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-opus-4-5",
-      "aliases": ["claude-opus-4-5"],
+      "aliases": [
+        "claude-opus-4-5"
+      ],
       "defaults": {
         "name": "Opus 4.5",
         "description": "Earlier Opus generation",
         "group": "anthropic",
         "contextWindow": 200000,
         "maxOutputTokens": 64000,
-        "efforts": ["low", "medium", "high"],
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 5,
+              "outputPerMtok": 25,
+              "cacheReadPerMtok": 0.5,
+              "cacheWritePerMtok": 6.25,
+              "cacheWrite1hPerMtok": 10,
+              "effectiveFrom": "2025-11-01",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-07-31"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-sonnet-5",
-      "aliases": ["claude-sonnet-5"],
+      "aliases": [
+        "claude-sonnet-5"
+      ],
       "defaults": {
         "name": "Sonnet 5",
         "description": "Latest Sonnet — fast and highly capable",
         "group": "anthropic",
         "contextWindow": 1000000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2,
+              "outputPerMtok": 10,
+              "cacheReadPerMtok": 0.2,
+              "cacheWritePerMtok": 2.5,
+              "cacheWrite1hPerMtok": 4,
+              "effectiveFrom": "2026-06-30",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-08-12"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-sonnet-4-6",
-      "aliases": ["claude-sonnet-4-6"],
+      "aliases": [
+        "claude-sonnet-4-6"
+      ],
       "defaults": {
         "name": "Sonnet 4.6",
         "description": "Most efficient for everyday tasks",
         "group": "anthropic",
         "contextWindow": 1000000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 3,
+              "outputPerMtok": 15,
+              "cacheReadPerMtok": 0.3,
+              "cacheWritePerMtok": 3.75,
+              "cacheWrite1hPerMtok": 6,
+              "effectiveFrom": "2026-02-17",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-07-31"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-sonnet-4-5",
-      "aliases": ["claude-sonnet-4-5"],
+      "aliases": [
+        "claude-sonnet-4-5"
+      ],
       "defaults": {
         "name": "Sonnet 4.5",
         "description": "Earlier Sonnet generation",
@@ -3713,11 +4141,35 @@
         "contextWindow": 200000,
         "maxOutputTokens": 64000,
         "efforts": []
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 3,
+              "outputPerMtok": 15,
+              "cacheReadPerMtok": 0.3,
+              "cacheWritePerMtok": 3.75,
+              "cacheWrite1hPerMtok": 6,
+              "effectiveFrom": "2025-09-29",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-07-31"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "anthropic/claude-haiku-4-5",
-      "aliases": ["claude-haiku-4-5"],
+      "aliases": [
+        "claude-haiku-4-5"
+      ],
       "defaults": {
         "name": "Haiku 4.5",
         "description": "Fastest for quick answers",
@@ -3725,7 +4177,29 @@
         "contextWindow": 200000,
         "maxOutputTokens": 64000,
         "efforts": []
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1,
+              "outputPerMtok": 5,
+              "cacheReadPerMtok": 0.1,
+              "cacheWritePerMtok": 1.25,
+              "cacheWrite1hPerMtok": 2,
+              "effectiveFrom": "2025-10-01",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+                "verifiedAt": "2026-07-31"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xai/grok-4.6",
@@ -3735,9 +4209,49 @@
         "description": "xAI Grok 4.6 新旗舰,编码/agent 任务最强,500k 上下文(SuperGrok 订阅直连)",
         "group": "grok",
         "contextWindow": 500000,
-        "efforts": ["low", "medium", "high", "xhigh"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2,
+              "outputPerMtok": 6,
+              "cacheReadPerMtok": 0.5,
+              "maxInputTokens": 200000,
+              "effectiveFrom": "2026-08-12",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-13"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 4,
+              "outputPerMtok": 12,
+              "cacheReadPerMtok": 1,
+              "minInputTokens": 200000,
+              "effectiveFrom": "2026-08-12",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-13"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xai/grok-4.5",
@@ -3747,9 +4261,48 @@
         "description": "xAI Grok 4.5 新旗舰,编码/agent 任务最强,500k 上下文(SuperGrok 订阅直连)",
         "group": "grok",
         "contextWindow": 500000,
-        "efforts": ["low", "medium", "high"],
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2,
+              "outputPerMtok": 6,
+              "cacheReadPerMtok": 0.3,
+              "maxInputTokens": 200000,
+              "effectiveFrom": "2026-07-08",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 4,
+              "outputPerMtok": 12,
+              "cacheReadPerMtok": 0.6,
+              "minInputTokens": 200000,
+              "effectiveFrom": "2026-07-08",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xai/grok-4.3",
@@ -3759,9 +4312,48 @@
         "description": "xAI Grok 4.3 通用旗舰,1M 上下文(SuperGrok 订阅直连)",
         "group": "grok",
         "contextWindow": 1000000,
-        "efforts": ["low", "medium", "high"],
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.25,
+              "outputPerMtok": 2.5,
+              "cacheReadPerMtok": 0.2,
+              "maxInputTokens": 200000,
+              "effectiveFrom": "2026-05-15",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2.5,
+              "outputPerMtok": 5,
+              "cacheReadPerMtok": 0.4,
+              "minInputTokens": 200000,
+              "effectiveFrom": "2026-05-15",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xai/grok-build-0.1",
@@ -3772,7 +4364,42 @@
         "group": "grok",
         "contextWindow": 256000,
         "efforts": []
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1,
+              "outputPerMtok": 2,
+              "cacheReadPerMtok": 0.2,
+              "maxInputTokens": 200000,
+              "effectiveFrom": "2026-05-15",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2,
+              "outputPerMtok": 4,
+              "cacheReadPerMtok": 0.4,
+              "minInputTokens": 200000,
+              "effectiveFrom": "2026-05-15",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xai/grok-4.20-multi-agent-0309",
@@ -3782,9 +4409,49 @@
         "description": "xAI Grok 4.20 multi-agent model,1M 上下文(SuperGrok 订阅直连)",
         "group": "grok",
         "contextWindow": 1000000,
-        "efforts": ["low", "medium", "high", "xhigh"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.25,
+              "outputPerMtok": 2.5,
+              "cacheReadPerMtok": 0.2,
+              "maxInputTokens": 200000,
+              "effectiveFrom": "2026-03-09",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2.5,
+              "outputPerMtok": 5,
+              "cacheReadPerMtok": 0.4,
+              "minInputTokens": 200000,
+              "effectiveFrom": "2026-03-09",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xai/grok-4.20-0309-reasoning",
@@ -3795,7 +4462,42 @@
         "group": "grok",
         "contextWindow": 1000000,
         "efforts": []
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.25,
+              "outputPerMtok": 2.5,
+              "cacheReadPerMtok": 0.2,
+              "maxInputTokens": 200000,
+              "effectiveFrom": "2026-03-09",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2.5,
+              "outputPerMtok": 5,
+              "cacheReadPerMtok": 0.4,
+              "minInputTokens": 200000,
+              "effectiveFrom": "2026-03-09",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xai/grok-4.20-0309-non-reasoning",
@@ -3806,7 +4508,42 @@
         "group": "grok",
         "contextWindow": 1000000,
         "efforts": []
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.25,
+              "outputPerMtok": 2.5,
+              "cacheReadPerMtok": 0.2,
+              "maxInputTokens": 200000,
+              "effectiveFrom": "2026-03-09",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2.5,
+              "outputPerMtok": 5,
+              "cacheReadPerMtok": 0.4,
+              "minInputTokens": 200000,
+              "effectiveFrom": "2026-03-09",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xai/grok-4.20",
@@ -3816,9 +4553,49 @@
         "description": "旧版兼容 alias;新会话请使用明确的 Grok 4.20 model ID",
         "group": "grok",
         "contextWindow": 1000000,
-        "efforts": ["low", "medium", "high", "xhigh"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.25,
+              "outputPerMtok": 2.5,
+              "cacheReadPerMtok": 0.2,
+              "maxInputTokens": 200000,
+              "effectiveFrom": "2026-04-07",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2.5,
+              "outputPerMtok": 5,
+              "cacheReadPerMtok": 0.4,
+              "minInputTokens": 200000,
+              "effectiveFrom": "2026-04-07",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/pricing",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xai/grok-code-fast",
@@ -3829,96 +4606,308 @@
         "group": "grok",
         "contextWindow": 256000,
         "efforts": []
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1,
+              "outputPerMtok": 2,
+              "cacheReadPerMtok": 0.2,
+              "maxInputTokens": 200000,
+              "effectiveFrom": "2026-05-15",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/migration/may-15-retirement",
+                "verifiedAt": "2026-08-01"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 2,
+              "outputPerMtok": 4,
+              "cacheReadPerMtok": 0.4,
+              "minInputTokens": 200000,
+              "effectiveFrom": "2026-05-15",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.x.ai/developers/migration/may-15-retirement",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "google/gemini-3.7-flash",
-      "aliases": ["gemini-3.7-flash"],
+      "aliases": [
+        "gemini-3.7-flash"
+      ],
       "defaults": {
         "name": "Gemini 3.7 Flash",
         "description": "Google Gemini 3.7 Flash — agentic workflows and multimodal reasoning",
         "group": "google",
         "contextWindow": 1000000,
         "maxOutputTokens": 65536,
-        "efforts": ["low", "medium", "high"],
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.75,
+              "outputPerMtok": 3.75,
+              "cacheReadPerMtok": 0.075,
+              "effectiveFrom": "2026-08-13",
+              "effectiveUntil": "2027-01-01",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://ai.google.dev/gemini-api/docs/pricing",
+                "verifiedAt": "2026-08-13"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.5,
+              "outputPerMtok": 7.5,
+              "cacheReadPerMtok": 0.15,
+              "effectiveFrom": "2027-01-01",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://ai.google.dev/gemini-api/docs/pricing",
+                "verifiedAt": "2026-08-13"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "google/gemini-3.6-flash",
-      "aliases": ["gemini-3.6-flash"],
+      "aliases": [
+        "gemini-3.6-flash"
+      ],
       "defaults": {
         "name": "Gemini 3.6 Flash",
         "description": "Google Gemini 3.6 Flash — frontier intelligence optimized for speed and cost",
         "group": "google",
         "contextWindow": 1000000,
         "maxOutputTokens": 65536,
-        "efforts": ["minimal", "low", "medium", "high"],
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.75,
+              "outputPerMtok": 3.75,
+              "cacheReadPerMtok": 0.075,
+              "effectiveFrom": "2026-07-21",
+              "effectiveUntil": "2027-01-01",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://ai.google.dev/gemini-api/docs/pricing",
+                "verifiedAt": "2026-08-13"
+              }
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.5,
+              "outputPerMtok": 7.5,
+              "cacheReadPerMtok": 0.15,
+              "effectiveFrom": "2027-01-01",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://ai.google.dev/gemini-api/docs/pricing",
+                "verifiedAt": "2026-08-13"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "google/gemini-3.5-flash",
-      "aliases": ["gemini-3.5-flash"],
+      "aliases": [
+        "gemini-3.5-flash"
+      ],
       "defaults": {
         "name": "Gemini 3.5 Flash",
         "description": "Google Gemini 3.5 Flash — upgraded Flash with stronger reasoning",
         "group": "google",
         "contextWindow": 1000000,
         "maxOutputTokens": 65536,
-        "efforts": ["minimal", "low", "medium", "high"],
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.5,
+              "outputPerMtok": 9,
+              "cacheReadPerMtok": 0.15,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://ai.google.dev/gemini-api/docs/pricing",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "google/gemini-3.1-pro-preview",
-      "aliases": ["gemini-3.1-pro-preview"],
+      "aliases": [
+        "gemini-3.1-pro-preview"
+      ],
       "defaults": {
         "name": "Gemini 3.1 Pro",
         "description": "Google Gemini 3.1 Pro Preview — deepest reasoning, multimodal",
         "group": "google",
         "contextWindow": 1000000,
         "maxOutputTokens": 65536,
-        "efforts": ["low", "medium", "high"],
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
       }
     },
     {
       "id": "google/gemini-3-flash-preview",
-      "aliases": ["gemini-3-flash-preview"],
+      "aliases": [
+        "gemini-3-flash-preview"
+      ],
       "defaults": {
         "name": "Gemini 3 Flash",
         "description": "Google Gemini 3 Flash Preview — fast multimodal reasoning",
         "group": "google",
         "contextWindow": 1000000,
         "maxOutputTokens": 65536,
-        "efforts": ["minimal", "low", "medium", "high"],
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
       }
     },
     {
       "id": "google/gemini-3.5-flash-lite",
-      "aliases": ["gemini-3.5-flash-lite"],
+      "aliases": [
+        "gemini-3.5-flash-lite"
+      ],
       "defaults": {
         "name": "Gemini 3.5 Flash-Lite",
         "description": "Google Gemini 3.5 Flash-Lite — cost-efficient multimodal model for high-volume workloads",
         "group": "google",
         "contextWindow": 1000000,
         "maxOutputTokens": 65536,
-        "efforts": ["minimal", "low", "medium", "high"],
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.3,
+              "outputPerMtok": 2.5,
+              "cacheReadPerMtok": 0.03,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://ai.google.dev/gemini-api/docs/pricing",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "google/gemini-3.1-flash-lite",
-      "aliases": ["gemini-3.1-flash-lite"],
+      "aliases": [
+        "gemini-3.1-flash-lite"
+      ],
       "defaults": {
         "name": "Gemini 3.1 Flash-Lite",
         "description": "Google Gemini 3.1 Flash-Lite — efficient multimodal model for large-scale tasks",
         "group": "google",
         "contextWindow": 1000000,
-        "maxOutputTokens": 65536
-      }
+        "maxOutputTokens": 65536,
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "defaultEffort": "medium"
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.25,
+              "outputPerMtok": 1.5,
+              "cacheReadPerMtok": 0.025,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://ai.google.dev/gemini-api/docs/pricing",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "bytedance-seed/seed-2.1-pro",
@@ -3928,7 +4917,12 @@
         "group": "china",
         "contextWindow": 256000,
         "maxOutputTokens": 256000,
-        "efforts": ["minimal", "low", "medium", "high"],
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
       }
     },
@@ -3940,7 +4934,12 @@
         "group": "china",
         "contextWindow": 983616,
         "maxOutputTokens": 131072,
-        "efforts": ["low", "medium", "high", "xhigh"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
         "defaultEffort": "medium"
       }
     },
@@ -3951,7 +4950,11 @@
         "name": "Qwen 3.8 Max Preview",
         "group": "china",
         "contextWindow": 983616,
-        "efforts": ["low", "high", "xhigh"],
+        "efforts": [
+          "low",
+          "high",
+          "xhigh"
+        ],
         "defaultEffort": "high"
       }
     },
@@ -3969,25 +4972,105 @@
     },
     {
       "id": "moonshotai/kimi-k2.7-code",
-      "aliases": ["kimi-k2.7-code"],
+      "aliases": [
+        "kimi-k2.7-code"
+      ],
       "defaults": {
         "name": "Kimi K2.7 Code",
         "description": "Moonshot Kimi K2.7 Code agentic coding model",
         "group": "china",
         "contextWindow": 262144,
         "efforts": []
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 6.5,
+              "outputPerMtok": 27,
+              "cacheReadPerMtok": 1.3,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.kimi.com/docs/pricing/chat-k27-code",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        },
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.95,
+              "outputPerMtok": 4,
+              "cacheReadPerMtok": 0.19,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.kimi.ai/docs/pricing/chat-k27-code",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "moonshotai/kimi-k2.7-code-highspeed",
-      "aliases": ["kimi-k2.7-code-highspeed"],
+      "aliases": [
+        "kimi-k2.7-code-highspeed"
+      ],
       "defaults": {
         "name": "Kimi K2.7 Code Highspeed",
         "description": "Moonshot Kimi K2.7 Code high-speed API variant",
         "group": "china",
         "contextWindow": 262144,
         "efforts": []
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 13,
+              "outputPerMtok": 54,
+              "cacheReadPerMtok": 2.6,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.kimi.com/docs/pricing/chat-k27-code",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        },
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.9,
+              "outputPerMtok": 8,
+              "cacheReadPerMtok": 0.38,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.kimi.ai/docs/pricing/chat-k27-code",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -3998,7 +5081,27 @@
         "group": "china",
         "contextWindow": 262144,
         "efforts": []
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.95,
+              "outputPerMtok": 4,
+              "cacheReadPerMtok": 0.16,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.kimi.ai/docs/pricing/chat-k26",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "z-ai/glm-5.1",
@@ -4010,7 +5113,27 @@
         "contextWindow": 200000,
         "maxOutputTokens": 131072,
         "efforts": []
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.4,
+              "outputPerMtok": 4.4,
+              "cacheReadPerMtok": 0.26,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.z.ai/guides/overview/pricing",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "z-ai/glm-5.2",
@@ -4021,9 +5144,33 @@
         "group": "china",
         "contextWindow": 1000000,
         "maxOutputTokens": 131072,
-        "efforts": ["minimal", "high", "max"],
+        "efforts": [
+          "minimal",
+          "high",
+          "max"
+        ],
         "defaultEffort": "high"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.4,
+              "outputPerMtok": 4.4,
+              "cacheReadPerMtok": 0.26,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.z.ai/guides/overview/pricing",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "z-ai/glm-5.3",
@@ -4034,20 +5181,72 @@
         "group": "china",
         "contextWindow": 1000000,
         "maxOutputTokens": 131072,
-        "efforts": ["low", "high", "max"],
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
         "defaultEffort": "high"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.4,
+              "outputPerMtok": 4.4,
+              "cacheReadPerMtok": 0.26,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.z.ai/guides/overview/pricing",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "z-ai/glm-5.3-flash",
-      "aliases": ["glm-5.3-flash"],
+      "aliases": [
+        "glm-5.3-flash"
+      ],
       "defaults": {
         "name": "GLM-5.3-Flash",
         "description": "Zhipu GLM-5.3-Flash native multimodal coding model; 1M context",
         "group": "china",
         "contextWindow": 1000000,
-        "maxOutputTokens": 131072
-      }
+        "maxOutputTokens": 131072,
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultEffort": "high"
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.15,
+              "outputPerMtok": 0.5,
+              "cacheReadPerMtok": 0.03,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.z.ai/guides/overview/pricing",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xd/z-ai-glm-5.3-flash",
@@ -4058,51 +5257,199 @@
         "group": "china",
         "contextWindow": 1000000,
         "maxOutputTokens": 131072,
-        "defaultEffort": "medium"
-      }
+        "defaultEffort": "high",
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ]
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.15,
+              "outputPerMtok": 0.5,
+              "cacheReadPerMtok": 0.03,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://docs.z.ai/guides/overview/pricing",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "deepseek/deepseek-v4-pro",
-      "aliases": ["deepseek-v4-pro"],
+      "aliases": [
+        "deepseek-v4-pro"
+      ],
       "defaults": {
         "name": "DeepSeek V4 Pro",
         "description": "DeepSeek V4 Pro reasoning model",
         "group": "china",
         "contextWindow": 1048576,
         "maxOutputTokens": 384000,
-        "efforts": ["low", "high", "max"],
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
         "defaultEffort": "high"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.435,
+              "outputPerMtok": 0.87,
+              "cacheReadPerMtok": 0.003625,
+              "effectiveFrom": "2026-07-31",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://api-docs.deepseek.com/quick_start/pricing",
+                "verifiedAt": "2026-08-05"
+              },
+              "effectiveUntil": "2026-08-16"
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 1.32,
+              "outputPerMtok": 3.96,
+              "cacheReadPerMtok": 0.044,
+              "effectiveFrom": "2026-08-16",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://api-docs.deepseek.com/quick_start/pricing",
+                "verifiedAt": "2026-08-16"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "deepseek/deepseek-v4-flash",
-      "aliases": ["deepseek-v4-flash"],
+      "aliases": [
+        "deepseek-v4-flash"
+      ],
       "defaults": {
         "name": "DeepSeek V4 Flash",
         "description": "DeepSeek V4 Flash efficiency-optimized MoE; supports low/high/max effort",
         "group": "china",
         "contextWindow": 1048576,
         "maxOutputTokens": 384000,
-        "efforts": ["low", "high", "max"],
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
         "defaultEffort": "high"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.14,
+              "outputPerMtok": 0.28,
+              "cacheReadPerMtok": 0.0028,
+              "effectiveFrom": "2026-07-31",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://api-docs.deepseek.com/quick_start/pricing",
+                "verifiedAt": "2026-08-05"
+              },
+              "effectiveUntil": "2026-08-16"
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.44,
+              "outputPerMtok": 1.32,
+              "cacheReadPerMtok": 0.014,
+              "effectiveFrom": "2026-08-16",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://api-docs.deepseek.com/quick_start/pricing",
+                "verifiedAt": "2026-08-16"
+              },
+              "effectiveUntil": "2026-09-11"
+            },
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.3,
+              "outputPerMtok": 1.2,
+              "cacheReadPerMtok": 0.006,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://api-docs.deepseek.com/quick_start/pricing",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "openai/gpt-5.4-nano",
-      "aliases": ["gpt-5.4-nano"],
+      "aliases": [
+        "gpt-5.4-nano"
+      ],
       "defaults": {
         "name": "GPT-5.4-Nano",
         "description": "OpenAI GPT-5.4 nano for simple, high-volume tasks",
         "group": "gpt",
         "contextWindow": 400000,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high", "xhigh"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.2,
+              "outputPerMtok": 1.25,
+              "cacheReadPerMtok": 0.02,
+              "effectiveFrom": "2026-03-17",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://developers.openai.com/api/docs/models/gpt-5.4-nano",
+                "verifiedAt": "2026-08-01"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "minimax/minimax-m3",
-      "aliases": ["MiniMax-M3"],
+      "aliases": [
+        "MiniMax-M3"
+      ],
       "defaults": {
         "name": "MiniMax M3",
         "group": "china",
@@ -4111,78 +5458,416 @@
     },
     {
       "id": "minimax/minimax-m2.7",
-      "aliases": ["MiniMax-M2.7"],
+      "aliases": [
+        "MiniMax-M2.7"
+      ],
       "defaults": {
         "name": "MiniMax M2.7",
         "group": "china",
         "contextWindow": 204800
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 2.1,
+              "outputPerMtok": 8.4,
+              "cacheReadPerMtok": 0.42,
+              "cacheWritePerMtok": 2.625,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        },
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.3,
+              "outputPerMtok": 1.2,
+              "cacheReadPerMtok": 0.06,
+              "cacheWritePerMtok": 0.375,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimax.io/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "minimax/minimax-m2.7-highspeed",
-      "aliases": ["MiniMax-M2.7-highspeed"],
+      "aliases": [
+        "MiniMax-M2.7-highspeed"
+      ],
       "defaults": {
         "name": "MiniMax M2.7 Highspeed",
         "group": "china",
         "contextWindow": 204800
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 4.2,
+              "outputPerMtok": 16.8,
+              "cacheReadPerMtok": 0.42,
+              "cacheWritePerMtok": 2.625,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        },
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.6,
+              "outputPerMtok": 2.4,
+              "cacheReadPerMtok": 0.06,
+              "cacheWritePerMtok": 0.375,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimax.io/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "minimax/minimax-m2.5",
-      "aliases": ["MiniMax-M2.5"],
+      "aliases": [
+        "MiniMax-M2.5"
+      ],
       "defaults": {
         "name": "MiniMax M2.5",
         "group": "china",
         "contextWindow": 204800
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 2.1,
+              "outputPerMtok": 8.4,
+              "cacheReadPerMtok": 0.21,
+              "cacheWritePerMtok": 2.625,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        },
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.3,
+              "outputPerMtok": 1.2,
+              "cacheReadPerMtok": 0.03,
+              "cacheWritePerMtok": 0.375,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimax.io/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "minimax/minimax-m2.5-highspeed",
-      "aliases": ["MiniMax-M2.5-highspeed"],
+      "aliases": [
+        "MiniMax-M2.5-highspeed"
+      ],
       "defaults": {
         "name": "MiniMax M2.5 Highspeed",
         "group": "china",
         "contextWindow": 204800
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 4.2,
+              "outputPerMtok": 16.8,
+              "cacheReadPerMtok": 0.21,
+              "cacheWritePerMtok": 2.625,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        },
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.6,
+              "outputPerMtok": 2.4,
+              "cacheReadPerMtok": 0.03,
+              "cacheWritePerMtok": 0.375,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimax.io/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "minimax/minimax-m2.1",
-      "aliases": ["MiniMax-M2.1"],
+      "aliases": [
+        "MiniMax-M2.1"
+      ],
       "defaults": {
         "name": "MiniMax M2.1",
         "group": "china",
         "contextWindow": 204800
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 2.1,
+              "outputPerMtok": 8.4,
+              "cacheReadPerMtok": 0.21,
+              "cacheWritePerMtok": 2.625,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        },
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.3,
+              "outputPerMtok": 1.2,
+              "cacheReadPerMtok": 0.03,
+              "cacheWritePerMtok": 0.375,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimax.io/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "minimax/minimax-m2.1-highspeed",
-      "aliases": ["MiniMax-M2.1-highspeed"],
+      "aliases": [
+        "MiniMax-M2.1-highspeed"
+      ],
       "defaults": {
         "name": "MiniMax M2.1 Highspeed",
         "group": "china",
         "contextWindow": 204800
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 4.2,
+              "outputPerMtok": 16.8,
+              "cacheReadPerMtok": 0.21,
+              "cacheWritePerMtok": 2.625,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        },
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.6,
+              "outputPerMtok": 2.4,
+              "cacheReadPerMtok": 0.03,
+              "cacheWritePerMtok": 0.375,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimax.io/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "minimax/minimax-m2",
-      "aliases": ["MiniMax-M2"],
+      "aliases": [
+        "MiniMax-M2"
+      ],
       "defaults": {
         "name": "MiniMax M2",
         "group": "china",
         "contextWindow": 204800
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 2.1,
+              "outputPerMtok": 8.4,
+              "cacheReadPerMtok": 0.21,
+              "cacheWritePerMtok": 2.625,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        },
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 0.3,
+              "outputPerMtok": 1.2,
+              "cacheReadPerMtok": 0.03,
+              "cacheWritePerMtok": 0.375,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.minimax.io/docs/guides/pricing-paygo",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "moonshotai/kimi-k3",
-      "aliases": ["kimi-k3"],
+      "aliases": [
+        "kimi-k3"
+      ],
       "defaults": {
         "name": "Kimi K3",
         "group": "china",
         "contextWindow": 1048576,
         "maxOutputTokens": 1048576,
-        "efforts": ["low", "high", "max"],
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
         "defaultEffort": "high"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 20,
+              "outputPerMtok": 100,
+              "cacheReadPerMtok": 2,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.kimi.com/docs/pricing/chat-k3",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        },
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 3,
+              "outputPerMtok": 15,
+              "cacheReadPerMtok": 0.3,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.kimi.ai/docs/pricing/chat-k3",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "qwen/qwen3.6-plus",
@@ -4198,7 +5883,9 @@
     },
     {
       "id": "qwen/qwen3.6-plus-api",
-      "aliases": ["qwen3.6-plus"],
+      "aliases": [
+        "qwen3.6-plus"
+      ],
       "defaults": {
         "name": "Qwen 3.6 Plus API",
         "group": "china",
@@ -4208,7 +5895,9 @@
     },
     {
       "id": "qwen/qwen3.7-flash",
-      "aliases": ["qwen3.7-flash"],
+      "aliases": [
+        "qwen3.7-flash"
+      ],
       "defaults": {
         "name": "Qwen 3.7 Flash",
         "description": "Alibaba Qwen 3.7 Flash text model with provider-managed thinking",
@@ -4220,19 +5909,47 @@
     },
     {
       "id": "qwen/qwen3.8-flash",
-      "aliases": ["qwen3.8-flash"],
+      "aliases": [
+        "qwen3.8-flash"
+      ],
       "defaults": {
         "name": "Qwen 3.8 Flash",
         "description": "Alibaba Qwen 3.8 Flash multimodal model with provider-managed thinking",
         "group": "china",
         "contextWindow": 991808,
         "maxOutputTokens": 131072,
-        "efforts": []
-      }
+        "efforts": [
+          "low",
+          "medium",
+          "xhigh"
+        ],
+        "defaultEffort": "medium"
+      },
+      "referencePriceGroups": [
+        {
+          "id": "cn",
+          "prices": [
+            {
+              "currency": "CNY",
+              "variant": "standard",
+              "inputPerMtok": 0.8,
+              "outputPerMtok": 2.7,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://help.aliyun.com/zh/model-studio/model-pricing",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "qwen/qwen3.7-plus",
-      "aliases": ["qwen3.7-plus"],
+      "aliases": [
+        "qwen3.7-plus"
+      ],
       "defaults": {
         "name": "Qwen 3.7 Plus",
         "description": "Alibaba Qwen 3.7 Plus text model with provider-managed thinking",
@@ -4244,7 +5961,9 @@
     },
     {
       "id": "qwen/qwen3.6-flash",
-      "aliases": ["qwen3.6-flash"],
+      "aliases": [
+        "qwen3.6-flash"
+      ],
       "defaults": {
         "name": "Qwen 3.6 Flash",
         "description": "Alibaba Qwen 3.6 Flash text model with provider-managed thinking",
@@ -4256,7 +5975,10 @@
     },
     {
       "id": "openai/gpt-5.5-auto",
-      "aliases": ["xd/codex-gpt-5.5-auto", "codex/gpt-5.5:auto"],
+      "aliases": [
+        "xd/codex-gpt-5.5-auto",
+        "codex/gpt-5.5:auto"
+      ],
       "defaults": {
         "name": "GPT-5.5-Auto",
         "group": "gpt-budget",
@@ -4270,7 +5992,12 @@
         "name": "Qwen3.8 27B",
         "contextWindow": 991808,
         "maxOutputTokens": 131072,
-        "efforts": ["low", "medium", "high", "xhigh"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
         "defaultEffort": "medium"
       }
     },
@@ -4281,7 +6008,11 @@
         "name": "Hy3",
         "contextWindow": 262144,
         "maxOutputTokens": 128000,
-        "efforts": ["low", "medium", "high"],
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
         "defaultEffort": "medium"
       }
     },
@@ -4294,19 +6025,48 @@
     },
     {
       "id": "xd/moonshotai-kimi-k3",
-      "aliases": ["moonshot/kimi-k3"],
+      "aliases": [
+        "moonshot/kimi-k3"
+      ],
       "defaults": {
         "name": "Kimi K3",
         "group": "china",
         "contextWindow": 1048576,
         "maxOutputTokens": 1048576,
-        "efforts": ["low", "medium", "high", "max"],
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "max"
+        ],
         "defaultEffort": "medium"
-      }
+      },
+      "referencePriceGroups": [
+        {
+          "id": "global",
+          "prices": [
+            {
+              "currency": "USD",
+              "variant": "standard",
+              "inputPerMtok": 3,
+              "outputPerMtok": 15,
+              "cacheReadPerMtok": 0.3,
+              "effectiveFrom": "2026-09-11",
+              "source": {
+                "kind": "provider-official",
+                "url": "https://platform.kimi.ai/docs/pricing/chat-k3",
+                "verifiedAt": "2026-09-11"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "xd/deepseek-deepseek-v4-flash-vision-exp",
-      "aliases": ["deepseek/deepseek-v4-flash-vision-exp"],
+      "aliases": [
+        "deepseek/deepseek-v4-flash-vision-exp"
+      ],
       "defaults": {
         "name": "DeepSeek V4 Flash Vision Exp",
         "defaultEffort": "medium"
@@ -4314,7 +6074,9 @@
     },
     {
       "id": "xd/tencent-hy4-preview",
-      "aliases": ["tencent/hy4-preview"],
+      "aliases": [
+        "tencent/hy4-preview"
+      ],
       "defaults": {
         "name": "Hy4 preview",
         "defaultEffort": "medium"
@@ -4359,162 +6121,254 @@
       "id": "qwen/qwen3.8-flash-next",
       "aliases": [],
       "defaults": {
-        "name": "Qwen3.8 Flash-Next"
+        "name": "Qwen3.8 Flash-Next",
+        "efforts": [
+          "low",
+          "medium",
+          "xhigh"
+        ],
+        "defaultEffort": "medium"
       }
     },
     {
       "id": "openai/gpt-image-2.5-sunburst",
-      "aliases": ["gpt-image-2.5-sunburst"],
+      "aliases": [
+        "gpt-image-2.5-sunburst"
+      ],
       "defaults": {
         "name": "GPT Image 2.5 Sunburst",
         "mode": "image_generation",
         "modalities": {
-          "input": ["text", "image"],
-          "output": ["image"]
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "image"
+          ]
         }
       }
     },
     {
       "id": "openai/gpt-image-2.5-flare",
-      "aliases": ["gpt-image-2.5-flare"],
+      "aliases": [
+        "gpt-image-2.5-flare"
+      ],
       "defaults": {
         "name": "GPT Image 2.5 Flare",
         "mode": "image_generation",
         "modalities": {
-          "input": ["text", "image"],
-          "output": ["image"]
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "image"
+          ]
         }
       }
     },
     {
       "id": "openai/gpt-image-2",
-      "aliases": ["gpt-image-2"],
+      "aliases": [
+        "gpt-image-2"
+      ],
       "defaults": {
         "name": "GPT Image 2",
         "mode": "image_generation",
         "modalities": {
-          "input": ["text", "image"],
-          "output": ["image"]
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "image"
+          ]
         }
       }
     },
     {
       "id": "gemini/gemini-3-pro-image",
-      "aliases": ["gemini-3-pro-image"],
+      "aliases": [
+        "gemini-3-pro-image"
+      ],
       "defaults": {
         "name": "Gemini 3 Pro Image",
         "mode": "image_generation",
         "modalities": {
-          "input": ["text", "image"],
-          "output": ["image"]
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "image"
+          ]
         }
       }
     },
     {
       "id": "gemini/gemini-3.1-flash-image",
-      "aliases": ["gemini-3.1-flash-image"],
+      "aliases": [
+        "gemini-3.1-flash-image"
+      ],
       "defaults": {
         "name": "Gemini 3.1 Flash Image",
         "mode": "image_generation",
         "modalities": {
-          "input": ["text", "image"],
-          "output": ["image"]
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "image"
+          ]
         }
       }
     },
     {
       "id": "xai/grok-imagine-image",
-      "aliases": ["grok-imagine-image"],
+      "aliases": [
+        "grok-imagine-image"
+      ],
       "defaults": {
         "name": "Grok Imagine Image",
         "mode": "image_generation",
         "modalities": {
-          "input": ["text", "image"],
-          "output": ["image"]
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "image"
+          ]
         }
       }
     },
     {
       "id": "xai/grok-imagine-image-quality",
-      "aliases": ["grok-imagine-image-quality"],
+      "aliases": [
+        "grok-imagine-image-quality"
+      ],
       "defaults": {
         "name": "Grok Imagine Image (Quality)",
         "mode": "image_generation",
         "modalities": {
-          "input": ["text", "image"],
-          "output": ["image"]
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "image"
+          ]
         }
       }
     },
     {
       "id": "xai/grok-imagine-video",
-      "aliases": ["grok-imagine-video"],
+      "aliases": [
+        "grok-imagine-video"
+      ],
       "defaults": {
         "name": "Grok Imagine Video",
         "mode": "video_generation",
         "modalities": {
-          "input": ["text", "image"],
-          "output": ["video"]
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "video"
+          ]
         }
       }
     },
     {
       "id": "openai/gpt-4o-mini-tts",
-      "aliases": ["gpt-4o-mini-tts"],
+      "aliases": [
+        "gpt-4o-mini-tts"
+      ],
       "defaults": {
         "name": "GPT-4o mini TTS",
         "mode": "audio_speech",
         "modalities": {
-          "input": ["text"],
-          "output": ["audio"]
+          "input": [
+            "text"
+          ],
+          "output": [
+            "audio"
+          ]
         }
       }
     },
     {
       "id": "openai/whisper-1",
-      "aliases": ["whisper-1"],
+      "aliases": [
+        "whisper-1"
+      ],
       "defaults": {
         "name": "Whisper",
         "mode": "audio_transcription",
         "modalities": {
-          "input": ["audio"],
-          "output": ["text"]
+          "input": [
+            "audio"
+          ],
+          "output": [
+            "text"
+          ]
         }
       }
     },
     {
       "id": "openai/gpt-realtime-whisper",
-      "aliases": ["gpt-realtime-whisper"],
+      "aliases": [
+        "gpt-realtime-whisper"
+      ],
       "defaults": {
         "name": "GPT Realtime Whisper",
         "mode": "realtime",
         "modalities": {
-          "input": ["audio"],
-          "output": ["text"]
+          "input": [
+            "audio"
+          ],
+          "output": [
+            "text"
+          ]
         }
       }
     },
     {
       "id": "openai/text-embedding-3-small",
-      "aliases": ["text-embedding-3-small"],
+      "aliases": [
+        "text-embedding-3-small"
+      ],
       "defaults": {
         "name": "Text Embedding 3 Small",
         "mode": "embedding",
         "modalities": {
-          "input": ["text"],
-          "output": ["embedding"]
+          "input": [
+            "text"
+          ],
+          "output": [
+            "embedding"
+          ]
         }
       }
     },
     {
       "id": "openai/text-embedding-3-large",
-      "aliases": ["text-embedding-3-large"],
+      "aliases": [
+        "text-embedding-3-large"
+      ],
       "defaults": {
         "name": "Text Embedding 3 Large",
         "mode": "embedding",
         "modalities": {
-          "input": ["text"],
-          "output": ["embedding"]
+          "input": [
+            "text"
+          ],
+          "output": [
+            "embedding"
+          ]
         }
       }
     }

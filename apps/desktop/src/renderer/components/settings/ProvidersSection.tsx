@@ -80,7 +80,7 @@ import { canAccessBillingSettings } from './billingVisibility';
 import { resolveXdAssetModuleState } from './providerAssetModule';
 import { useProviderSubscriptionCard } from './useProviderSubscriptionCard';
 import { QuotaHoverCard } from '../status/QuotaHoverCard';
-import { CustomProviderDialog } from './CustomProviderDialog';
+import { ProviderConnectionDialog } from './ProviderConnectionDialog';
 import { AddProviderWizard, type WizardEntry } from './AddProviderWizard';
 import { OllamaProviderDetail } from './OllamaProviderDetail';
 import {
@@ -88,7 +88,8 @@ import {
   MANAGED_LMSTUDIO_PROVIDER_ID,
   MANAGED_OLLAMA_PROVIDER_ID,
 } from '../../../shared/localModelRuntime';
-import { OAuthDeviceCodeCard } from './OAuthDeviceCodeCard';
+import { OAuthBrowserLink, OAuthDeviceCodeCard } from './OAuthDeviceCodeCard';
+import { ProviderImportDialog } from './ProviderImportDialog';
 import { SettingsTextInput } from './SettingsTextInput';
 import { buildUnionRows, UnifiedModelList } from './UnifiedModelList';
 import { AnthropicMark } from '@/components/icons/AnthropicMark';
@@ -1000,8 +1001,8 @@ function GenericOAuthHeader({
     [],
   );
   const deviceFlow = provider.auth.oauth?.flow === 'device-code';
-  const { deviceCode, clearDeviceCode, beginOwnedLogin, cancelOwnedLogin } =
-    useProviderOAuthDeviceCode(provider.id, { observeProgress: deviceFlow });
+  const { deviceCode, browserUrl, clearDeviceCode, beginOwnedLogin, cancelOwnedLogin } =
+    useProviderOAuthDeviceCode(provider.id, { observeProgress: deviceFlow || provider.auth.native === 'codex' });
 
   const handleLogin = useCallback(async () => {
     const attempt = ++loginAttempt.current;
@@ -1094,7 +1095,8 @@ function GenericOAuthHeader({
           disabled: busy,
         };
   const detail =
-    loggingIn && deviceFlow ? <OAuthDeviceCodeCard deviceCode={deviceCode} /> : undefined;
+    loggingIn && deviceFlow ? <OAuthDeviceCodeCard deviceCode={deviceCode} />
+      : loggingIn && browserUrl ? <OAuthBrowserLink url={browserUrl} /> : undefined;
 
   return (
     <DetailHeader
@@ -1800,6 +1802,7 @@ function ListRow({
   sortable: boolean;
 }) {
   const { t } = useTranslation();
+  const management = useProviderManagement(provider);
   const [ollamaLive, setOllamaLive] = useState<boolean | null>(null);
   useEffect(() => {
     if (provider.id !== MANAGED_OLLAMA_PROVIDER_ID) return;
@@ -1853,6 +1856,7 @@ function ListRow({
         <button
           type="button"
           onClick={onSelect}
+          onDoubleClick={provider.id === 'xd' ? undefined : () => void management.rename()}
           aria-current={selected}
           className="flex min-w-0 flex-1 items-center gap-2.5 py-2 pl-3 pr-2.5 text-left"
         >
@@ -2010,7 +2014,6 @@ export function ProvidersSection() {
     | {
         mode: 'edit';
         config: CustomProviderConfig;
-        focusModelId?: string;
         focusAgent?: AgentKind;
       }
   >(null);
@@ -2019,6 +2022,16 @@ export function ProvidersSection() {
     modelId: string;
     agent?: AgentKind;
   } | null>(null);
+  const [providerImportId, setProviderImportId] = useState<string | null>(null);
+  const closeProviderImport = useCallback(() => setProviderImportId(null), []);
+  const finishProviderImport = useCallback(
+    (providerId: string) => {
+      setProviderImportId(null);
+      setSelectedId(providerId);
+      refetch();
+    },
+    [refetch],
+  );
   const addProviderButtonRef = useRef<HTMLButtonElement>(null);
   const [detections, setDetections] = useState<LocalCliDetection[]>([]);
   const [rediscovering, setRediscovering] = useState(false);
@@ -2251,7 +2264,7 @@ export function ProvidersSection() {
   }, [detections, byId, listProviders]);
 
   /**
-   * 深链定位(?connect=<id> / ?wizard=1,来自「连接供应商」引导卡等):providers
+   * 深链定位(?connect=<id> / ?wizard=1 / ?import=<opaque-id>):providers
    * 就绪后一次性消费,消费即从 URL 摘除(replace,防返回/刷新重复触发)。
    *   - connect 命中左栏占行的供应商(如 xd)→ 直接选中;
    *   - connect 命中目录内置渠道 → 向导直达该渠道授权步;
@@ -2269,21 +2282,15 @@ export function ProvidersSection() {
       agentParam === 'claude-code' || agentParam === 'codex' || agentParam === 'pi'
         ? agentParam
         : undefined;
-    if (!connect && !wizardFlag) return;
+    const importId = searchParams.get('import');
+    if (!connect && !wizardFlag && !importId) return;
     // 不用一次性 ref:消费后立即删参(下方 replace)即防重放;组件常驻期间
     // 再次带参导航(如二次深链)仍应生效(review 反馈)。
-    if (connect) {
+    if (importId) {
+      setProviderImportId(importId);
+    } else if (connect) {
       const target = byId.get(connect);
-      if (target?.source === 'user' && model) {
-        setSelectedId(connect);
-        setFocusedModel(null);
-        setDialog({
-          mode: 'edit',
-          config: providerViewToCustomProviderConfig(target),
-          focusModelId: model,
-          ...(agent ? { focusAgent: agent } : {}),
-        });
-      } else if (listProviders.some((p) => p.id === connect)) {
+      if (listProviders.some((p) => p.id === connect)) {
         setSelectedId(connect);
         setFocusedModel(
           model ? { providerId: connect, modelId: model, ...(agent ? { agent } : {}) } : null,
@@ -2306,6 +2313,7 @@ export function ProvidersSection() {
     next.delete('wizard');
     next.delete('model');
     next.delete('agent');
+    next.delete('import');
     setSearchParams(next, { replace: true });
   }, [loading, searchParams, setSearchParams, byId, listProviders]);
 
@@ -2402,7 +2410,9 @@ export function ProvidersSection() {
             return;
           }
           anyOk = true;
-          const merged = appendDiscoveredCustomProviderModels(rt.models, r.models);
+          const openRouterCatalog = /^https:\/\/openrouter\.ai\/api(?:\/v1)?\/?$/.test(rt.baseUrl)
+            ? rt.modelsUrl ?? 'https://openrouter.ai/api/v1/models' : undefined;
+          const merged = appendDiscoveredCustomProviderModels(rt.models, r.models, openRouterCatalog);
           rt.models = merged.models;
           added += merged.addedIds.length;
         }
@@ -2740,6 +2750,7 @@ export function ProvidersSection() {
                     )}
                   {!effectiveSelected.suspended &&
                     (providerHasModels(effectiveSelected) ||
+                      effectiveSelected.source === 'user' ||
                       (isBuiltinRefreshableProviderId(effectiveSelected.id) &&
                         !effectiveSelected.modelDiscoveryFailure) ||
                       effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID) && (
@@ -2764,7 +2775,9 @@ export function ProvidersSection() {
                               : undefined
                           }
                           emptyMessage={
-                            effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID
+                            effectiveSelected.source === 'user' && effectiveSelected.modelDiscoveryFailure
+                              ? t(`settings.providers.detail.discoveryFailed.${effectiveSelected.modelDiscoveryFailure.kind}`)
+                              : effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID
                               ? t('settings.providers.local.emptyInstalled')
                               : t(
                                   effectiveSelected.connected
@@ -2781,8 +2794,7 @@ export function ProvidersSection() {
                                 refreshDisabled: refreshingProviderId !== null,
                                 refreshIdleLabel: t('settings.providers.models.refreshBuiltinAria'),
                               }
-                            : effectiveSelected.source === 'user' &&
-                                effectiveSelected.auth.method !== 'oauth'
+                            : effectiveSelected.source === 'user'
                               ? {
                                   onRefresh: () => void handleRefreshModels(effectiveSelected),
                                   refreshing: refreshingProviderId === effectiveSelected.id,
@@ -2794,6 +2806,7 @@ export function ProvidersSection() {
                     )}
                   {!effectiveSelected.suspended &&
                     !providerHasModels(effectiveSelected) &&
+                    effectiveSelected.source !== 'user' &&
                     effectiveSelected.id !== MANAGED_OLLAMA_PROVIDER_ID &&
                     (Boolean(effectiveSelected.modelDiscoveryFailure) ||
                       !isBuiltinRefreshableProviderId(effectiveSelected.id)) && (
@@ -2853,18 +2866,17 @@ export function ProvidersSection() {
             setDialog({ mode: 'create' });
           }}
           onClose={() => setWizard(null)}
-          onDone={(providerId) => {
+          onDone={async (providerId) => {
+            await refetch();
             setWizard(null);
             if (providerId) setSelectedId(providerId);
-            refetch();
           }}
         />
       )}
 
       {dialog && (
-        <CustomProviderDialog
+        <ProviderConnectionDialog
           initial={dialog.mode === 'edit' ? dialog.config : undefined}
-          focusModelId={dialog.mode === 'edit' ? dialog.focusModelId : undefined}
           focusAgent={dialog.mode === 'edit' ? dialog.focusAgent : undefined}
           existingIds={providers.map((p) => p.id)}
           returnFocusRef={dialog.mode === 'create' ? addProviderButtonRef : undefined}
@@ -2873,6 +2885,15 @@ export function ProvidersSection() {
             setDialog(null);
             refetch();
           }}
+        />
+      )}
+
+      {providerImportId && (
+        <ProviderImportDialog
+          key={`${dataOwnerId}:${ownerGeneration}:${providerImportId}`}
+          importId={providerImportId}
+          onClose={closeProviderImport}
+          onDone={finishProviderImport}
         />
       )}
     </div>

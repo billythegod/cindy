@@ -1,3 +1,4 @@
+import { withClaudeProviderRuntime } from './piProviderPresets.js';
 /**
  * 目录源解析与加载（纯逻辑，IO 由 host 注入，零 Electron / node 依赖）。
  *
@@ -22,7 +23,7 @@ import type { AgentKind, Catalog, Provider, ProviderPreset } from "./types.js";
 
 /** 公共模型目录 API 路径。发布版由 model-access-server 匿名提供完整 Catalog。 */
 export const CATALOG_API_PATH =
-  "/api/model-catalog/catalog?registrySchemaVersion=4&catalogCapabilities=registry-v4-media";
+  "/api/model-catalog/catalog?registrySchemaVersion=5&catalogCapabilities=registry-v4-media";
 /** Explicit contract capability; a bare V4 query also identifies older strict readers. */
 export const CATALOG_CAPABILITY = "registry-v4-media";
 /** 旧客户端目录的 OSS 相对路径。迁移期作为公共 API 失败后的兼容回退。 */
@@ -126,7 +127,7 @@ export function resolveCatalogUrl(cfg: CatalogSourceConfig): string | null {
     try {
       const url = new URL(explicit);
       if (url.pathname.endsWith("/api/model-catalog/catalog")) {
-        url.searchParams.set("registrySchemaVersion", "4");
+        url.searchParams.set("registrySchemaVersion", "5");
         url.searchParams.set("catalogCapabilities", CATALOG_CAPABILITY);
         return url.toString();
       }
@@ -142,15 +143,23 @@ export function resolveCatalogUrl(cfg: CatalogSourceConfig): string | null {
 }
 
 /** One-way cache compatibility on upgrade. Old scopes are read, never rewritten. */
-async function readCatalogCache(io: CatalogIO, scope: string): Promise<string | null> {
+async function readCatalogCache(io: CatalogIO, scope: string): Promise<{ text: string; sameRepresentation: boolean } | null> {
   if (!io.readCache) return null;
   const current = await io.readCache(scope);
-  if (current !== null) return current;
+  if (current !== null) return { text: current, sameRepresentation: true };
   try {
     const url = new URL(scope);
     if (url.pathname.endsWith('/api/model-catalog/catalog') && url.searchParams.get('catalogCapabilities') === CATALOG_CAPABILITY) {
-      url.searchParams.delete('catalogCapabilities');
-      return await io.readCache(url.toString());
+      const legacyV5 = new URL(url);
+      legacyV5.searchParams.delete('catalogCapabilities');
+      const mediaV4 = new URL(url);
+      mediaV4.searchParams.set('registrySchemaVersion', '4');
+      const legacyV4 = new URL(mediaV4);
+      legacyV4.searchParams.delete('catalogCapabilities');
+      for (const previous of [legacyV5, mediaV4, legacyV4]) {
+        const cached = await io.readCache(previous.toString());
+        if (cached !== null) return { text: cached, sameRepresentation: false };
+      }
     }
   } catch { /* Non-URL scopes retain their existing behavior. */ }
   return null;
@@ -506,7 +515,7 @@ export function mergeWithBundled(primary: Catalog): Catalog {
   const presets = bundledPresets.map((bundled) => {
     const remote = primaryPresetsById.get(bundled.id);
     return remote
-      ? backfillPresetMetadata(remote, bundled, allowLegacyPiBackfill)
+      ? withClaudeProviderRuntime(backfillPresetMetadata(remote, bundled, allowLegacyPiBackfill))
       : bundled;
   });
   for (const preset of primaryPresets) {
@@ -584,12 +593,17 @@ function selectNewerModelRegistry(
 function preserveNewerCachedCatalog(
   remote: Catalog,
   cached: Catalog,
+  sameRepresentation = true,
 ): { catalog: Catalog; tieConflict: boolean } {
   const decision = decideModelRegistrySnapshot(
     remote.modelRegistry,
     cached.modelRegistry,
   );
   if (decision === "preserve-current-conflict") {
+    // Schema/capability projections legitimately differ at the same publication
+    // revision. Only the current URL's LKG can prove an illegal byte-level republish.
+    // A strictly newer old-scope cache still wins through preserve-current below.
+    if (!sameRepresentation) return { catalog: remote, tieConflict: false };
     return { catalog: cached, tieConflict: true };
   }
   if (decision === "preserve-current") {
@@ -674,10 +688,10 @@ export async function loadCatalogWithSource(
               const cachedText = await readCatalogCache(io, remoteUrl);
               if (cachedText !== null) {
                 const cached = parseRemoteCatalog(
-                  cachedText,
+                  cachedText.text,
                   allowLegacyModelMeta,
                 );
-                const selected = preserveNewerCachedCatalog(parsed, cached);
+                const selected = preserveNewerCachedCatalog(parsed, cached, cachedText.sameRepresentation);
                 if (selected.catalog !== parsed) {
                   parsed = selected.catalog;
                   cacheText = JSON.stringify(selected.catalog);
@@ -779,7 +793,7 @@ export async function loadCatalogWithSource(
         try {
           const cached = await readCatalogCache(io, remoteUrl);
           if (cached !== null) {
-            const parsed = parseRemoteCatalog(cached, allowLegacyModelMeta);
+            const parsed = parseRemoteCatalog(cached.text, allowLegacyModelMeta);
             log(io, "info", "loaded last-known-good catalog snapshot", {
               url: logUrl,
             });

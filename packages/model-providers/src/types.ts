@@ -39,7 +39,7 @@ export const PI_REASONING_EFFORTS = [
 export type PiReasoningEffort = (typeof PI_REASONING_EFFORTS)[number];
 
 /**
- * PI models.json understands these four portable inference protocols. The
+ * PI models.json understands these native inference APIs. The
  * provider-level wireProtocol remains the default for an endpoint; piApi is a
  * sparse per-model override for newly released models or protocol corrections.
  */
@@ -48,12 +48,16 @@ export const PI_MODEL_APIS = [
   "openai-responses",
   "openai-completions",
   "google-generative-ai",
+  "bedrock-converse-stream",
+  "azure-openai-responses",
+  "google-vertex",
+  "mistral-conversations",
 ] as const;
 export type PiModelApi = (typeof PI_MODEL_APIS)[number];
 
 /** Provider runtime 上游实际接受的推理 wire protocol。 */
 export type ProviderWireProtocol =
-  "anthropic-messages" | "openai-responses" | "openai-chat";
+  "anthropic-messages" | "openai-responses" | "openai-chat" | "google-generative-ai";
 
 /** Codex 通过本地 bridge 兼容的两种非原生 Responses wire protocol。 */
 export type CodexCompatibilityWireProtocol = Extract<
@@ -273,9 +277,12 @@ export interface ModelCost {
  * 跨 provider(如 gpt-5.5 同时由 openai 与 xd 提供)则必须元数据一致(见 catalog.ts 校验)。
  */
 export interface CatalogModel {
+  supportsToolCalls?: boolean;
+  reasoningRequired?: boolean;
   userModelConfig?: ProviderRuntimeModelConfig;
   catalogPresetId?: string;
   discoveredMetadata?: ModelMetadata;
+  discoveredCost?: ModelCost;
   nameExplicit?: boolean;
   /** Canonical model API from the accepted Registry; null explicitly means unverified. */
   nativeApi?: PiModelApi | null;
@@ -284,6 +291,8 @@ export interface CatalogModel {
   /** Server entitlement state. Paid-locked models remain present for UI but are never routable. */
   availability?: "available" | "requires_payment";
   /** Explicit Pi serializer; missing fields may use the matching native transport fallback. */
+  /** Upstream execution API, shared by Claude Code, Codex and Pi. */
+  api?: PiModelApi;
   piApi?: PiModelApi;
   /** 同一 provider/runtime 内该模型的上游覆盖；缺省使用 provider 级路由。 */
   route?: ProviderModelRouteConfig;
@@ -433,6 +442,7 @@ export interface CatalogModel {
    * `modelPlanePolicy` 刻意不把它投影进 CatalogModel，避免 Global 绕过区域门。
    *
    * 渲染层优先取被标记、当前可用且默认可见的模型；无标记时回退 `sortOrder` 第一。
+   * 订阅来源另外由 Provider.newSessionDefaults 按 Harness 投影，独立于网关区域策略。
    * v3 可显式标记 'claude-code'、'codex' 或 'pi'；客户端不跨 Agent 投影。缺省 = 不作为默认。
    * 故意**不纳入** `modelSignature` 跨供应商一致性校验：同一 id 在不同供应商下可各自表态。
    */
@@ -492,6 +502,10 @@ export interface Provider {
   auth: { method: AuthMethod; oauth?: OAuthProviderDescriptor; native?: "codex" | "claude" | "xai" };
   /** 用户使用该供应商时的额度来源；旧目录可缺省，由 source 从 bundled 同 id 条目补齐。 */
   access?: ProviderAccess;
+  /** Subscription defaults per Harness. Absent = legacy policy; {} = no configured default.
+   * IDs are scoped to this provider; selection still requires a usable, visible model.
+   */
+  newSessionDefaults?: Partial<Record<AgentKind, string>>;
   /**
    * 该供应商用于「起会话标题」一次性轻任务的最经济模型 id（须存在于本供应商任一 agent 的
    * `models` 里）。host 侧标题 oneShot（见 apps/desktop title-one-shot）按本字段选模型、取该
@@ -572,10 +586,13 @@ export interface ProviderRuntimeModelConfig extends Pick<
   "mode" | "modalities" | "officialDocs"
 > {
   discoveredMetadata?: ModelMetadata;
+  discoveredCost?: ModelCost;
   nameExplicit?: boolean;
   id: string;
   name: string;
   /** Per-model PI protocol override; provider wireProtocol remains the fallback. */
+  /** Upstream execution API, shared by Claude Code, Codex and Pi. */
+  api?: PiModelApi;
   piApi?: PiModelApi;
   /** 同一 runtime 内该模型的上游覆盖；缺省使用 runtime 级路由。 */
   route?: ProviderModelRouteConfig;

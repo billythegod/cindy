@@ -2,6 +2,8 @@ import {
   isModelSelectableForNewRoute,
   defaultEffortForCapabilities,
   clampEffortToSupported,
+  subscriptionModelKey,
+  providerCatalogId,
   type AgentKind,
   type Effort,
   type ProviderView,
@@ -17,7 +19,7 @@ export interface NewMakerDefaultTuple {
 }
 
 interface ProviderDefaultPolicy {
-  providerId: 'openai' | 'anthropic' | 'xai' | 'xd';
+  providerId: string;
   accessKind: 'subscription' | 'managed';
   agents: readonly AgentKind[];
   modelIds: readonly string[];
@@ -95,14 +97,17 @@ function matchingModel(
   modelIds: readonly string[],
   requireNewSessionDefault = false,
   requireImageInput = false,
+  enabled?: (agent: AgentKind, providerId: string, model: { id: string; defaultEnabled?: boolean }) => boolean,
 ) {
   const models = provider.models[agent] ?? [];
-  return modelIds
-    .map((id) => models.find((model) => model.id === id))
+  const preferred = modelIds.map((id) => models.find((model) => model.id === id));
+  // Once the owner has an enabled list, a disabled factory recommendation must
+  // yield to another enabled model from this source, never bypass that list.
+  return (enabled ? [...preferred, ...models] : preferred)
     .find(
       (model) =>
         model !== undefined &&
-        model.defaultEnabled !== false &&
+        (enabled ? enabled(agent, provider.id, model) : model.defaultEnabled !== false) &&
         (!requireNewSessionDefault || model.newSessionDefault?.includes(agent) === true) &&
         (!requireImageInput || supportsImageInput(model)) &&
         isModelSelectableForNewRoute(model, { userProvider: provider.source === 'user' }),
@@ -120,12 +125,20 @@ export function resolveNewMakerDefaultTuples(args: {
   providersLoading: boolean;
   availableAgents: ReadonlySet<MakerVendor>;
   availableAgentsLoaded: boolean;
+  isModelEnabled?: (agent: AgentKind, providerId: string, model: { id: string; defaultEnabled?: boolean }) => boolean;
 }): NewMakerDefaultTuple[] {
   const { providers, providersLoading, availableAgents, availableAgentsLoaded } = args;
   if (providersLoading || !availableAgentsLoaded) return [];
   const tuples: NewMakerDefaultTuple[] = [];
 
-  for (const policy of DEFAULT_POLICIES) {
+  const policies: readonly ProviderDefaultPolicy[] = [...DEFAULT_POLICIES, ...providers
+    .filter(provider => provider.access?.kind === 'subscription' && provider.newSessionDefaults !== undefined
+      && !DEFAULT_POLICIES.some(policy => policy.providerId === provider.id))
+    .map(provider => ({ providerId: provider.id, accessKind: 'subscription' as const,
+      agents: DEFAULT_POLICIES.find(policy => policy.providerId === providerCatalogId(provider))?.agents ?? provider.agents,
+      modelIds: [],
+    }))];
+  for (const policy of policies) {
     const provider = providers.find(
       (candidate) =>
         candidate.id === policy.providerId &&
@@ -139,12 +152,21 @@ export function resolveNewMakerDefaultTuples(args: {
     for (const agent of policy.agents) {
       const vendor = vendorForAgent(agent);
       if (!availableAgents.has(vendor)) continue;
+      // An explicit subscription map replaces the old hardcoded model IDs, including {}.
+      // Harness preference remains the existing product policy; this field selects its model.
+      const configured = provider.access?.kind === 'subscription' && provider.newSessionDefaults !== undefined;
+      const selected = provider.newSessionDefaults?.[agent];
+      const modelIds = configured
+        ? (provider.models[agent] ?? []).filter(model => selected !== undefined
+          && subscriptionModelKey(providerCatalogId(provider), model.id) === subscriptionModelKey(providerCatalogId(provider), selected)).map(model => model.id)
+        : policy.modelIds;
       const model = matchingModel(
         provider,
         agent,
-        policy.modelIds,
+        modelIds,
         policy.requireNewSessionDefault,
         policy.requireImageInput,
+        args.isModelEnabled,
       );
       if (!model) continue;
       tuples.push({

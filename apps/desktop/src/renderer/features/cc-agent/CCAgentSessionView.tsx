@@ -1,3 +1,4 @@
+import { shouldShowOpenPathError } from '../../../shared/openPathResult';
 import { shouldShowFailedScheduleNotice } from '@cindy/maker-shared/schedule-model';
 /**
  * CCAgentSessionView
@@ -1503,7 +1504,7 @@ export function CCAgentSessionView({
     if (isRemoteWorktreeSession) return;
     try {
       const result = await window.electronAPI.openPath(wd);
-      if (!result.success) toast.error(result.error || t('ccAgent.common.openFolderFailed'));
+      if (shouldShowOpenPathError(result)) toast.error(result.error || t('ccAgent.common.openFolderFailed'));
     } catch (err) {
       log.error('[open workingDir]', err);
       toast.error(t('ccAgent.common.openFolderFailed'));
@@ -4465,7 +4466,7 @@ export function CCAgentSessionView({
         // 伙伴对话不是用户经营的任务:它拿的是「跟谁说话 + 进 TA 的设置」,
         // 不是重命名/置顶/归档/导出那一套任务菜单。
         botChatIdentity ? (
-          <BotSessionContentHeaderRegistration bot={botChatIdentity} sessionId={sessionId} />
+          <BotSessionContentHeaderRegistration bot={botChatIdentity} />
         ) : (
           <SessionContentHeaderRegistration
             session={session}

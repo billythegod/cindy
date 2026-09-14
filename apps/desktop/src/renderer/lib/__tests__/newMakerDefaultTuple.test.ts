@@ -58,6 +58,40 @@ function resolve(providers: ProviderView[], availableAgents = allAgents) {
 }
 
 describe('resolveNewMakerDefaultTuple', () => {
+  it('uses configured subscription models for every Harness without changing Harness preference', () => {
+    const source = provider({ id: 'openai', access: 'subscription', models: {
+      codex: [model('gpt-5.6-sol'), model('configured-codex')],
+      'claude-code': [model('chatgpt/configured-claude')], pi: [model('chatgpt/configured-pi')],
+    } });
+    source.newSessionDefaults = { codex: 'configured-codex', 'claude-code': 'configured-claude', pi: 'configured-pi' };
+    expect(resolve([source])).toMatchObject({ vendor: 'codex', model: 'configured-codex' });
+    expect(resolve([source], new Set(['cc', 'pi']))).toMatchObject({ vendor: 'cc', model: 'chatgpt/configured-claude' });
+    expect(resolve([source], new Set(['pi']))).toMatchObject({ vendor: 'pi', model: 'chatgpt/configured-pi' });
+    source.newSessionDefaults = {};
+    expect(resolve([source])).toBeNull();
+    delete source.newSessionDefaults;
+    expect(resolve([source])).toMatchObject({ vendor: 'codex', model: 'gpt-5.6-sol' });
+  });
+  it.each([
+    { defaultEnabled: false }, { disabled: true }, { status: 'retired' as const },
+  ])('does not recommend an unavailable configured subscription model: %j', flags => {
+    const source = provider({ id: 'xai', access: 'subscription', models: { pi: [{ ...model('configured'), ...flags }, model('grok-4.6')] } });
+    source.newSessionDefaults = { pi: 'configured' };
+    expect(resolve([source])).toBeNull();
+  });
+  it('does not fabricate missing configured models or change another subscription', () => {
+    const first = provider({ id: 'openai', access: 'subscription', models: { codex: [model('gpt-5.6-sol')] } });
+    first.newSessionDefaults = { pi: 'missing' };
+    const second = provider({ id: 'xai', access: 'subscription', models: { pi: [model('grok-4.6')] } });
+    expect(resolve([first, second])).toMatchObject({ providerId: 'xai', vendor: 'pi', model: 'grok-4.6' });
+  });
+  it('accepts explicitly configured subscriptions outside the legacy hardcoded list', () => {
+    const source = provider({ id: 'other-subscription', access: 'subscription', models: { pi: [model('configured')] } });
+    source.newSessionDefaults = { pi: 'configured' };
+    expect(resolve([source])).toMatchObject({ providerId: 'other-subscription', vendor: 'pi', model: 'configured' });
+    delete source.newSessionDefaults;
+    expect(resolve([source])).toBeNull();
+  });
   it.each([
     { defaultEffort: undefined, efforts: ['low', 'medium', 'high'], expected: 'medium' },
     { defaultEffort: 'max', efforts: ['low', 'medium', 'high'], expected: 'high' },

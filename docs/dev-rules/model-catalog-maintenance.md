@@ -45,14 +45,17 @@ Catalog (version)
 | Claude Code / Codex 的工作默认 | `models[].perAgent`，引擎必须被该条目 route 声明 | 不把工作预算当供应商承诺容量 |
 | Pi 公共成员和 Pi 默认资料 | `providers[].models.pi`；公共资料仍按 Registry 合并 | 不从其他引擎名单复制出 Pi 路由 |
 | 经核实的错误实报 | 匹配 route 的 `forceOverrides` + `overrideReason` | 不影响其他供应商，也不压过用户配置 |
-| 官方参考价及历史价区间 | `routes[].referencePrices[]` | Gateway 实价/折扣仍归其计费控制面 |
+| 厂商官方参考价及历史价区间 | `baseModels[].referencePriceGroups[].prices[]`（Registry V5） | 按市场分组，保留币种、标准/Fast、输入区间及生效日期 |
+| 接入供应商参考报价 | `routes[].referencePrices[]`；`referencePriceGroup` 指向公共型号的官方价组 | Gateway 实价/折扣仍归其计费控制面，不混填缺失字段 |
 | 内置接入或新增连接模板 | `providers[]` 或 `presets[].runtimes` | 不在公共目录保存真实账号密钥 |
+| 订阅各 Harness 的新任务默认型号 | Server 数据库 `providers[].newSessionDefaults`，Platform 模型高级设置维护 | 不改变来源/Harness 优先顺序，不授予成员或账号权限，不覆盖用户选择 |
 | 本地候选、包装、门槛、推荐 | `localModels.models` / `featuredIds` | 不自动安装、卸载、切换用户模型 |
 | 某个用户的显式设置 | 本机 `model-catalog-overrides.json` 等既有偏好 | 不写回 Server；刷新保留，恢复默认删除 override |
 | 新执行协议、SDK 参数、token 计量 | 本仓对应 host / harness / bridge | 加目录字段不会自动获得执行能力 |
 
 结构例外：条目没有 `models[].defaults`；Registry agents / perAgent 只接受 Claude Code、Codex，
 Pi 走 `providers[].models.pi`（用户补丁 perAgent.pi 另属合法 schema）。媒体 route 使用 `agents: []`。
+订阅 `newSessionDefaults` 按 Claude Code / Codex / Pi 保存模型 ID，消费端在实际模型装配后按 Harness 投影默认标记；独立于 Gateway 的 Registry 默认及区域规则。字段缺省兼容旧目录策略，显式 `{}` 不恢复旧写死型号；旧客户端忽略该 Provider 扩展字段。原生订阅的多个账号沿用同一供应商默认配置，账号 ID、凭证和用户覆盖保持独立。新任务与伙伴复用当前选择器，连接失败、缺失/隐藏/停用/退役模型和不可用 Harness 不被推荐，用户显式选择仍优先。
 `contextWindowMax` 是客户端容量投影，不能填进 Registry；容量与工作预算见 [运行时细则](model-catalog-runtime.md)。
 
 ### 覆盖顺序
@@ -85,9 +88,9 @@ localModels 整域缺失才用随包本地域，显式空不兜底。
 
 1. **确认目标**：记下 Server/客户端 commit、部署环境、实际目录源、当前 schema/revision、要改的 provider/model/引擎；核实官方资料与该通道实报。本文不是线上状态台账。
 2. **修改责任侧**：在授权范围内先通过 Platform 维护 Server 草稿，检查差异并发布，再协调客户端离线 Registry。遇到尚未上线的协议配套，分别记录工作分支、已合并和已部署状态，不混成“已支持”。
-3. **整表同步**：将审阅后的 Server `modelRegistry` 整体同步到客户端 `catalog/model-registry.json`，保持同 updatedAt、同内容。不要复制 Server 整份 providers.json，也不能只复制 localModels 造成悬空引用。新 revision 必须递增且不可变；价格 effectiveFrom / verifiedAt 保留其真实日期。
+3. **整表同步**：将审阅后的 Server 发布按客户端协议整体导出到 `catalog/model-registry.json`。本分支客户端与 Server 数据库均使用 V5 公共参考价分组；导出 `registrySchemaVersion=5&catalogCapabilities=registry-v4-media`，保留价格分组、媒体和完整本地域，并剔除仅供服务端使用的 Gateway Pi 默认标记。离线文件必须与该响应的 Registry 同 updatedAt、同内容。不要复制 Server 整份 providers.json，也不能只复制 localModels 造成悬空引用。新 revision 必须递增且不可变；价格 effectiveFrom / verifiedAt 保留其真实日期。
 4. **先验证兼容再发布**：完整结构过 parseModelRegistry / parseCatalog；确认旧客户端投影。尤其先读 [媒体扩展发布前置条件](../model-registry-v4-media.md#发布前置条件)：同为 V4 并不证明认识新增媒体字段。LKG/内置回退不能代替兼容方案。
-5. **核对真实下发**：数据库版本的 Server 不再接受 MODEL_CATALOG_URL 热覆盖；部署后读取原路径，分别核对有/无能力声明的响应、ETag 和有效 revision。新端发送 `registrySchemaVersion=4&catalogCapabilities=registry-v4-media` 读取当前发布，旧端仍读取固定兼容发布。仅改文件、合并 PR、通过 CI 不算下发完成。
+5. **核对真实下发**：数据库版本的 Server 不再接受 MODEL_CATALOG_URL 热覆盖；部署后读取原路径，分别核对有/无能力声明的响应、ETag 和有效 revision。所有版本读取当前发布，能力声明只控制完整媒体 Registry 的表示；未声明时仍收到所请求版本的最新兼容资料和既有 Provider 媒体列表。仅改文件、合并 PR、通过 CI 不算下发完成。
    同步回归须核对原有直连 route 与历史参考价区间未丢失；覆盖标准/Fast、缓存读写、长输入分档。
    离线默认档与已发布 Server 有差异时逐项披露。原生协议校验须遍历全部 route 和活动目录中的
    订阅 wire 别名，不能仅统计字段填写率；不能从供应商兼容 API 反推未知型号的原生协议。
@@ -96,6 +99,13 @@ localModels 整域缺失才用随包本地域，显式空不兜底。
 兼容补全只能补缺项：旧快照缺失 nativeApi 可由内置补全；明确协议、null、retired 优先。
 它不改窗口、价格、成员资格，也不从 Gateway wireProtocol 或 Pi piApi 猜原生协议。
 旧格式迁移中若两份 Registry 有差异，必须使用不同 revision 并记录原因，不能伪造同版本一致。
+
+## 通用供应商导入
+
+Pi 上游生成资料统一转换为客户端 `catalog/provider-models.json`，供各引擎和设置页补缺；
+不另存 Pi 原始表。目录的 Pi API 是该渠道的执行协议，不冒充 Registry 的厂商原生协议。
+维护命令、覆盖顺序和验收见 [通用供应商目录](provider-catalog-generation.md)。
+渠道多协议与逐模型接口证据见 [供应商接口核查](provider-interface-audit.md)。
 
 ## 按问题继续阅读
 
@@ -109,3 +119,26 @@ localModels 整域缺失才用随包本地域，显式空不兜底。
 | 历史型号与同步记录 | [历史记录](../model-catalog-history.md)；不可当作当前状态 |
 | 字段写法及可执行校验 | [五个示例](../examples/model-catalog.md) |
 | 修改代码与定位测试 | [代码导航](model-catalog-runtime.md#从需求找到代码) |
+
+## 厂商参考价（Registry V5）
+
+公共型号的 `referencePriceGroups` 使用市场标识（当前为 `global` / `cn`），不是供应商 ID。
+每组 `prices` 沿用原价格结构与官方证据：币种、每百万 tokens 单价、缓存读/写及 1h 写入、
+标准/Fast 等变体、输入区间 `[minInputTokens, maxInputTokens)`、生效日期区间。
+缺字段保持未知，明确的 0 才表示零单价；缓存存储每小时费用不能写成缓存写入单价。
+
+`resolveBaseModelReferencePrice` 按公共 ID/唯一 alias 读取，不依赖供应商名单。
+多市场/币种必须明确选择到唯一有效价格；无匹配或有歧义返回未知。
+路由用 `referencePriceGroup` 明确选择所属公共型号的价格组；供应商自己的 `referencePrices`
+优先于该组，整组替换，不逐字段补齐。订阅价值估算指定 `officialOnly`，仅取厂商参考价，
+用户显式价格覆盖仍优先，账号归属不变。XD 计费继续只读 Gateway 实报。
+
+新客户端请求 `registrySchemaVersion=5&catalogCapabilities=registry-v4-media`。服务端向 V1–V4 展开官方参考价到原路由字段，
+剥离新增组与引用字段；V4 保留公共资料、本地域及原覆盖语义。各版本响应有独立 ETag。
+旧服务端仍可返回旧目录，新客户端保留旧格式读取；应先部署服务端再发布客户端。
+升级后离线可读取原 V5、V4 媒体版及旧 V4 的缓存，只向当前请求对应的缓存写入；
+同一发布在不同 schema/能力下的投影允许内容不同，升级时可接受当前响应；旧缓存的
+更高 revision 仍优先。同一请求地址的同 revision 异内容继续按非法重发处理。
+实现及回归见 [source.ts](../../packages/model-providers/src/source.ts) 与
+[source-registry.test.ts](../../packages/model-providers/src/__tests__/source-registry.test.ts)。
+本次只迁移已有、已核实的价格，不补猜测价格，不改变 XD 的缺价处理。
