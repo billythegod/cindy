@@ -111,11 +111,11 @@ describe('sidebar display settings menu', () => {
       within(submenu)
         .getAllByRole('menuitem')
         .map((row) => row.textContent),
-    ).toEqual(['按优先级', '按最近活动', '按创建时间']);
-    fireEvent.click(within(submenu).getByRole('menuitem', { name: '按创建时间' }));
+    ).toEqual(['优先级', '最近活动', '创建时间']);
+    fireEvent.click(within(submenu).getByRole('menuitem', { name: '创建时间' }));
     expect(filter.setSortBy).toHaveBeenCalledWith('created');
     expect(screen.getAllByRole('menu')).toHaveLength(2);
-    expect(within(submenu).getByRole('menuitem', { name: '按创建时间' })).not.toBeNull();
+    expect(within(submenu).getByRole('menuitem', { name: '创建时间' })).not.toBeNull();
   });
 
   it('keeps status independent from content filters and exposes a selectable Pi harness', async () => {
@@ -147,7 +147,7 @@ describe('sidebar display settings menu', () => {
       within(group)
         .getAllByRole('menuitem')
         .map((row) => row.textContent),
-    ).toEqual(['按项目', '按对话']);
+    ).toEqual(['项目', '对话']);
     expect(filter.groupDevice).toBe(true);
   });
 });
