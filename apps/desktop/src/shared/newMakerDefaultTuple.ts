@@ -22,7 +22,6 @@ interface ProviderDefaultPolicy {
   providerId: string;
   accessKind: 'subscription' | 'managed';
   agents: readonly AgentKind[];
-  modelIds: readonly string[];
   requireNewSessionDefault?: boolean;
   requireImageInput?: boolean;
 }
@@ -40,7 +39,6 @@ const DEFAULT_POLICIES: readonly ProviderDefaultPolicy[] = [
     providerId: 'xd',
     accessKind: 'managed',
     agents: ['pi'],
-    modelIds: ['z-ai/glm-5.3-flash', 'glm-5.3-flash'],
     requireNewSessionDefault: true,
     requireImageInput: true,
   },
@@ -48,21 +46,27 @@ const DEFAULT_POLICIES: readonly ProviderDefaultPolicy[] = [
     providerId: 'openai',
     accessKind: 'subscription',
     agents: ['codex', 'claude-code', 'pi'],
-    modelIds: ['chatgpt/gpt-5.6-sol', 'gpt-5.6-sol'],
   },
   {
     providerId: 'anthropic',
     accessKind: 'subscription',
     agents: ['claude-code', 'codex', 'pi'],
-    modelIds: ['claude-opus-5', 'anthropic/claude-opus-5'],
   },
   {
     providerId: 'xai',
     accessKind: 'subscription',
     agents: ['pi', 'codex', 'claude-code'],
-    modelIds: ['grok-4.6', 'xai/grok-4.6'],
   },
 ];
+
+// Historical identities are retained only to recognize old automatically populated drafts.
+// Runtime recommendations below never consult these IDs.
+const LEGACY_DEFAULT_MODEL_IDS: Readonly<Record<string, readonly string[]>> = {
+  xd: ['z-ai/glm-5.3-flash', 'glm-5.3-flash'],
+  openai: ['chatgpt/gpt-5.6-sol', 'gpt-5.6-sol'],
+  anthropic: ['claude-opus-5', 'anthropic/claude-opus-5'],
+  xai: ['grok-4.6', 'xai/grok-4.6'],
+};
 
 function vendorForAgent(agent: AgentKind): NewMakerDefaultTuple['vendor'] {
   return agent === 'claude-code' ? 'cc' : agent;
@@ -80,7 +84,7 @@ export function isKnownProductDefaultTupleIdentity(args: {
   return DEFAULT_POLICIES.some(
     (policy) =>
       policy.providerId === args.providerId &&
-      policy.modelIds.includes(args.model) &&
+      LEGACY_DEFAULT_MODEL_IDS[policy.providerId]?.includes(args.model) &&
       policy.agents.some((agent) => vendorForAgent(agent) === args.vendor),
   );
 }
@@ -136,7 +140,6 @@ export function resolveNewMakerDefaultTuples(args: {
       && !DEFAULT_POLICIES.some(policy => policy.providerId === provider.id))
     .map(provider => ({ providerId: provider.id, accessKind: 'subscription' as const,
       agents: DEFAULT_POLICIES.find(policy => policy.providerId === providerCatalogId(provider))?.agents ?? provider.agents,
-      modelIds: [],
     }))];
   for (const policy of policies) {
     const provider = providers.find(
@@ -152,14 +155,16 @@ export function resolveNewMakerDefaultTuples(args: {
     for (const agent of policy.agents) {
       const vendor = vendorForAgent(agent);
       if (!availableAgents.has(vendor)) continue;
-      // An explicit subscription map replaces the old hardcoded model IDs, including {}.
-      // Harness preference remains the existing product policy; this field selects its model.
-      const configured = provider.access?.kind === 'subscription' && provider.newSessionDefaults !== undefined;
+      // The publication selects model IDs; product policy only orders sources and Harnesses.
+      const models = provider.models[agent] ?? [];
       const selected = provider.newSessionDefaults?.[agent];
-      const modelIds = configured
-        ? (provider.models[agent] ?? []).filter(model => selected !== undefined
-          && subscriptionModelKey(providerCatalogId(provider), model.id) === subscriptionModelKey(providerCatalogId(provider), selected)).map(model => model.id)
-        : policy.modelIds;
+      const modelIds = (policy.accessKind === 'subscription'
+        ? models.filter(model => selected !== undefined
+          && subscriptionModelKey(providerCatalogId(provider), model.id) === subscriptionModelKey(providerCatalogId(provider), selected))
+        : models.filter(model => model.newSessionDefault?.includes(agent)))
+        .map(model => model.id);
+      // Removing a recommendation must not resurrect a legacy ID or choose an arbitrary model.
+      if (modelIds.length === 0) continue;
       const model = matchingModel(
         provider,
         agent,

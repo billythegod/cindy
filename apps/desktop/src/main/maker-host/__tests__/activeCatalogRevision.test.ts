@@ -1,6 +1,7 @@
+import { BUNDLED_CATALOG } from '../../../../../../packages/model-providers/test/catalog-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BUNDLED_CATALOG, providerMediaField, buildRegistry } from '@cindy/model-providers';
+import { providerMediaField, buildRegistry } from '@cindy/model-providers';
 import { resolveNewMakerDefaultTuple } from '../../../shared/newMakerDefaultTuple.js';
 
 import {
@@ -157,7 +158,7 @@ describe('active catalog revision', () => {
     expect(read().routing.codex?.upstream).toBe('https://private.example/v1');
   });
 
-  it.each([1, 2, 3, 5] as const)('publishes Gemini defaults before notifying and retains native declarations across sparse V%s refresh', schemaVersion => {
+  it.each([1, 2, 3, 5] as const)('publishes server adapter defaults before notifying without inventing missing V%s native declarations', schemaVersion => {
     const catalog = structuredClone(BUNDLED_CATALOG);
     catalog.modelRegistry = { schemaVersion, updatedAt: '2099-09-13T00:00:00Z', models: [] };
     setActiveCatalog(catalog);
@@ -172,11 +173,12 @@ describe('active catalog revision', () => {
     ) }]);
     const check = (provider: ReturnType<typeof read>) => {
       for (const agent of agents) expect(provider.models[agent]![0]).toMatchObject({
-        id, nativeApi: 'google-generative-ai', defaultEnabled: agent === 'pi',
+        id, defaultEnabled: agent === 'pi',
         contextWindow: 1_048_576, maxOutput: 65_536, supportsImageInput: true,
       });
     };
     expect(listener).toHaveBeenCalledOnce();
+    for (const agent of agents) expect(read().models[agent]![0].nativeApi).toBeUndefined();
     check(listener.mock.results[0].value);
     setActiveCatalog(structuredClone(catalog));
     check(read());

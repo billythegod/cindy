@@ -4,7 +4,7 @@ import { resolveCatalogModelNativeApi, resolveModelNativeApi } from './modelRegi
 import { providerEndpointBindings, bindProviderPresetRuntime } from './providerEndpointTemplate.js';
 import { PI_MODEL_APIS } from "./types.js";
 import { providerModelRecord, providerPresetModelRecord, providerModelMetadata } from "./providerModelCatalog.js";
-import { BUNDLED_CATALOG, BUILTIN_PROVIDERS } from './builtin.js';
+import { SERVER_CATALOG } from './builtin.js';
 import { providerMediaField } from "./providerMediaModels.js";
 import {
   expandedRegistryEntries,
@@ -562,7 +562,7 @@ export function buildUserProvider(
       // Same fallback as Gateway: Server omissions use local native declarations;
       // explicit corrections/unknowns win. Never backfill another route's capabilities.
       const declaration = currentDeclaration !== undefined ? currentDeclaration
-        : resolveDeclaration(BUNDLED_CATALOG.modelRegistry);
+        : resolveDeclaration(SERVER_CATALOG.modelRegistry);
       const nativeApi = declaration === null || declaration === 'anthropic-messages'
         || declaration === 'openai-responses' || declaration === 'openai-completions'
         || declaration === 'google-generative-ai' ? declaration : undefined;
@@ -592,7 +592,8 @@ export function buildUserProvider(
     });
   }
   if (native === 'claude' || native === 'xai') {
-    const identity = BUILTIN_PROVIDERS.find((provider) => provider.id === (native === 'claude' ? 'anthropic' : 'xai'))!;
+    const identity = SERVER_CATALOG.providers.find((provider) => provider.id === (native === 'claude' ? 'anthropic' : 'xai'))!;
+    if (!identity) return { id: runtimeProviderId, name: config.name, source: 'user', agents: [], auth: { method: 'oauth', native: native === 'claude' ? 'claude' : native === 'xai' ? 'xai' : 'codex' }, routing: {}, models: {} };
     return {
       ...identity,
       id: runtimeProviderId,
@@ -617,7 +618,8 @@ export function buildUserProvider(
     };
   }
   if (nativeCodex) {
-    const identity = BUILTIN_PROVIDERS.find((provider) => provider.id === 'openai')!;
+    const identity = SERVER_CATALOG.providers.find((provider) => provider.id === 'openai')!;
+    if (!identity) return { id: runtimeProviderId, name: config.name, source: 'user', agents: [], auth: { method: 'oauth', native: 'codex' }, routing: {}, models: {} };
     return {
       ...identity,
       id: runtimeProviderId,

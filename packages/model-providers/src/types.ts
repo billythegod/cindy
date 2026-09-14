@@ -500,9 +500,9 @@ export interface Provider {
    * （anthropic / openai / xai 现状）。
    */
   auth: { method: AuthMethod; oauth?: OAuthProviderDescriptor; native?: "codex" | "claude" | "xai" };
-  /** 用户使用该供应商时的额度来源；旧目录可缺省，由 source 从 bundled 同 id 条目补齐。 */
+  /** 用户使用该供应商时的额度来源，由服务端目录声明。 */
   access?: ProviderAccess;
-  /** Subscription defaults per Harness. Absent = legacy policy; {} = no configured default.
+  /** Subscription defaults per Harness. Absent or {} = no configured default.
    * IDs are scoped to this provider; selection still requires a usable, visible model.
    */
   newSessionDefaults?: Partial<Record<AgentKind, string>>;
@@ -656,6 +656,8 @@ export interface ProviderPresetRuntime {
  * 数据随目录走 OSS 热更：各家 baseUrl / 模型 id 变化只需推数据，无需发版。
  */
 export interface ProviderPreset {
+  modelInterfaces?: Record<string, { baseUrl: string; api: NonNullable<ProviderRuntimeModelConfig['api']>; inputs: string[] }>;
+  interfaceDefaults?: Partial<Record<AgentKind, { baseUrl: string; api: string; inputs: string[] }>>;
   /** 预设 id（小写 slug，仅用于 UI 去重 / 埋点，不占用 provider id 命名空间）。 */
   id: string;
   /** 展示名（如 "OpenRouter" / "DeepSeek"）。 */
@@ -692,6 +694,8 @@ export type PresetSortRegion = "cn" | "global" | "dev";
 
 /** 完整目录（OSS / 本地 / 内置 三处都是这个形状）。 */
 export interface Catalog {
+  /** Public transport metadata from the same server publication. */
+  providerModelCatalog?: { schemaVersion: number; generatedAt: string; providers: Record<string, import('./providerModelCatalog.js').ProviderModelRecord[]> };
   /** 目录版本号（语义随意，仅用于诊断 / 缓存比对）。 */
   version: string;
   providers: Provider[];

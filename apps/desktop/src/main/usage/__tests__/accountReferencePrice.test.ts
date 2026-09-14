@@ -1,5 +1,6 @@
+import { BUNDLED_CATALOG } from '../../../../../../packages/model-providers/test/catalog-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
-import { BUNDLED_CATALOG, buildUserProvider } from '@cindy/model-providers';
+import { buildUserProvider } from '@cindy/model-providers';
 import { providerReferencePriceQuote, getModelPriceQuote, modelPricingKey } from '../../../shared/modelPriceQuote.js';
 
 vi.mock('../../maker-host/active-catalog.js', () => ({

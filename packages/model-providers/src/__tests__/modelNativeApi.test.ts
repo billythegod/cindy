@@ -1,5 +1,6 @@
+import { BUNDLED_CATALOG } from '../../test/catalog-fixture.js';
 import { describe, expect, it } from "vitest";
-import { BUNDLED_CATALOG, type ModelRegistry } from "../index.js";
+import { type ModelRegistry } from '../index.js';
 import { parseModelRegistry } from "../modelAccessValidator.js";
 import { resolveCatalogModelNativeApi, resolveModelNativeApi } from "../modelRegistry.js";
 

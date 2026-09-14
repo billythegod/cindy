@@ -1,6 +1,7 @@
+import { BUNDLED_CATALOG } from '../../test/catalog-fixture.js';
 import { describe, expect, it } from 'vitest';
 import { parseCatalog } from '../catalog.js';
-import { BUNDLED_CATALOG } from '../builtin.js';
+
 import { applySubscriptionDefaults, subscriptionModelKey } from '../subscriptionDefaults.js';
 import type { CatalogModel, Provider } from '../types.js';
 

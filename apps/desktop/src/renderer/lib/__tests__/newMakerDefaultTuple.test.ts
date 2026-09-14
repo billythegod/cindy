@@ -39,6 +39,11 @@ function provider(args: {
       args.access === 'managed' ? { kind: 'managed' } : { kind: 'subscription', product: args.id },
     routing: {},
     models: args.models,
+    ...(args.access === 'subscription' ? { newSessionDefaults: {
+      openai: { codex: 'gpt-5.6-sol', 'claude-code': 'gpt-5.6-sol', pi: 'gpt-5.6-sol' },
+      anthropic: { codex: 'claude-opus-5', 'claude-code': 'claude-opus-5', pi: 'claude-opus-5' },
+      xai: { codex: 'grok-4.6', 'claude-code': 'grok-4.6', pi: 'grok-4.6' },
+    }[args.id] } : {}),
     connected: args.connected ?? true,
     ...(args.failed
       ? { modelDiscoveryFailure: { kind: 'upstream' as const, at: '2026-08-27T00:00:00Z' } }
@@ -70,7 +75,9 @@ describe('resolveNewMakerDefaultTuple', () => {
     source.newSessionDefaults = {};
     expect(resolve([source])).toBeNull();
     delete source.newSessionDefaults;
-    expect(resolve([source])).toMatchObject({ vendor: 'codex', model: 'gpt-5.6-sol' });
+    expect(resolve([source])).toBeNull();
+    expect(resolveNewMakerDefaultTuple({ providers: [source], providersLoading: false,
+      availableAgents: allAgents, availableAgentsLoaded: true, isModelEnabled: () => true })).toBeNull();
   });
   it.each([
     { defaultEnabled: false }, { disabled: true }, { status: 'retired' as const },
@@ -288,6 +295,15 @@ describe('resolveNewMakerDefaultTuple', () => {
       providerId: 'xd',
       vendor: 'pi',
     });
+  });
+
+  it('uses a newly published Gateway recommendation without a client model-ID change', () => {
+    const oldModel = model('z-ai/glm-5.3-flash', 'high', undefined, ['text', 'image']);
+    const nextModel = model('new-gateway-model', 'medium', ['pi'], ['text', 'image']);
+    const gateway = provider({ id: 'xd', access: 'managed', models: { pi: [oldModel, nextModel] } });
+    expect(resolve([gateway])).toMatchObject({ vendor: 'pi', model: 'new-gateway-model', effort: 'medium' });
+    nextModel.newSessionDefault = undefined;
+    expect(resolve([gateway])).toBeNull();
   });
 
   it('Gateway 没有服务端默认标记时保持空态', () => {

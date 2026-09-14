@@ -1,10 +1,9 @@
-import { withClaudeProviderRuntime } from './piProviderPresets.js';
 /**
  * 目录源解析与加载（纯逻辑，IO 由 host 注入，零 Electron / node 依赖）。
  *
- *   - release / dev：优先从 Model Access 公共匿名接口拉取完整 Catalog；失败时回退旧 OSS 目录。
- *   - dev：仓库本地文件（`localPath`）优先，改了即时生效；否则同样走远端。
- *   - 兜底优先级：本地(dev) → 公共 API → 上次有效快照(LKG) → 旧 OSS → 内置 bundled。
+ *   - 运行时只读取当前 Model Access 公共接口，失败时使用同源上次有效快照（LKG）。
+ *   - 从未加载过服务端且没有缓存时返回空目录；不包含内置配置或 OSS 回退。
+ *   - localPath 仅为显式注入的测试/诊断入口，Desktop 不设置本地文件配置源。
  *
  * 目录每进程加载一次、存内存、**无 TTL**（由 host 的 active-catalog 在启动期 await 一次）。
  * host 可注入按源隔离的 LKG 读写：启动仍先请求最新远端，只有远端失败才读缓存，所以不会
@@ -14,35 +13,29 @@ import { withClaudeProviderRuntime } from './piProviderPresets.js';
  * 保证包可独立单测，也保证跨平台路径 / CORS 等细节留在 host。
  */
 
-import { BUNDLED_CATALOG, parseCatalog } from "./catalog.js";
+import { EMPTY_CATALOG, parseCatalog } from "./catalog.js";
 import {
-  compareModelRegistryRevisions,
   decideModelRegistrySnapshot,
 } from "./modelRegistry.js";
-import type { AgentKind, Catalog, Provider, ProviderPreset } from "./types.js";
+import type { Catalog } from "./types.js";
 
 /** 公共模型目录 API 路径。发布版由 model-access-server 匿名提供完整 Catalog。 */
 export const CATALOG_API_PATH =
-  "/api/model-catalog/catalog?registrySchemaVersion=5&catalogCapabilities=registry-v4-media";
+  "/api/model-catalog/catalog?registrySchemaVersion=5&catalogCapabilities=server-managed-catalog";
 /** Explicit contract capability; a bare V4 query also identifies older strict readers. */
-export const CATALOG_CAPABILITY = "registry-v4-media";
-/** 旧客户端目录的 OSS 相对路径。迁移期作为公共 API 失败后的兼容回退。 */
-export const CATALOG_CFG_PATH = "/cfg/providers.json";
-
+export const CATALOG_CAPABILITY = "server-managed-catalog";
 /** 整条远端 Catalog fallback 链共享的默认启动等待预算。 */
 export const DEFAULT_REMOTE_CATALOG_BUDGET_MS = 15_000;
 
-/** Only numeric catalog snapshots older than v3 predate the Pi preset metadata contract. */
-const PI_RUNTIME_METADATA_CATALOG_VERSION = 3;
 
 export interface CatalogSourceConfig {
   /** 完整覆盖源 URL（env XDT_MODELS_URL）；缺省使用公共 catalog API。 */
   url?: string;
   /** 公共 catalog API 基址（modelAccessApiBaseUrl）。 */
   baseUrl?: string;
-  /** 迁移期旧 OSS/CDN 基址；公共 API 失败后读取 `${fallbackBaseUrl}/cfg/providers.json`。 */
+  /** @deprecated Ignored. No OSS fallback is requested. */
   fallbackBaseUrl?: string;
-  /** dev 本地文件路径（env XDT_MODELS_PATH）；命中则只读它、不联网。 */
+  /** 显式注入的测试/诊断文件；Desktop 不设置此字段。 */
   localPath?: string;
   /** 整条远端 fallback 链共享的等待预算；缺省 15 秒。 */
   remoteBudgetMs?: number;
@@ -72,7 +65,7 @@ export interface CatalogIO {
   ) => void;
 }
 
-export type CatalogLoadSource = "local" | "remote" | "cache" | "bundled";
+export type CatalogLoadSource = "local" | "remote" | "cache" | "empty";
 export type CatalogCapabilityEvidence = "current" | "fallback";
 export type CatalogXdMediaKind = "image" | "video" | "embedding";
 
@@ -85,22 +78,20 @@ const ALL_XD_MEDIA_KINDS: readonly CatalogXdMediaKind[] = [
 export interface CatalogLoadResult {
   catalog: Catalog;
   /**
-   * Exact validated source snapshot before bundled compatibility backfill. `null` means no Cindy
-   * Server/local/LKG snapshot was accepted. Consumers must use this field, never `catalog`, when
-   * they need to distinguish an explicit source declaration from a bundled supplement.
+   * Exact validated Server/local/LKG source snapshot. `null` means no snapshot was accepted.
+   * Consumers use this field to distinguish an accepted publication from the empty initial state.
    */
   authorityCatalog: Catalog | null;
   source: CatalogLoadSource;
   /**
    * `current` means this exact snapshot came from the configured current catalog source
-   * (or an explicit local override). `fallback` covers LKG, legacy OSS and bundled data,
+   * (or an explicit local override). `fallback` covers LKG and an empty initial state,
    * which may keep compatibility metadata but cannot prove current regional availability.
    */
   capabilityEvidence: CatalogCapabilityEvidence;
   /**
-   * XD media fields inherited from the bundled compatibility catalog rather than
-   * explicitly supplied by the current source. These fields still need the regional
-   * fallback projection even when the rest of the snapshot has current evidence.
+   * XD media fields not explicitly supplied by the current source. These fields still need
+   * the regional fallback projection even when the snapshot has current evidence.
    */
   unverifiedXdMediaKinds: readonly CatalogXdMediaKind[];
 }
@@ -156,44 +147,16 @@ async function readCatalogCache(io: CatalogIO, scope: string): Promise<{ text: s
       mediaV4.searchParams.set('registrySchemaVersion', '4');
       const legacyV4 = new URL(mediaV4);
       legacyV4.searchParams.delete('catalogCapabilities');
-      for (const previous of [legacyV5, mediaV4, legacyV4]) {
+      const previousMediaV5 = new URL(url);
+      previousMediaV5.searchParams.set('catalogCapabilities', 'registry-v4-media');
+      mediaV4.searchParams.set('catalogCapabilities', 'registry-v4-media');
+      for (const previous of [previousMediaV5, legacyV5, mediaV4, legacyV4]) {
         const cached = await io.readCache(previous.toString());
         if (cached !== null) return { text: cached, sameRepresentation: false };
       }
     }
   } catch { /* Non-URL scopes retain their existing behavior. */ }
   return null;
-}
-
-/** 解析迁移期旧 OSS 回退 URL。 */
-export function resolveFallbackCatalogUrl(
-  cfg: CatalogSourceConfig,
-): string | null {
-  if (!cfg.fallbackBaseUrl?.trim()) return null;
-  return trimTrailingSlashes(cfg.fallbackBaseUrl.trim()) + CATALOG_CFG_PATH;
-}
-
-/**
- * The migration-only OSS snapshot used to carry cindyModelMeta beside the provider
- * catalog. Strip that one retired block only at the legacy source boundary; canonical
- * API, local dev files, and parseCatalog itself remain strict about unknown fields.
- */
-function parseRemoteCatalog(
-  input: string,
-  allowLegacyModelMeta: boolean,
-): Catalog {
-  if (!allowLegacyModelMeta) return parseCatalog(input);
-  const raw: unknown = JSON.parse(input);
-  if (!raw || typeof raw !== "object" || Array.isArray(raw))
-    return parseCatalog(raw);
-  // Keep every unknown field so parseCatalog can reject it; only the retired legacy block is
-  // exempt. A null-prototype destination makes special JSON keys such as `__proto__` ordinary
-  // own properties instead of invoking an inherited setter during the compatibility copy.
-  const migrated = Object.create(null) as Record<string, unknown>;
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (key !== "cindyModelMeta") migrated[key] = value;
-  }
-  return parseCatalog(migrated);
 }
 
 /** Strip credentials and request-only URL parts before diagnostics leave this package. */
@@ -218,323 +181,6 @@ function remoteErrorForLog(
   return String(error).split(remoteUrl).join(logUrl);
 }
 
-function numericCatalogVersion(version: string): number | null {
-  return /^\d+$/.test(version) ? Number(version) : null;
-}
-
-function allowsLegacyPiRuntimeBackfill(primary: Catalog): boolean {
-  const version = numericCatalogVersion(primary.version);
-  return version !== null && version < PI_RUNTIME_METADATA_CATALOG_VERSION;
-}
-
-/** 只给仍保持 bundled 鉴权与上游路由形状的旧条目迁移 access，不能仅凭 provider id 猜计费。 */
-function allowsBundledAccessInheritance(
-  primaryAccess: Provider["access"],
-  bundledAccess: Provider["access"],
-): boolean {
-  if (primaryAccess === undefined) return true;
-  if (bundledAccess === undefined || primaryAccess.kind !== bundledAccess.kind)
-    return false;
-  return (
-    primaryAccess.kind !== "subscription" ||
-    (bundledAccess.kind === "subscription" &&
-      primaryAccess.product === bundledAccess.product)
-  );
-}
-
-function legacyAccessFor(
-  primary: Provider,
-  bundled: Provider,
-): Provider["access"] {
-  if (primary.auth.method !== bundled.auth.method) return undefined;
-  if (!allowsBundledAccessInheritance(primary.access, bundled.access))
-    return undefined;
-  const sharedAgents = primary.agents.filter((agent) =>
-    bundled.agents.includes(agent),
-  );
-  if (sharedAgents.length === 0) return undefined;
-  const sameRoutes = sharedAgents.every((agent) => {
-    const current = primary.routing[agent];
-    const baseline = bundled.routing[agent];
-    return (
-      current !== undefined &&
-      baseline !== undefined &&
-      current.upstream === baseline.upstream &&
-      current.authStrategy === baseline.authStrategy
-    );
-  });
-  return sameRoutes ? bundled.access : undefined;
-}
-
-/**
- * 回填新增的 Responses custom-tool capability 只认同一条官方 Codex 路由。
- * 旧远端快照没有这个 append-only 字段；同 id 但改变了鉴权或 upstream 的供应商可能具备
- * 完全不同的协议能力，不能因为名字相同就套用 bundled 结论。
- */
-function bundledResponsesCustomToolCapabilityFor(
-  primary: Provider,
-  bundled: Provider,
-): boolean | undefined {
-  const current = primary.routing.codex;
-  const baseline = bundled.routing.codex;
-  if (
-    current === undefined ||
-    baseline === undefined ||
-    current.supportsResponsesCustomTools !== undefined ||
-    baseline.supportsResponsesCustomTools === undefined ||
-    primary.auth.method !== bundled.auth.method ||
-    current.upstream !== baseline.upstream ||
-    current.authStrategy !== baseline.authStrategy
-  ) {
-    return undefined;
-  }
-  return baseline.supportsResponsesCustomTools;
-}
-
-/** 图片能力只可沿用到未声明 access，或仍明确属于同一 bundled 订阅的旧条目。 */
-function allowsBundledImageInheritance(
-  primaryAccess: Provider["access"],
-  bundledAccess: Provider["access"],
-): boolean {
-  if (primaryAccess === undefined) return true;
-  if (bundledAccess === undefined || primaryAccess.kind !== bundledAccess.kind)
-    return false;
-  return (
-    primaryAccess.kind !== "subscription" ||
-    (bundledAccess.kind === "subscription" &&
-      primaryAccess.product === bundledAccess.product)
-  );
-}
-
-/**
- * 同 id preset 仍以远端为主；bundled 给远端仍保留的同 runtime / 同 model 回填缺失的
- * contextWindow，并为旧 schema 中完全缺席的 Pi runtime 回填已核实能力。这样旧远端不会
- * 把长上下文或 Pi 能力降级；已有 Pi runtime 与显式窗口仍完整由远端优先。
- */
-function backfillPresetMetadata(
-  primary: ProviderPreset,
-  bundled: ProviderPreset,
-  allowLegacyPiBackfill: boolean,
-): ProviderPreset {
-  let changed =
-    primary.nameZhTW === undefined && bundled.nameZhTW !== undefined;
-  const runtimes: ProviderPreset["runtimes"] = { ...primary.runtimes };
-  for (const [agent, runtime] of Object.entries(primary.runtimes) as [
-    AgentKind,
-    NonNullable<ProviderPreset["runtimes"][AgentKind]>,
-  ][]) {
-    const bundledRuntime = bundled.runtimes[agent];
-    if (!bundledRuntime) {
-      runtimes[agent] = runtime;
-      continue;
-    }
-    const bundledModels = new Map(
-      bundledRuntime.models.map((model) => [model.id, model]),
-    );
-    let runtimeChanged = false;
-    const models = runtime.models.map((model) => {
-      const bundledContextWindow = bundledModels.get(model.id)?.contextWindow;
-      if (
-        model.contextWindow !== undefined ||
-        bundledContextWindow === undefined
-      )
-        return model;
-      runtimeChanged = true;
-      changed = true;
-      return { ...model, contextWindow: bundledContextWindow };
-    });
-    runtimes[agent] = runtimeChanged ? { ...runtime, models } : runtime;
-  }
-  // Pi runtime 是 2026-08 后新增的预设能力槽。旧远端目录没有表达“显式禁用 Pi”的
-  // 字段，缺席只代表旧 schema；对随包已核实的官方预设回填整段，避免远端 LKG 把
-  // DeepSeek/Kimi 的推理档位与视觉能力遮掉。远端一旦自行提供 Pi，仍完整优先。
-  if (
-    allowLegacyPiBackfill &&
-    primary.runtimes.pi === undefined &&
-    bundled.runtimes.pi !== undefined
-  ) {
-    runtimes.pi = bundled.runtimes.pi;
-    changed = true;
-  }
-  return changed
-    ? {
-        ...primary,
-        ...(primary.nameZhTW === undefined && bundled.nameZhTW !== undefined
-          ? { nameZhTW: bundled.nameZhTW }
-          : {}),
-        runtimes,
-      }
-    : primary;
-}
-
-/**
- * 把远端 / 本地目录与内置 bundled 合并：以输入目录为主，bundled 补它缺失的
- * provider（按 id），并给旧目录中同 id provider 补缺失的 access 与媒体能力元数据。
- * primary 明确提供的值（包括显式空媒体清单）永远优先，不被 bundled 覆盖。
- *
- * **顺序契约**：结果按 bundled 数组序稳定排列（anthropic → openai → xai → xd），
- * bundled 之外的远端新增供应商按远端原序追加在后。v2 远端目录只承载 xai 段，
- * 不排序的话 xai 会窜到首位，选择器分段顺序漂移。
- */
-export function mergeWithBundled(primary: Catalog): Catalog {
-  const bundledById = new Map(BUNDLED_CATALOG.providers.map((p) => [p.id, p]));
-  const allowLegacyPiBackfill = allowsLegacyPiRuntimeBackfill(primary);
-  const withBundledMetadata = primary.providers.map((p) => {
-    const bundled = bundledById.get(p.id);
-    const bundledAccess = bundled ? legacyAccessFor(p, bundled) : undefined;
-    const bundledResponsesCustomToolCapability = bundled
-      ? bundledResponsesCustomToolCapabilityFor(p, bundled)
-      : undefined;
-    if (!bundled) return p;
-    // Pi became a first-class provider runtime in catalog v3. Production may still serve a v2
-    // xAI block that is otherwise the same SuperGrok subscription provider; whole-provider
-    // primary precedence would hide the newer bundled Pi route and models. Backfill the runtime
-    // only for a proven legacy snapshot with the unchanged subscription identity. Any partial Pi
-    // declaration or changed auth/upstream remains authoritative and is never guessed through.
-    const inheritPiRuntime =
-      allowLegacyPiBackfill &&
-      p.id === "xai" &&
-      bundledAccess !== undefined &&
-      !p.agents.includes("pi") &&
-      p.routing.pi === undefined &&
-      p.models.pi === undefined &&
-      bundled.agents.includes("pi") &&
-      bundled.routing.pi !== undefined &&
-      bundled.models.pi !== undefined;
-    const inheritImage =
-      p.id === "xai" &&
-      p.imageModels === undefined &&
-      bundled.imageModels !== undefined &&
-      bundledAccess !== undefined &&
-      allowsBundledImageInheritance(p.access, bundledAccess);
-    const inheritVideo =
-      p.id === "xai" &&
-      p.videoModels === undefined &&
-      bundled.videoModels !== undefined &&
-      bundledAccess !== undefined &&
-      allowsBundledImageInheritance(p.access, bundledAccess);
-    // 向量清单与 xai 的图像清单同一个道理(PR #1707 review):xd 段的向量能力是
-    // 客户端新增的 bundled 元数据,而远端 / 本地目录里同 id 的 xd 可能还是升级前
-    // 的结构、根本没有 embeddingModels 这个字段。primary 整体优先的规则会让那份
-    // 旧结构把 bundled 的新字段整段遮掉 —— 结果是目录派生出空清单,设置页显示
-    // "无可用模型",所有 embed_text 直接 NO_CANDIDATE,能力等于没上线。
-    //
-    // 只在字段**缺席**时补,显式 `[]` 仍然是"这个供应商不提供向量"的停用语义,
-    // 与图像清单的既有契约一致。
-    const inheritEmbedding =
-      p.id === "xd" &&
-      p.embeddingModels === undefined &&
-      bundled.embeddingModels !== undefined &&
-      bundledAccess !== undefined &&
-      allowsBundledImageInheritance(p.access, bundledAccess);
-    const inheritResponsesCustomToolCapability =
-      bundledResponsesCustomToolCapability !== undefined;
-    if (
-      !(p.access === undefined && bundledAccess !== undefined) &&
-      !inheritPiRuntime &&
-      !inheritImage &&
-      !inheritVideo &&
-      !inheritEmbedding &&
-      !inheritResponsesCustomToolCapability
-    ) {
-      return p;
-    }
-    return {
-      ...p,
-      ...(p.access === undefined && bundledAccess !== undefined
-        ? { access: bundledAccess }
-        : {}),
-      ...(inheritPiRuntime
-        ? {
-            agents: [...p.agents, "pi" as const],
-            models: { ...p.models, pi: bundled.models.pi },
-          }
-        : {}),
-      ...(inheritPiRuntime || inheritResponsesCustomToolCapability
-        ? {
-            routing: {
-              ...p.routing,
-              ...(inheritPiRuntime ? { pi: bundled.routing.pi } : {}),
-              ...(inheritResponsesCustomToolCapability
-                ? {
-                    codex: {
-                      ...p.routing.codex!,
-                      supportsResponsesCustomTools:
-                        bundledResponsesCustomToolCapability,
-                    },
-                  }
-                : {}),
-            },
-          }
-        : {}),
-      ...(inheritImage
-        ? {
-            imageModels: bundled.imageModels,
-            ...(p.imageDefaults === undefined &&
-            bundled.imageDefaults !== undefined
-              ? { imageDefaults: bundled.imageDefaults }
-              : {}),
-          }
-        : {}),
-      ...(inheritVideo
-        ? {
-            videoModels: bundled.videoModels,
-            ...(p.videoDefaults === undefined &&
-            bundled.videoDefaults !== undefined
-              ? { videoDefaults: bundled.videoDefaults }
-              : {}),
-          }
-        : {}),
-      ...(inheritEmbedding
-        ? {
-            embeddingModels: bundled.embeddingModels,
-            ...(p.embeddingDefaults === undefined &&
-            bundled.embeddingDefaults !== undefined
-              ? { embeddingDefaults: bundled.embeddingDefaults }
-              : {}),
-          }
-        : {}),
-    };
-  });
-  const primaryById = new Map(withBundledMetadata.map((p) => [p.id, p]));
-  // bundled 序在前(同 id 取 primary 内容),远端独有的追加在后(保持远端原序)。
-  const merged: Provider[] = BUNDLED_CATALOG.providers.map(
-    (bundled) => primaryById.get(bundled.id) ?? bundled,
-  );
-  for (const p of withBundledMetadata) {
-    if (!bundledById.has(p.id)) merged.push(p);
-  }
-  // presets 与 providers 同样按 id 合并：bundled 保序兜底，同 id 远端内容优先，
-  // 远端独有项按远端原序追加。避免旧远端的非空 presets 整段遮掉新版客户端内置条目。
-  const primaryPresets = primary.presets ?? [];
-  const bundledPresets = BUNDLED_CATALOG.presets ?? [];
-  const primaryPresetsById = new Map(
-    primaryPresets.map((preset) => [preset.id, preset]),
-  );
-  const bundledPresetIds = new Set(bundledPresets.map((preset) => preset.id));
-  const presets = bundledPresets.map((bundled) => {
-    const remote = primaryPresetsById.get(bundled.id);
-    return remote
-      ? withClaudeProviderRuntime(backfillPresetMetadata(remote, bundled, allowLegacyPiBackfill))
-      : bundled;
-  });
-  for (const preset of primaryPresets) {
-    if (!bundledPresetIds.has(preset.id)) presets.push(preset);
-  }
-  // modelRegistry 是带 updatedAt 的完整快照，不做逐字段拼接。远端比 bundled 旧时
-  // 保留新版客户端随包快照，避免复现 presets 曾出现的“旧远端遮掉新本地能力”；
-  // 远端较新时整份生效，继续支持 status=retired、route 删除和价格纠错。
-  const selectedRegistry = selectNewerModelRegistry(primary, BUNDLED_CATALOG);
-  return {
-    version: primary.version,
-    providers: merged,
-    ...(presets && presets.length > 0 ? { presets } : {}),
-    ...(selectedRegistry.modelRegistry
-      ? { modelRegistry: selectedRegistry.modelRegistry }
-      : {}),
-  };
-}
-
 function log(
   io: CatalogIO,
   level: "info" | "warn" | "error",
@@ -549,35 +195,6 @@ function registryUpdatedAt(catalog: Catalog): number | null {
   if (!value) return null;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : null;
-}
-
-function selectNewerModelRegistry(
-  primary: Catalog,
-  fallback: Catalog,
-): { modelRegistry: Catalog["modelRegistry"]; fromFallback: boolean } {
-  if (primary.modelRegistry && fallback.modelRegistry) {
-    const relation = compareModelRegistryRevisions(
-      primary.modelRegistry,
-      fallback.modelRegistry,
-    );
-    if (
-      relation === "older" ||
-      relation === "conflict" ||
-      relation === "invalid-incoming"
-    ) {
-      // 同 revision 异内容是非法重发；fallback 是已经随客户端发布/缓存验证过的
-      // LKG，启动期也必须保它，不能只在在线 refresh 路径防守。
-      return { modelRegistry: fallback.modelRegistry, fromFallback: true };
-    }
-    return { modelRegistry: primary.modelRegistry, fromFallback: false };
-  }
-  if (primary.modelRegistry) {
-    return { modelRegistry: primary.modelRegistry, fromFallback: false };
-  }
-  return {
-    modelRegistry: fallback.modelRegistry,
-    fromFallback: fallback.modelRegistry !== undefined,
-  };
 }
 
 /**
@@ -613,14 +230,8 @@ function preserveNewerCachedCatalog(
 }
 
 /**
- * 加载目录并返回实际命中的来源。返回值永远包含一个合法 Catalog（最差也回退内置
- * bundled），不抛错。来源标记让手动刷新可以把 bundled fallback 视为失败并保留上次
- * 有效快照；启动加载仍可通过 loadCatalog 接受 bundled 兜底。
- *
- * 顺序：
- *  1. dev：cfg.localPath + io.readFile → 读本地、合并 bundled、直接返回（不联网）。
- *  2. 远端依次尝试公共 API、迁移期旧 OSS；每个远端失败后先尝试它自己的 LKG。
- *  3. 任意上述来源均不可用 → 内置 bundled。
+ * 读取服务端完整发布；请求失败时保留同源 LKG，没有任何快照则返回空目录。
+ * 刷新调用方将 empty 视为失败，保留当前快照；不会从客户端常量补充字段或成员。
  */
 export async function loadCatalogWithSource(
   cfg: CatalogSourceConfig,
@@ -636,7 +247,7 @@ export async function loadCatalogWithSource(
           path: cfg.localPath,
         });
         return {
-          catalog: mergeWithBundled(parsed),
+          catalog: parsed,
           authorityCatalog: parsed,
           source: "local",
           capabilityEvidence: "current",
@@ -652,18 +263,9 @@ export async function loadCatalogWithSource(
 
   // 2) 公共 model-access catalog API；迁移期失败后尝试旧 OSS 目录。
   const url = resolveCatalogUrl(cfg);
-  const fallbackUrl = resolveFallbackCatalogUrl(cfg);
-  if (!cfg.disableFetch && io.fetchText) {
-    const remoteSources = cfg.url?.trim()
-      ? url
-        ? [{ url, allowLegacyModelMeta: false }]
-        : []
-      : [
-          ...(url ? [{ url, allowLegacyModelMeta: false }] : []),
-          ...(fallbackUrl
-            ? [{ url: fallbackUrl, allowLegacyModelMeta: true }]
-            : []),
-        ];
+
+  if (url) {
+    const remoteSources = url ? [{ url }] : [];
     const now = cfg.now ?? Date.now;
     const configuredBudget =
       cfg.remoteBudgetMs ?? DEFAULT_REMOTE_CATALOG_BUDGET_MS;
@@ -671,25 +273,23 @@ export async function loadCatalogWithSource(
       ? Math.max(0, configuredBudget)
       : 0;
     const deadline = now() + budgetMs;
-    for (const { url: remoteUrl, allowLegacyModelMeta } of remoteSources) {
+    for (const { url: remoteUrl } of remoteSources) {
       const logUrl = catalogUrlForLog(remoteUrl);
       const remainingMs = Math.max(0, deadline - now());
-      if (remainingMs > 0) {
+      if (!cfg.disableFetch && io.fetchText && remainingMs > 0) {
         try {
           const text = await io.fetchText(remoteUrl, remainingMs);
-          let parsed = parseRemoteCatalog(text, allowLegacyModelMeta);
+          let parsed = parseCatalog(text);
           let capabilityEvidence: CatalogCapabilityEvidence =
-            allowLegacyModelMeta ? "fallback" : "current";
-          // Never propagate the retired compatibility block into a newly written LKG.
-          let cacheText = allowLegacyModelMeta ? JSON.stringify(parsed) : text;
+            "current";
+          let cacheText = text;
           const remoteRegistryUpdatedAt = registryUpdatedAt(parsed);
           if (io.readCache) {
             try {
               const cachedText = await readCatalogCache(io, remoteUrl);
               if (cachedText !== null) {
-                const cached = parseRemoteCatalog(
+                const cached = parseCatalog(
                   cachedText.text,
-                  allowLegacyModelMeta,
                 );
                 const selected = preserveNewerCachedCatalog(parsed, cached, cachedText.sameRepresentation);
                 if (selected.catalog !== parsed) {
@@ -726,9 +326,8 @@ export async function loadCatalogWithSource(
             try {
               const committedText = await io.writeCache(remoteUrl, cacheText);
               if (typeof committedText === "string") {
-                const committed = parseRemoteCatalog(
+                const committed = parseCatalog(
                   committedText,
-                  allowLegacyModelMeta,
                 );
                 const selected = preserveNewerCachedCatalog(
                   parsed,
@@ -763,9 +362,8 @@ export async function loadCatalogWithSource(
           }
           log(io, "info", "loaded catalog from remote", { url: logUrl });
           return {
-            catalog: mergeWithBundled(parsed),
-            // The migration OSS fallback is compatibility data, not the daily Cindy Server source.
-            authorityCatalog: allowLegacyModelMeta ? null : parsed,
+            catalog: parsed,
+            authorityCatalog: parsed,
             source: "remote",
             capabilityEvidence,
             unverifiedXdMediaKinds:
@@ -793,14 +391,14 @@ export async function loadCatalogWithSource(
         try {
           const cached = await readCatalogCache(io, remoteUrl);
           if (cached !== null) {
-            const parsed = parseRemoteCatalog(cached.text, allowLegacyModelMeta);
+            const parsed = parseCatalog(cached.text);
             log(io, "info", "loaded last-known-good catalog snapshot", {
               url: logUrl,
             });
             return {
-              catalog: mergeWithBundled(parsed),
+              catalog: parsed,
               // A cached legacy OSS snapshot stays below the local Pi protocol authorities.
-              authorityCatalog: allowLegacyModelMeta ? null : parsed,
+              authorityCatalog: parsed,
               source: "cache",
               capabilityEvidence: "fallback",
               unverifiedXdMediaKinds: ALL_XD_MEDIA_KINDS,
@@ -816,18 +414,18 @@ export async function loadCatalogWithSource(
     }
   }
 
-  // 3) 兜底：内置 bundled。
-  log(io, "info", "using bundled catalog");
+  // 3) 无有效服务端快照时保持空目录。
+  log(io, "warn", "server catalog unavailable and no valid cached snapshot");
   return {
-    catalog: BUNDLED_CATALOG,
+    catalog: EMPTY_CATALOG,
     authorityCatalog: null,
-    source: "bundled",
+    source: "empty",
     capabilityEvidence: "fallback",
     unverifiedXdMediaKinds: ALL_XD_MEDIA_KINDS,
   };
 }
 
-/** 启动期兼容入口：接受最终 bundled fallback，只返回目录快照。 */
+/** 启动期入口：只返回当前目录快照（首次离线可以为空）。 */
 export async function loadCatalog(
   cfg: CatalogSourceConfig,
   io: CatalogIO,

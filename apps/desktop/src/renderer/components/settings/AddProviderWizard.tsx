@@ -1,3 +1,4 @@
+import { loadProviderPresetCatalog } from '@/lib/providerPresetCatalog';
 import { providerSetupLink, providerPresetOAuth, providerPresetOAuthRuntimes, buildUserProvider } from '@cindy/model-providers';
 import { bindProviderPresetRuntime, providerEndpointBindings, bindProviderEndpoint } from '@cindy/model-providers';
 /**
@@ -445,8 +446,7 @@ export function AddProviderWizard({
 
   useEffect(() => {
     let cancelled = false;
-    void window.electronAPI.maker
-      .listProviderPresets()
+    void loadProviderPresetCatalog()
       .then((r) => {
         if (!cancelled) setPresets(r.presets);
       })
