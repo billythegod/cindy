@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 import React from 'react';
+import en from '../i18n/locales/en/common.json';
+import zhCN from '../i18n/locales/zh-CN/common.json';
+import zhTW from '../i18n/locales/zh-TW/common.json';
+import ja from '../i18n/locales/ja/common.json';
+import ko from '../i18n/locales/ko/common.json';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderView } from '@cindy/model-providers';
@@ -9,6 +14,7 @@ import type { XaiSubscriptionUsageSnapshot } from '../../shared/xaiSubscriptionU
 import type { RateLimitSnapshot } from '@/hooks/useAccountUsage';
 
 const reads = vi.hoisted(() => ({
+  pendingLabel: '',
   codex: vi.fn(),
   web: vi.fn(),
   claude: vi.fn(),
@@ -30,7 +36,7 @@ vi.mock('react-i18next', () => ({
         'todaySpend.unit.hour': '小时',
         'todaySpend.unit.minute': '分钟',
         'todaySpend.unit.second': '秒',
-        'quotaCard.resetPending': '重置中…',
+        'quotaCard.resetPending': reads.pendingLabel,
         'quotaCard.remainingPercent': `剩余 ${args?.percent}%`,
       })[key] ?? key,
   }),
@@ -74,6 +80,7 @@ function details(id = 'account-a', modelId = 'gpt-5.6') {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(now);
+  reads.pendingLabel = zhCN.quotaCard.resetPending;
   reads.accounts = { 'account-a': snapshot(22), 'account-b': snapshot(88) };
   reads.webSnapshot = null;
   reads.claudeSnapshot = null;
@@ -236,6 +243,30 @@ describe('model source second line', () => {
     expect(screen.queryByText(quotaText('1天 64%'))).toBeNull();
   });
 
+  it.each([en, zhCN, zhTW, ja, ko])(
+    'constrains two localized pending windows and retains the full title',
+    (locale) => {
+      reads.pendingLabel = locale.quotaCard.resetPending;
+      reads.accounts['account-a']!.rateLimits.primary!.resetsAt = now / 1000;
+      reads.accounts['account-a']!.rateLimits.secondary!.resetsAt = now / 1000;
+      const { container } = render(
+        <ModelSourceUsageProvider providers={[provider('account-a')]} enabled>
+          {details()}
+        </ModelSourceUsageProvider>,
+      );
+      const line = container.querySelector('[data-model-source-details]')!;
+      expect(screen.getAllByText(reads.pendingLabel)).toHaveLength(2);
+      expect(line.getAttribute('title')).toBe(
+        `account-a · Pro · ${reads.pendingLabel} · ${reads.pendingLabel}`,
+      );
+      const quota = line.lastElementChild!;
+      expect(quota.className).toContain('max-w-[70%]');
+      expect(quota.className).toContain('min-w-0');
+      expect(quota.className).toContain('truncate');
+      expect(quota.className).not.toContain('shrink-0');
+    },
+  );
+
   it('replaces an expired period with reset pending, never inferred full quota', () => {
     reads.accounts['account-a']!.rateLimits.primary!.resetsAt = now / 1000 + 1;
     render(
@@ -247,12 +278,12 @@ describe('model source second line', () => {
     act(() => {
       vi.advanceTimersByTime(1000);
     });
-    expect(screen.getByText('重置中…')).toBeTruthy();
+    expect(screen.getByText(reads.pendingLabel)).toBeTruthy();
     expect(screen.queryByText(/100%/)).toBeNull();
     act(() => {
       vi.advanceTimersByTime(10 * 60 * 1000);
     });
-    expect(screen.queryByText('重置中…')).toBeNull();
+    expect(screen.queryByText(reads.pendingLabel)).toBeNull();
     expect(screen.getByText('—')).toBeTruthy();
     expect(screen.queryByText('78%')).toBeNull();
   });

@@ -196,31 +196,33 @@ export function ModelSourceDetails({
         </span>
       )}
       {parts.length > 0 && (
-        <span className="flex shrink-0 items-center gap-1 tabular-nums">
-          {parts.map((part, index) => (
-            <span key={index} className="inline-flex items-center gap-1">
-              {index > 0 && <span aria-hidden>/</span>}
-              <span>
-                {part.countdown}
-                {part.percentage !== null && (
-                  <>
-                    {' '}
-                    <span
-                      className={
-                        part.used >= 90
-                          ? 'text-[var(--quota-bar-crit)]'
-                          : part.used > 70
-                            ? 'text-[var(--quota-bar-warn)]'
-                            : undefined
-                      }
-                    >
-                      {part.percentage}
-                    </span>
-                  </>
-                )}
+        <span className="min-w-0 max-w-[70%] truncate tabular-nums">
+          <span className="inline-flex items-center gap-1">
+            {parts.map((part, index) => (
+              <span key={index} className="inline-flex items-center gap-1">
+                {index > 0 && <span aria-hidden>/</span>}
+                <span>
+                  {part.countdown}
+                  {part.percentage !== null && (
+                    <>
+                      {' '}
+                      <span
+                        className={
+                          part.used >= 90
+                            ? 'text-[var(--quota-bar-crit)]'
+                            : part.used > 70
+                              ? 'text-[var(--quota-bar-warn)]'
+                              : undefined
+                        }
+                      >
+                        {part.percentage}
+                      </span>
+                    </>
+                  )}
+                </span>
               </span>
-            </span>
-          ))}
+            ))}
+          </span>
         </span>
       )}
     </div>
