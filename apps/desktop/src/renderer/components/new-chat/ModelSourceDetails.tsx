@@ -14,6 +14,7 @@ import {
 import { matchScopedWindowForModel } from '../../../shared/claudeSubscriptionUsage';
 import { isXaiWeeklyUsageCurrent } from '../../../shared/xaiSubscriptionUsage';
 import { CHATGPT_MODEL_PREFIX } from '../../../shared/subscriptionModels';
+import { RESET_PENDING_MAX_MS } from '../status/quotaResetRollup';
 import { providerWeeklyQuotaSource } from './useProviderWeeklyQuota';
 
 interface SourceUsage {
@@ -116,7 +117,11 @@ function modelSourceQuota(
           )
         : null;
     return {
-      plan: formatCodexPlanLabel(bucket?.planType ?? data?.account.planType),
+      plan: formatCodexPlanLabel(
+        modelId.startsWith(CHATGPT_MODEL_PREFIX)
+          ? bucket?.planType
+          : (bucket?.planType ?? data?.account.planType),
+      ),
       windows: [bucket?.primary, bucket?.secondary].filter((w): w is NonNullable<typeof w> => !!w),
     };
   }
@@ -158,20 +163,23 @@ export function ModelSourceDetails({
     .map((window) => {
       const countdown = formatCompactTimeUntilReset(window.resetsAt, nowMs, t);
       // Do not present the previous period's percentage as a fresh quota.
-      const pending =
+      const expired =
         typeof window.resetsAt === 'number' &&
         window.resetsAt > 0 &&
         window.resetsAt * 1000 <= nowMs;
+      const pending = expired && nowMs - window.resetsAt! * 1000 < RESET_PENDING_MAX_MS;
       const remaining = Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
       return {
         countdown: pending ? t('quotaCard.resetPending') : (countdown ?? '—'),
-        percentage: pending ? null : `${remaining}%`,
-        title: pending
-          ? t('quotaCard.resetPending')
+        percentage: expired ? null : `${remaining}%`,
+        title: expired
+          ? pending
+            ? t('quotaCard.resetPending')
+            : '—'
           : [countdown, t('quotaCard.remainingPercent', { percent: remaining })]
               .filter(Boolean)
               .join(' · '),
-        used: pending ? 0 : window.usedPercent,
+        used: expired ? 0 : window.usedPercent,
       };
     });
   const source = [label, plan].filter(Boolean).join(' · ');

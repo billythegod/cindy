@@ -181,6 +181,8 @@ describe('model source second line', () => {
       </ModelSourceUsageProvider>,
     );
     expect(screen.queryByText(quotaText('2小时 78%'))).toBeNull();
+    expect(screen.getByText('account-a')).toBeTruthy();
+    expect(screen.queryByText('account-a · Pro')).toBeNull();
     reads.webSnapshot = { primary: { usedPercent: 61, resetsAt: now / 1000 + 3600 } };
     rerender(
       <ModelSourceUsageProvider providers={[provider('account-a')]} enabled>
@@ -188,6 +190,7 @@ describe('model source second line', () => {
       </ModelSourceUsageProvider>,
     );
     expect(screen.getByText(quotaText('1小时 39%'))).toBeTruthy();
+    expect(screen.queryByText('account-a · Pro')).toBeNull();
   });
   it('uses Claude model-scoped weekly quota and keeps unknown reset times honest', () => {
     reads.claudeSnapshot = {
@@ -246,5 +249,11 @@ describe('model source second line', () => {
     });
     expect(screen.getByText('重置中…')).toBeTruthy();
     expect(screen.queryByText(/100%/)).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(10 * 60 * 1000);
+    });
+    expect(screen.queryByText('重置中…')).toBeNull();
+    expect(screen.getByText('—')).toBeTruthy();
+    expect(screen.queryByText('78%')).toBeNull();
   });
 });
