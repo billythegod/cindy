@@ -40,6 +40,10 @@ import {
   ModelSourceUsageProvider,
 } from '@/components/new-chat/ModelSourceDetails';
 
+const quotaText = (text: string) => (_: string, node: Element | null) =>
+  node?.textContent === text &&
+  !Array.from(node.children).some((child) => child.textContent === text);
+
 const now = Date.UTC(2026, 8, 12);
 const provider = (id: string, native: 'codex' | 'claude' | 'xai' = 'codex'): ProviderView => ({
   id,
@@ -98,9 +102,9 @@ describe('model source second line', () => {
         {details('account-b')}
       </ModelSourceUsageProvider>,
     );
-    expect(screen.getAllByText('2小时 78%')).toHaveLength(2);
-    expect(screen.getByText('2小时 12%')).toBeTruthy();
-    expect(screen.getAllByText('5天 42%')).toHaveLength(3);
+    expect(screen.getAllByText(quotaText('2小时 78%'))).toHaveLength(2);
+    expect(screen.getByText(quotaText('2小时 12%'))).toBeTruthy();
+    expect(screen.getAllByText(quotaText('5天 42%'))).toHaveLength(3);
     expect(
       reads.codex.mock.calls.filter(([enabled, id]) => enabled && id === 'account-a'),
     ).toHaveLength(1);
@@ -110,6 +114,20 @@ describe('model source second line', () => {
       expect(line.className).toContain('whitespace-nowrap');
       expect(line.querySelector('span')?.className).toContain('truncate');
     }
+  });
+  it.each([70, 71, 89, 90, 98])('warns only on the percentage at %s percent used', (used) => {
+    reads.accounts['account-a'] = snapshot(used);
+    render(
+      <ModelSourceUsageProvider providers={[provider('account-a')]} enabled>
+        {details()}
+      </ModelSourceUsageProvider>,
+    );
+    const percentage = screen.getByText(`${100 - used}%`);
+    expect(percentage.className).toBe(
+      used >= 90 ? 'text-[var(--quota-bar-crit)]' : used > 70 ? 'text-[var(--quota-bar-warn)]' : '',
+    );
+    expect(percentage.parentElement?.className).toBe('');
+    expect(percentage.parentElement?.textContent).toBe(`2小时 ${100 - used}%`);
   });
   it('shows the source without reading local quota for a remote directory', () => {
     render(
@@ -153,8 +171,8 @@ describe('model source second line', () => {
         {details()}
       </ModelSourceUsageProvider>,
     );
-    expect(screen.getByText('2小时 78%')).toBeTruthy();
-    expect(screen.queryByText('2小时 1%')).toBeNull();
+    expect(screen.getByText(quotaText('2小时 78%'))).toBeTruthy();
+    expect(screen.queryByText(quotaText('2小时 1%'))).toBeNull();
   });
   it('never falls back to Codex CLI quota for a ChatGPT bridge model', () => {
     const { rerender } = render(
@@ -162,14 +180,14 @@ describe('model source second line', () => {
         {details('account-a', 'chatgpt/gpt-5.6')}
       </ModelSourceUsageProvider>,
     );
-    expect(screen.queryByText('2小时 78%')).toBeNull();
+    expect(screen.queryByText(quotaText('2小时 78%'))).toBeNull();
     reads.webSnapshot = { primary: { usedPercent: 61, resetsAt: now / 1000 + 3600 } };
     rerender(
       <ModelSourceUsageProvider providers={[provider('account-a')]} enabled>
         {details('account-a', 'chatgpt/gpt-5.6')}
       </ModelSourceUsageProvider>,
     );
-    expect(screen.getByText('1小时 39%')).toBeTruthy();
+    expect(screen.getByText(quotaText('1小时 39%'))).toBeTruthy();
   });
   it('uses Claude model-scoped weekly quota and keeps unknown reset times honest', () => {
     reads.claudeSnapshot = {
@@ -191,9 +209,9 @@ describe('model source second line', () => {
       </ModelSourceUsageProvider>,
     );
     expect(screen.getByText('claude · Max')).toBeTruthy();
-    expect(screen.getByText('— 100%')).toBeTruthy();
-    expect(screen.getByText('2天 20%')).toBeTruthy();
-    expect(screen.queryByText('1天 50%')).toBeNull();
+    expect(screen.getByText(quotaText('— 100%'))).toBeTruthy();
+    expect(screen.getByText(quotaText('2天 20%'))).toBeTruthy();
+    expect(screen.queryByText(quotaText('1天 50%'))).toBeNull();
   });
   it('shows current xAI weekly quota and hides stale values', () => {
     reads.xaiSnapshot = {
@@ -209,10 +227,10 @@ describe('model source second line', () => {
     );
     const { rerender } = render(view());
     expect(screen.getByText('xai · SuperGrok')).toBeTruthy();
-    expect(screen.getByText('1天 64%')).toBeTruthy();
+    expect(screen.getByText(quotaText('1天 64%'))).toBeTruthy();
     reads.xaiSnapshot = { ...reads.xaiSnapshot, updatedAt: now - 10 * 86400000 };
     rerender(view());
-    expect(screen.queryByText('1天 64%')).toBeNull();
+    expect(screen.queryByText(quotaText('1天 64%'))).toBeNull();
   });
 
   it('replaces an expired period with reset pending, never inferred full quota', () => {
@@ -222,7 +240,7 @@ describe('model source second line', () => {
         {details()}
       </ModelSourceUsageProvider>,
     );
-    expect(screen.getByText('1秒 78%')).toBeTruthy();
+    expect(screen.getByText(quotaText('1秒 78%'))).toBeTruthy();
     act(() => {
       vi.advanceTimersByTime(1000);
     });

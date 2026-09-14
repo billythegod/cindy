@@ -164,7 +164,8 @@ export function ModelSourceDetails({
         window.resetsAt * 1000 <= nowMs;
       const remaining = Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
       return {
-        text: pending ? t('quotaCard.resetPending') : `${countdown ?? '—'} ${remaining}%`,
+        countdown: pending ? t('quotaCard.resetPending') : (countdown ?? '—'),
+        percentage: pending ? null : `${remaining}%`,
         title: pending
           ? t('quotaCard.resetPending')
           : [countdown, t('quotaCard.remainingPercent', { percent: remaining })]
@@ -191,16 +192,24 @@ export function ModelSourceDetails({
           {parts.map((part, index) => (
             <span key={index} className="inline-flex items-center gap-1">
               {index > 0 && <span aria-hidden>/</span>}
-              <span
-                className={
-                  part.used >= 90
-                    ? 'text-[var(--quota-bar-crit)]'
-                    : part.used > 70
-                      ? 'text-[var(--quota-bar-warn)]'
-                      : undefined
-                }
-              >
-                {part.text}
+              <span>
+                {part.countdown}
+                {part.percentage !== null && (
+                  <>
+                    {' '}
+                    <span
+                      className={
+                        part.used >= 90
+                          ? 'text-[var(--quota-bar-crit)]'
+                          : part.used > 70
+                            ? 'text-[var(--quota-bar-warn)]'
+                            : undefined
+                      }
+                    >
+                      {part.percentage}
+                    </span>
+                  </>
+                )}
               </span>
             </span>
           ))}

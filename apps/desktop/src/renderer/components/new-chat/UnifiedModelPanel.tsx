@@ -897,7 +897,7 @@ export function UnifiedModelPanel({
       if (price?.kind === 'free') return { kind: 'free' };
       if (price?.kind !== 'priced') return null;
       // 符号个数按**标准价**判(original;折扣不改变模型的价格档),点亮几格按折扣比例
-      // 取整;颜色只由点亮格数决定(见 UnifiedModelRow priceDisplay 头注)。
+      // 取整；费用统一使用中性色。
       const basis = price.original ?? price.current;
       const discountPct = price.discount !== undefined ? Math.round(price.discount * 100) : 0;
       return {

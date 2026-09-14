@@ -208,7 +208,6 @@ import {
   updateModelFavorite,
 } from '@/state/modelFavorites';
 import { setModelEngineOverride } from '@/state/modelEnginePrefs';
-import { PRICE_TIER_COLORS } from '@/themes/effortTierColors';
 
 const onProviderChange = vi.fn();
 
@@ -3453,11 +3452,7 @@ describe('统一面板 · 行内折扣徽标', () => {
     expect(tierNode.innerHTML).toContain('inset(0 50% 0 0)');
     withBadge.unmount();
 
-    // 颜色只由点亮格数决定:亮 1 格绿 / 2 格黄 / 3 格红,与模型档位无关。
-    // jsdom 把 hex 序列化成 rgb —— 按常量换算后断言,不写死魔法数字。
-    const hexToRgb = (hex: string) =>
-      `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`;
-    // $$$ 六折(实付 60%)→ round(1.8)=2 格亮 → 黄(t2),裁掉右侧 1/3。
+    // 折扣档串也保持中性色。
     const solLike = render(
       React.createElement(UnifiedModelRow, {
         ...common,
@@ -3471,11 +3466,10 @@ describe('统一面板 · 行内折扣徽标', () => {
       }),
     );
     const solNode = solLike.container.querySelector('[data-price-tier]') as HTMLElement;
-    expect(solNode.innerHTML).toContain(hexToRgb(PRICE_TIER_COLORS.t2));
-    expect(solNode.innerHTML).not.toContain(hexToRgb(PRICE_TIER_COLORS.t3));
+    expect(solNode.innerHTML).toContain('color: var(--text-secondary)');
     solLike.unmount();
 
-    // $$$ 一折(实付 10%)→ 至少 1 格亮 → 绿(t1)。
+    // $$$ 一折(实付 10%)→ 至少 1 格亮，仍用中性色。
     const deepDiscount = render(
       React.createElement(UnifiedModelRow, {
         ...common,
@@ -3490,11 +3484,10 @@ describe('统一面板 · 行内折扣徽标', () => {
     );
     const deepNode = deepDiscount.container.querySelector('[data-price-tier]') as HTMLElement;
     expect(deepNode.textContent).toContain('$$$');
-    expect(deepNode.innerHTML).toContain(hexToRgb(PRICE_TIER_COLORS.t1));
-    expect(deepNode.innerHTML).not.toContain(hexToRgb(PRICE_TIER_COLORS.t3));
+    expect(deepNode.innerHTML).toContain('color: var(--text-secondary)');
     deepDiscount.unmount();
 
-    // 无折扣付费行:$ 串按档位色渲染,无 ↓ 徽标。
+    // 无折扣付费行:$ 串用中性色渲染,无 ↓ 徽标。
     const plain = render(
       React.createElement(UnifiedModelRow, {
         ...common,
