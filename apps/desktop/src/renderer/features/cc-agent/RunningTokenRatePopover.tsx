@@ -61,7 +61,7 @@ export function RunningTokenRatePopover({
   const span = (samples.at(-1)?.durationMs ?? 0) - firstTime;
   const ceiling = Math.max(1, ...samples.map((sample) => sample.rate));
   const points = samples.map((sample) => ({
-    x: span > 0 ? 4 + ((sample.durationMs - firstTime) / span) * 132 : 136,
+    x: span > 0 ? 4 + ((sample.durationMs - firstTime) / span) * 108 : 112,
     y: 44 - (sample.rate / ceiling) * 36,
   }));
   const line = points.map((point, index) => `${index ? 'L' : 'M'}${point.x},${point.y}`).join(' ');
@@ -83,15 +83,15 @@ export function RunningTokenRatePopover({
           </div>
         </div>
         <svg
-          viewBox="0 0 140 48"
+          viewBox="0 0 120 48"
           className="col-start-2 row-start-1 h-12 w-32 self-center text-[var(--text-primary)]"
           role="img"
           aria-label={t('chat.runningStatus.rateHistory')}
         >
-          <path d="M4 44H136" stroke="currentColor" opacity="0.12" />
+          <path d="M4 44H112" stroke="currentColor" opacity="0.12" />
           {points.length > 1 && (
             <>
-              <path d={`${line} L136,44 L${points[0].x},44 Z`} fill="currentColor" opacity="0.08" />
+              <path d={`${line} L112,44 L${points[0].x},44 Z`} fill="currentColor" opacity="0.08" />
               <path
                 d={line}
                 fill="none"
