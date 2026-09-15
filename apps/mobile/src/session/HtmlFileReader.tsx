@@ -58,7 +58,7 @@ export function HtmlSnapshotReader({ preview, onError }: { preview: MobileHtmlPr
     onRenderProcessGone={onError}
     onHttpError={(event) => {
       // Resource failures stay in the page; they must not replace an already loaded document.
-      if (!preview.onDemand && interceptSnapshotNavigation(event.nativeEvent.url, preview.url, preview.documents)) onError();
+      if (interceptSnapshotNavigation(event.nativeEvent.url, preview.url, preview.documents)) onError();
     }}
     incognito
     style={styles.fill}

@@ -66,3 +66,20 @@ it.each(['onContentProcessDidTerminate', 'onRenderProcessGone'])('routes snapsho
   act(() => state.props[event]());
   expect(onError).toHaveBeenCalledOnce();
 });
+
+
+it.each([false, true])('routes entry HTTP errors to retry without failing on sibling resources (onDemand=%s)', (onDemand) => {
+  root = createRoot(document.createElement('div'));
+  const onError = vi.fn();
+  const preview: MobileHtmlPreview = {
+    url: 'http://127.0.0.1:1234/token/',
+    documents: ['/report%20one.html'], onDemand, close: async () => {},
+  };
+  act(() => root!.render(createElement(HtmlSnapshotReader, { preview, onError })));
+  for (const path of ['image.png', 'style.css', 'other.html']) {
+    act(() => state.props.onHttpError({ nativeEvent: { url: `http://127.0.0.1:1234/${path}`, statusCode: 404 } }));
+  }
+  expect(onError).not.toHaveBeenCalled();
+  act(() => state.props.onHttpError({ nativeEvent: { url: 'http://127.0.0.1:1234/report%20one.html', statusCode: 502 } }));
+  expect(onError).toHaveBeenCalledOnce();
+});

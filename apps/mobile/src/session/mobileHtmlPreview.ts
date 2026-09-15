@@ -242,6 +242,6 @@ async function prepareOnDemand(absPath: string, deps: RemoteAbsFileFetchDeps & {
       await server.stop(token);
       throw new Error('PREVIEW_CANCELLED');
     }
-    return { url, documents: [], onDemand: true, close };
+    return { url, documents: ['/' + entry.split('/').map(encodeURIComponent).join('/')], onDemand: true, close };
   } catch (error) { await close(); throw error; }
 }
