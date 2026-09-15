@@ -74,6 +74,7 @@ export class RemoteDesktopController {
   private active:
     | (RemoteDesktopLease & {
         peer: string;
+        readonly sourceDisplayId: string;
         expires: number;
         sequence: number;
         authenticationSession: string | undefined;
@@ -322,6 +323,7 @@ export class RemoteDesktopController {
         this.active = {
           ...lease,
           peer,
+          sourceDisplayId: display.id,
           expires: this.now() + REMOTE_DESKTOP_LEASE_MS,
           sequence: -1,
           authenticationSession,
@@ -524,28 +526,57 @@ export class RemoteDesktopController {
       }
       case 'displayModes': {
         if (!this.deps.displayModes) throw new Error('DESKTOP_DISPLAY_MODES_UNAVAILABLE');
-        const modes = await this.deps.displayModes(active.display.id);
+        // The virtual capture display has only its current mode. System mode IDs
+        // belong to the monitor selected when this lease began.
+        const modes = await this.deps.displayModes(active.sourceDisplayId);
         this.require(peer, request.lease);
         return modes;
       }
       case 'resolution': {
         if (!active.controlling) throw new Error('DESKTOP_VIEW_ONLY');
         if (!this.deps.resolution) throw new Error('DESKTOP_DISPLAY_MODES_UNAVAILABLE');
+        if (this.inputStarting || this.clipboardPending || this.locking || this.starting)
+          throw new Error('DESKTOP_DISPLAY_BUSY');
+        const restoringViewer = this.viewerDisplay !== null;
         const generation = this.controlGeneration;
-        const beforeChange = () => {
+        const current = () => {
           this.tick();
-          if (
-            this.active !== active ||
-            !active.controlling ||
-            generation !== this.controlGeneration
-          )
-            throw new Error('DESKTOP_LEASE_EXPIRED');
+          return (
+            this.active === active && active.controlling && generation === this.controlGeneration
+          );
+        };
+        const beforeChange = () => {
+          if (!current()) throw new Error('DESKTOP_LEASE_EXPIRED');
           // Release old geometry before the native write can emit display events.
           // Completion must not inspect or stop a replacement lease.
           this.stop(peer);
         };
-        await this.deps.resolution(active.display.id, request.modeId, beforeChange);
-        return { ok: true };
+        try {
+          if (this.viewerDisplay) {
+            this.displayChanging = true;
+            try {
+              this.deps.stopInput();
+              this.deps.stopVideo();
+              if (this.deps.releaseInput) await this.deps.releaseInput();
+              if (!current()) throw new Error('DESKTOP_LEASE_EXPIRED');
+              if (!this.viewerDisplay.restore)
+                throw new Error('DESKTOP_VIEWER_DISPLAY_UNAVAILABLE');
+              // Finish the helper's original-mode write before applying a system
+              // mode; otherwise delayed cleanup can overwrite the user's choice.
+              const restored = await this.viewerDisplay.restore(current);
+              if (!current()) throw new Error('DESKTOP_LEASE_EXPIRED');
+              this.viewerDisplay = null;
+              active.display = restored;
+            } finally {
+              this.displayChanging = false;
+            }
+          }
+          await this.deps.resolution(active.sourceDisplayId, request.modeId, beforeChange);
+          return { ok: true };
+        } catch (error) {
+          if (restoringViewer && current()) this.stop(peer);
+          throw error;
+        }
       }
       case 'offer': {
         const sdp = await this.deps.offer(

@@ -40,6 +40,65 @@ function fixture() {
 }
 
 describe('viewer-sized desktop ownership', () => {
+  it('enumerates source modes across matching, repeated resizing and restoration', async () => {
+    const f = fixture(),
+      lease = await f.start();
+    const modes = [{ id: '400', width: 3840, height: 2160, current: false }];
+    f.deps.displayModes = vi.fn(async (id) => (id === '1' ? modes : []));
+    for (const op of ['viewerDisplay', 'viewerDisplay', 'restoreViewerDisplay'] as const) {
+      await f.host.request('phone', { op: 'control', lease: lease.lease, enabled: true });
+      await f.host.request('phone', { op, lease: lease.lease, width: 900, height: 1600 });
+      expect(await f.host.request('phone', { op: 'displayModes', lease: lease.lease })).toEqual(
+        modes,
+      );
+      expect(f.deps.displayModes).toHaveBeenLastCalledWith('1');
+    }
+  });
+
+  it.each(['success', 'cancel', 'failure'] as const)(
+    'restores before applying a system mode to the source (%s)',
+    async (outcome) => {
+      const f = fixture(),
+        lease = await f.start();
+      await f.host.request('phone', {
+        op: 'viewerDisplay',
+        lease: lease.lease,
+        width: 900,
+        height: 1600,
+      });
+      await f.host.request('phone', { op: 'control', lease: lease.lease, enabled: true });
+      let settle!: () => void;
+      const restoration = new Promise<RemoteDesktopLease['display']>((resolve, reject) => {
+        settle = () =>
+          outcome === 'failure' ? reject(new Error('RESTORE_FAILED')) : resolve(lease.display);
+      });
+      f.handle.restore = vi.fn(() => restoration);
+      f.deps.resolution = vi.fn(async (_id, _mode, beforeChange) => beforeChange());
+      const pending = f.host.request('phone', {
+        op: 'resolution',
+        lease: lease.lease,
+        modeId: '400',
+      });
+      expect(f.deps.resolution).not.toHaveBeenCalled();
+      await expect(
+        f.host.request('other', { op: 'start', displayId: '1', takeover: true }),
+      ).rejects.toThrow('DESKTOP_BUSY');
+      if (outcome === 'cancel') f.host.stop('phone');
+      settle();
+      if (outcome === 'success') {
+        await pending;
+        expect(f.deps.resolution).toHaveBeenCalledWith('1', '400', expect.any(Function));
+        expect(f.handle.restore).toHaveBeenCalledOnce();
+      } else {
+        await expect(pending).rejects.toThrow(
+          outcome === 'cancel' ? 'DESKTOP_LEASE_EXPIRED' : 'RESTORE_FAILED',
+        );
+        expect(f.deps.resolution).not.toHaveBeenCalled();
+      }
+      expect(f.host.state).toBeNull();
+    },
+  );
+
   it.each([false, true])(
     'waits for restored geometry before starting a new lease (takeover=%s)',
     async (takeover) => {

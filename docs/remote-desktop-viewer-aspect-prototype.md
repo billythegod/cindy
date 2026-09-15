@@ -40,6 +40,9 @@ continue to offer matching only.
   resizes the temporary display without ending the lease for dimensions within
   320–2560 per edge. Larger system modes (such as 4K) retain the legacy mode-ID
   path and its existing reconnect/persistent-mode behavior. Exiting a temporary
+  display completes before a legacy mode write, so cleanup cannot overwrite it.
+  Mode enumeration and native mode-ID writes use the lease's original source
+  monitor; video and input use the current capture display. Exiting a temporary
   display restores the original monitor mode. The list still includes all macOS-reported modes,
   including different aspect ratios such as 800 × 600; filtering the list to the
   matched ratio is not implemented in this prototype.
