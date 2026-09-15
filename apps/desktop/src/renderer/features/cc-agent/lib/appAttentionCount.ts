@@ -48,7 +48,9 @@ export function countAppAttention(input: AppAttentionCountInput): number {
     });
     const status = resolveSidebarRightStatus(activity);
     if (status === 'done' || status === 'awaiting' || status === 'error') {
-      attentionIds.add(JSON.stringify([session.deviceLinkDeviceId || null, session.id]));
+      // Notification and schedule inputs still use session IDs; keep their existing
+      // counting identity until all attention sources carry device provenance.
+      attentionIds.add(session.id);
     }
   }
   return attentionIds.size;

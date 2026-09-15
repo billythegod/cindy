@@ -24,7 +24,7 @@ function input(overrides: Partial<AppAttentionCountInput> = {}): AppAttentionCou
 }
 
 describe('app attention total', () => {
-  it('counts same-ID tasks per device while deduplicating repeated projections', () => {
+  it('preserves ID-based badge deduplication while activity reads remain device-scoped', () => {
     const unreadDevices = new Set(['peer-a', 'peer-b']);
     const value = input({
       sessions: [
@@ -38,13 +38,33 @@ describe('app attention total', () => {
       getRemoteActivity: (_id, deviceId) =>
         unreadDevices.has(deviceId) ? { phase: 'completed', attention: true } : undefined,
     });
-    expect(countAppAttention(value)).toBe(3);
+    expect(countAppAttention(value)).toBe(1);
     unreadDevices.delete('peer-a');
-    expect(countAppAttention(value)).toBe(2);
+    expect(countAppAttention(value)).toBe(1);
     unreadDevices.delete('peer-b');
     expect(countAppAttention(value)).toBe(1);
     expect(countAppAttention({ ...value, localActivities: new Map() })).toBe(0);
   });
+
+  it.each(['attentionKinds', 'localSchedules', 'remoteSchedules'] as const)(
+    'does not multiply ID-only %s across device projections',
+    (source) => {
+      const value = input({
+        sessions: [
+          session('same'),
+          session('same', { deviceLinkDeviceId: 'peer-a' }),
+          session('same', { deviceLinkDeviceId: 'peer-b' }),
+        ],
+      });
+      const unread = { hasUnreadRun: true, hasUnreadFailedRun: true };
+      const withAttention =
+        source === 'attentionKinds'
+          ? { ...value, attentionKinds: new Map([['same', 'error' as const]]) }
+          : { ...value, [source]: new Map([['same', unread]]) };
+      expect(countAppAttention(withAttention)).toBe(1);
+      expect(countAppAttention(value)).toBe(0);
+    },
+  );
 
   it('counts three unread tasks and drops only the task read', () => {
     const attentionKinds = new Map<'a' | 'b' | 'c', 'done'>([
