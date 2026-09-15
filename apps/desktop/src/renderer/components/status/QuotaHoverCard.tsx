@@ -444,6 +444,13 @@ export function QuotaHoverCard({
   // 测试可只注入 t；运行时再优先跟随应用当前语言格式化日期。
   const locale = i18n?.resolvedLanguage ?? i18n?.language;
   const { title, planLabel, windows, details = [], notices = [], emptyText, updatedAt } = account;
+  // Pace also requires a valid reset time; balances and notices are always visible.
+  const hasWindowDetails = windows.some(
+    ({ window, detail, breakdown }) =>
+      formatQuotaResetAt(window.resetsAt, nowMs, locale) !== null ||
+      Boolean(detail) ||
+      Boolean(breakdown?.length),
+  );
   // Use observation time for pace so a stale snapshot cannot drift as the card renders.
   const paceNowMs = typeof updatedAt === 'number' && Number.isFinite(updatedAt) ? updatedAt : null;
   const staleMinutes =
@@ -551,7 +558,7 @@ export function QuotaHoverCard({
         ) : null}
       </div>
 
-      {embedded && windows.length > 0 && (
+      {embedded && hasWindowDetails && (
         <Button
           variant="secondary"
           type="button"

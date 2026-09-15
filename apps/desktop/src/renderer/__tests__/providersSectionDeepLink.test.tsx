@@ -301,7 +301,7 @@ describe('ProvidersSection — 深链定位', () => {
   it.each(['subscriptionAccount', 'openAiAccount'] as const)(
     'collapses usage on %s changes but retains expansion on quota refresh',
     async (identityField) => {
-      const account = { title: 'ChatGPT', windows: [{ key: 'weekly', title: 'Weekly', window: { utilization: 20 } }] };
+      const account = { title: 'ChatGPT', windows: [{ key: 'weekly', title: 'Weekly', window: { utilization: 20 }, detail: 'Weekly usage details' }] };
       vi.mocked(useProviderSubscriptionCard).mockReturnValue(account);
       const provider = makeProvider('openai', {
         connected: true,

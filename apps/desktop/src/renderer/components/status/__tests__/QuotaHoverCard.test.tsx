@@ -91,6 +91,31 @@ function weeklyAtProgress(utilization: number, progress: number) {
 }
 
 describe('QuotaHoverCard', () => {
+  it.each([undefined, null, 0, NaN, Infinity, 1e20])(
+    'omits the disclosure when windows have no displayable details (reset=%s)',
+    (resetsAt) => {
+      render(<UsageCard variant="embedded" nowMs={NOW_MS} account={{
+        windows: [{ key: 'weekly', title: 'Weekly', window: { utilization: 20, resetsAt }, breakdown: [] }],
+        details: ['Balance available'],
+      }} />);
+      expect(screen.getByRole('progressbar')).toBeTruthy();
+      expect(screen.getByText('Balance available')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'quotaCard.usageTitle' })).toBeNull();
+    },
+  );
+
+  it.each(['detail', 'breakdown'] as const)('discloses %s without a reset date', (kind) => {
+    render(<UsageCard variant="embedded" account={{ windows: [
+      { key: 'plain', title: 'Plain', window: { utilization: 10 } },
+      { key: 'detailed', title: 'Detailed', window: { utilization: 20 },
+        ...(kind === 'detail' ? { detail: 'Extra usage' } : { breakdown: [{ label: 'Extra usage', value: '10' }] }),
+      },
+    ] }} />);
+    expect(screen.queryByText('Extra usage')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'quotaCard.usageTitle' }));
+    expect(screen.getByText('Extra usage')).toBeTruthy();
+  });
+
   it('hides duplicate identity without windows and only makes the popover region focusable', () => {
     const account = { title: 'ChatGPT', planLabel: 'Pro', windows: [], emptyText: 'Waiting for usage' };
     const { rerender } = render(<UsageCard variant="embedded" hideIdentity account={account} />);
