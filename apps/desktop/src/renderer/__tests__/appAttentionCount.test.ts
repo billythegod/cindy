@@ -24,6 +24,28 @@ function input(overrides: Partial<AppAttentionCountInput> = {}): AppAttentionCou
 }
 
 describe('app attention total', () => {
+  it('counts same-ID tasks per device while deduplicating repeated projections', () => {
+    const unreadDevices = new Set(['peer-a', 'peer-b']);
+    const value = input({
+      sessions: [
+        session('same'),
+        session('same'),
+        session('same', { deviceLinkDeviceId: 'peer-a' }),
+        session('same', { deviceLinkDeviceId: 'peer-b' }),
+        session('same', { deviceLinkDeviceId: 'peer-a' }),
+      ],
+      localActivities: new Map([['same', { phase: 'completed', attention: true }]]),
+      getRemoteActivity: (_id, deviceId) =>
+        unreadDevices.has(deviceId) ? { phase: 'completed', attention: true } : undefined,
+    });
+    expect(countAppAttention(value)).toBe(3);
+    unreadDevices.delete('peer-a');
+    expect(countAppAttention(value)).toBe(2);
+    unreadDevices.delete('peer-b');
+    expect(countAppAttention(value)).toBe(1);
+    expect(countAppAttention({ ...value, localActivities: new Map() })).toBe(0);
+  });
+
   it('counts three unread tasks and drops only the task read', () => {
     const attentionKinds = new Map<'a' | 'b' | 'c', 'done'>([
       ['a', 'done'],
