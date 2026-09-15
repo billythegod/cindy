@@ -150,10 +150,52 @@ describe('QuotaHoverCard', () => {
     expect(screen.getByText('剩余 100%')).toBeTruthy();
     expect(screen.getByText('剩余 24%')).toBeTruthy();
     expect(screen.getByText('7小时 5分钟后重置')).toBeTruthy();
+    expect(screen.queryByText('17:05 重置')).toBeNull();
+    const detailsButton = screen.getByRole('button', { name: 'quotaCard.usageTitle' });
+    expect(detailsButton.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(detailsButton);
+    expect(detailsButton.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('17:05 重置')).toBeTruthy();
     expect(screen.getByText('8月7日 00:00 重置')).toBeTruthy();
     expect(screen.getByText('8月6日 23:59 重置')).toBeTruthy();
     expect(screen.getByText('18:30 重置')).toBeTruthy();
+  });
+
+  it('keeps balances, alerts and stale data visible while embedded details are collapsed', () => {
+    render(
+      <UsageCard
+        variant="embedded"
+        hideIdentity
+        nowMs={NOW_MS}
+        account={{
+          title: 'ChatGPT',
+          planLabel: 'Pro',
+          updatedAt: NOW_MS - 10 * 60_000,
+          windows: [
+            {
+              key: 'weekly',
+              title: 'Weekly',
+              window: weeklyAtProgress(92, 0.5),
+              paceWindowMinutes: 10_080,
+            },
+          ],
+          details: ['0.00 credits', 'Balance depleted'],
+          notices: [{ text: 'Limit reached', tone: 'crit' }],
+        }}
+      />,
+    );
+    expect(screen.queryByText('ChatGPT')).toBeNull();
+    expect(screen.getByText('0.00 credits')).toBeTruthy();
+    expect(screen.getByText('Balance depleted')).toBeTruthy();
+    expect(screen.getByText('Limit reached')).toBeTruthy();
+    expect(screen.getByText('quotaCard.staleData:10')).toBeTruthy();
+    expect(screen.queryByTestId('quota-pace')).toBeNull();
+    expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('8');
+    const button = screen.getByRole('button', { name: 'quotaCard.usageTitle' });
+    fireEvent.click(button);
+    expect(screen.getByTestId('quota-pace')).toBeTruthy();
+    fireEvent.click(button);
+    expect(screen.queryByTestId('quota-pace')).toBeNull();
   });
 
   it('prioritizes countdown in compact cards and updates to pending after reset', () => {

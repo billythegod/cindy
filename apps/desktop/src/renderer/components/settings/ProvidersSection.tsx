@@ -62,7 +62,10 @@ import {
 import { providerDisplayName } from '@/lib/providerDisplayName';
 import { providerMonogram } from '@/lib/providerModels';
 import { isBuiltinApiKeyProviderId } from '../../../shared/providerSecrets';
-import type { CustomProviderUpdateOptions, CustomProviderUpdateResult } from '../../../shared/customProviderUpdate';
+import type {
+  CustomProviderUpdateOptions,
+  CustomProviderUpdateResult,
+} from '../../../shared/customProviderUpdate';
 
 import {
   customProviderSubtitleForDisplay,
@@ -244,28 +247,41 @@ function BetaTag({ label }: { label: string }) {
 
 type ProviderOwnerScope = { dataOwnerId: string | null; ownerGeneration: number };
 function supportsBuiltinConnectionManagement(provider: ProviderView): boolean {
-  return provider.source === 'builtin' && provider.id !== 'xd' && (
-    ['openai', 'anthropic', 'xai'].includes(provider.id) ||
-    (provider.auth.method === 'oauth' && !!provider.auth.oauth) ||
-    (provider.auth.method === 'apiKey' && isBuiltinApiKeyProviderId(provider.id))
+  return (
+    provider.source === 'builtin' &&
+    provider.id !== 'xd' &&
+    (['openai', 'anthropic', 'xai'].includes(provider.id) ||
+      (provider.auth.method === 'oauth' && !!provider.auth.oauth) ||
+      (provider.auth.method === 'apiKey' && isBuiltinApiKeyProviderId(provider.id)))
   );
 }
 /** Reuse the image Host restart confirmation for settings mutations that remove its source. */
 function useProviderChangeConfirmation() {
   const { t } = useTranslation();
   const { confirm } = useConfirmDialog();
-  return useCallback(async (change: (options: CustomProviderUpdateOptions) => Promise<CustomProviderUpdateResult | void>) => {
-    const result = await change({ source: 'manual-settings' });
-    if (!result || result.ok) return true;
-    if (!(await confirm({
-      title: t('settings.providers.custom.imageGenerationReload.title'),
-      description: t('settings.providers.custom.imageGenerationReload.description'),
-      confirmText: t('settings.providers.custom.imageGenerationReload.interrupt'),
-      cancelText: t('settings.providers.custom.imageGenerationReload.cancel'),
-    }))) return false;
-    const retry = await change({ source: 'manual-settings', codexImageGenerationRestartPolicy: 'interrupt' });
-    return !retry || retry.ok;
-  }, [confirm, t]);
+  return useCallback(
+    async (
+      change: (options: CustomProviderUpdateOptions) => Promise<CustomProviderUpdateResult | void>,
+    ) => {
+      const result = await change({ source: 'manual-settings' });
+      if (!result || result.ok) return true;
+      if (
+        !(await confirm({
+          title: t('settings.providers.custom.imageGenerationReload.title'),
+          description: t('settings.providers.custom.imageGenerationReload.description'),
+          confirmText: t('settings.providers.custom.imageGenerationReload.interrupt'),
+          cancelText: t('settings.providers.custom.imageGenerationReload.cancel'),
+        }))
+      )
+        return false;
+      const retry = await change({
+        source: 'manual-settings',
+        codexImageGenerationRestartPolicy: 'interrupt',
+      });
+      return !retry || retry.ok;
+    },
+    [confirm, t],
+  );
 }
 async function disconnectProvider(
   provider: ProviderView,
@@ -273,7 +289,8 @@ async function disconnectProvider(
   options?: CustomProviderUpdateOptions,
 ): Promise<CustomProviderUpdateResult | void> {
   if (provider.source === 'builtin') {
-    if (!supportsBuiltinConnectionManagement(provider)) throw new Error('Provider connection management is unavailable');
+    if (!supportsBuiltinConnectionManagement(provider))
+      throw new Error('Provider connection management is unavailable');
     // Keep the entry available for reconnect, even when the original source was auto-detected.
     await window.electronAPI.maker.setProviderPresentation({
       providerId: provider.id,
@@ -283,7 +300,8 @@ async function disconnectProvider(
     if (provider.id === 'openai') await window.electronAPI.maker.auth.logout('codex', scope);
     else if (provider.id === 'anthropic') await window.electronAPI.maker.claudeOAuthLogout(scope);
     else if (provider.id === 'xai') await window.electronAPI.maker.xaiOAuthLogout(scope);
-    else if (provider.auth.method === 'oauth') return window.electronAPI.maker.providerOAuthLogout(provider.id, scope, options);
+    else if (provider.auth.method === 'oauth')
+      return window.electronAPI.maker.providerOAuthLogout(provider.id, scope, options);
     else await window.electronAPI.builtinApiKeyRemove(provider.id, scope);
   } else if (provider.auth.method === 'oauth') {
     return window.electronAPI.maker.providerOAuthLogout(provider.id, scope, options);
@@ -350,7 +368,8 @@ function useProviderManagement(provider?: ProviderView) {
       )
         return;
       setBusy(true);
-      if (!(await confirmProviderChange(options => disconnectProvider(provider, scope, options)))) return;
+      if (!(await confirmProviderChange((options) => disconnectProvider(provider, scope, options))))
+        return;
       // Deleting the whole provider also revokes its legacy image API connection.
       // Keep this separate from disconnecting only the ChatGPT subscription.
       if (provider.id === 'openai') {
@@ -374,6 +393,7 @@ function useProviderManagement(provider?: ProviderView) {
 }
 
 function DetailHeader({
+  children,
   icon,
   title,
   identityBadge,
@@ -389,6 +409,7 @@ function DetailHeader({
   menuFooter,
   assetModule,
 }: {
+  children?: ReactNode;
   icon: ReactNode;
   title: string;
   /** 供应商身份附加标签（如免费套餐）。 */
@@ -406,7 +427,7 @@ function DetailHeader({
   /** 菜单末尾的只读信息行（如脱敏 key），自带一条分隔线。 */
   menuFooter?: ReactNode;
   /**
-   * 账户资产模块 —— 标题行下方的固定槽位，用一条 1px 发丝线分隔（不做框中框，
+   * 账户资产模块 —— 标题行下方的滚动内容槽位，用一条 1px 发丝线分隔（不做框中框，
    * 见 DESIGN §2 layer rule）。判定见 providerAssetModule.ts。
    */
   assetModule?: ReactNode;
@@ -439,8 +460,8 @@ function DetailHeader({
       : null;
 
   return (
-    <div className="flex shrink-0 flex-col">
-      <div className={cn('flex flex-col px-5 py-4', detail && 'gap-3')}>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 px-5 py-4">
         {/* 可折行:最小窗口(右栏 ~275px)放不下「状态 + 操作」时整组换行,
             不被卡片 overflow-hidden 裁掉(PR #1102 review 第三轮)。 */}
         <div className="flex flex-wrap items-center gap-3 gap-y-2">
@@ -580,36 +601,42 @@ function DetailHeader({
             )}
           </div>
         </div>
-
-        {detail}
       </div>
-      {assetModule ??
-        (subscription && (
-          <div
-            data-testid="provider-usage-module"
-            className="border-t px-1 py-2"
-            style={{ borderColor: 'var(--settings-theme-card-border)' }}
-          >
-            <QuotaHoverCard
-              variant="embedded"
-              account={subscription}
-              dashboardLabel={
-                provider?.id === 'anthropic' || provider?.auth.native === 'claude'
-                  ? t('settings.providers.usage.openClaudeUsage')
-                  : provider?.id === 'xai' || provider?.auth.native === 'xai'
-                    ? t('settings.providers.xai.asset.openUsage')
-                    : undefined
-              }
-              onOpenDashboard={
-                provider?.id === 'anthropic' || provider?.auth.native === 'claude'
-                  ? () => void window.electronAPI.openExternal('https://claude.ai/settings/usage')
-                  : provider?.id === 'xai' || provider?.auth.native === 'xai'
-                    ? () => void window.electronAPI.openExternal('https://grok.com')
-                    : undefined
-              }
-            />
-          </div>
-        ))}
+      <div
+        data-testid="provider-detail-scroll"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      >
+        {detail && <div className="px-5 pb-4">{detail}</div>}
+        {assetModule ??
+          (subscription && (
+            <div
+              data-testid="provider-usage-module"
+              className="border-t px-1 py-2"
+              style={{ borderColor: 'var(--settings-theme-card-border)' }}
+            >
+              <QuotaHoverCard
+                variant="embedded"
+                hideIdentity={Boolean(subscriptionProduct)}
+                account={subscription}
+                dashboardLabel={
+                  provider?.id === 'anthropic' || provider?.auth.native === 'claude'
+                    ? t('settings.providers.usage.openClaudeUsage')
+                    : provider?.id === 'xai' || provider?.auth.native === 'xai'
+                      ? t('settings.providers.xai.asset.openUsage')
+                      : undefined
+                }
+                onOpenDashboard={
+                  provider?.id === 'anthropic' || provider?.auth.native === 'claude'
+                    ? () => void window.electronAPI.openExternal('https://claude.ai/settings/usage')
+                    : provider?.id === 'xai' || provider?.auth.native === 'xai'
+                      ? () => void window.electronAPI.openExternal('https://grok.com')
+                      : undefined
+                }
+              />
+            </div>
+          ))}
+        {children}
+      </div>
     </div>
   );
 }
@@ -619,9 +646,11 @@ function DetailHeader({
 // ---------------------------------------------------------------------------
 
 function AnthropicHeader({
+  children,
   provider,
   onChanged,
 }: {
+  children?: ReactNode;
   provider?: ProviderView;
   onChanged: () => void;
 }) {
@@ -659,7 +688,8 @@ function AnthropicHeader({
         toast.error(t('settings.connections.claude.toast.loginFailed'));
       }
     } catch {
-      if (loginRef.current === login) toast.error(t('settings.connections.claude.toast.loginFailed'));
+      if (loginRef.current === login)
+        toast.error(t('settings.connections.claude.toast.loginFailed'));
     } finally {
       if (loginRef.current === login) {
         loginRef.current = null;
@@ -719,6 +749,7 @@ function AnthropicHeader({
 
   return (
     <DetailHeader
+      children={children}
       icon={<AnthropicMark size={18} />}
       title={provider?.name ?? t('settings.providers.anthropic.title')}
       subtitle={providerSubtitleForDisplay(provider, t('settings.providers.anthropic.modelLabel'), {
@@ -758,7 +789,15 @@ function LocalProviderNameInput({
   );
 }
 
-function OpenAiHeader({ provider, onChanged }: { provider?: ProviderView; onChanged: () => void }) {
+function OpenAiHeader({
+  children,
+  provider,
+  onChanged,
+}: {
+  children?: ReactNode;
+  provider?: ProviderView;
+  onChanged: () => void;
+}) {
   const { t } = useTranslation();
   const { confirm } = useConfirmDialog();
   const {
@@ -797,7 +836,9 @@ function OpenAiHeader({ provider, onChanged }: { provider?: ProviderView; onChan
   }, [confirm, provider, onChanged, t]);
 
   const handleLogin = useCallback(async () => {
-    const outcome = await triggerLogin(reconnectRequired && credentialScope !== 'system-shared' ? 'browser' : 'local');
+    const outcome = await triggerLogin(
+      reconnectRequired && credentialScope !== 'system-shared' ? 'browser' : 'local',
+    );
     if (outcome === 'authenticated') {
       onChanged();
     } else if (outcome === 'unverified') {
@@ -865,6 +906,7 @@ function OpenAiHeader({ provider, onChanged }: { provider?: ProviderView; onChan
 
   return (
     <DetailHeader
+      children={children}
       icon={<OpenAIMark size={18} />}
       title={provider?.name ?? t('settings.providers.openai.title')}
       subtitle={
@@ -885,7 +927,15 @@ function OpenAiHeader({ provider, onChanged }: { provider?: ProviderView; onChan
   );
 }
 
-function XaiHeader({ provider, onChanged }: { provider?: ProviderView; onChanged: () => void }) {
+function XaiHeader({
+  children,
+  provider,
+  onChanged,
+}: {
+  children?: ReactNode;
+  provider?: ProviderView;
+  onChanged: () => void;
+}) {
   const { t } = useTranslation();
   const { confirm } = useConfirmDialog();
   const [busy, setBusy] = useState(false);
@@ -960,6 +1010,7 @@ function XaiHeader({ provider, onChanged }: { provider?: ProviderView; onChanged
 
   return (
     <DetailHeader
+      children={children}
       icon={<ProviderLogoMark providerId="xai" size={18} />}
       title={provider?.name ?? t('settings.providers.xai.title')}
       subtitle={providerSubtitleForDisplay(provider, t('settings.providers.xai.modelLabel'), {
@@ -977,11 +1028,13 @@ function XaiHeader({ provider, onChanged }: { provider?: ProviderView; onChanged
 // ---------------------------------------------------------------------------
 
 function GenericOAuthHeader({
+  children,
   provider,
   onChanged,
   onEdit,
   onDelete,
 }: {
+  children?: ReactNode;
   provider: ProviderView;
   onChanged: () => void;
   onEdit?: () => void;
@@ -1002,7 +1055,9 @@ function GenericOAuthHeader({
   );
   const deviceFlow = provider.auth.oauth?.flow === 'device-code';
   const { deviceCode, browserUrl, clearDeviceCode, beginOwnedLogin, cancelOwnedLogin } =
-    useProviderOAuthDeviceCode(provider.id, { observeProgress: deviceFlow || provider.auth.native === 'codex' });
+    useProviderOAuthDeviceCode(provider.id, {
+      observeProgress: deviceFlow || provider.auth.native === 'codex',
+    });
 
   const handleLogin = useCallback(async () => {
     const attempt = ++loginAttempt.current;
@@ -1048,7 +1103,8 @@ function GenericOAuthHeader({
       });
       if (!confirmed) return;
       setBusy(true);
-      if (!(await confirmProviderChange(options => disconnectProvider(provider, scope, options)))) return;
+      if (!(await confirmProviderChange((options) => disconnectProvider(provider, scope, options))))
+        return;
       toast.success(t('settings.providers.genericOAuth.toast.loggedOut', { name: provider.name }));
       onChanged();
     } catch {
@@ -1095,11 +1151,15 @@ function GenericOAuthHeader({
           disabled: busy,
         };
   const detail =
-    loggingIn && deviceFlow ? <OAuthDeviceCodeCard deviceCode={deviceCode} />
-      : loggingIn && browserUrl ? <OAuthBrowserLink url={browserUrl} /> : undefined;
+    loggingIn && deviceFlow ? (
+      <OAuthDeviceCodeCard deviceCode={deviceCode} />
+    ) : loggingIn && browserUrl ? (
+      <OAuthBrowserLink url={browserUrl} />
+    ) : undefined;
 
   return (
     <DetailHeader
+      children={children}
       icon={providerIcon(provider, 18)}
       title={provider.name}
       subtitle={
@@ -1154,9 +1214,11 @@ function GenericOAuthHeader({
  * 草稿(草稿本就在 renderer state 里),不构成凭证下放。
  */
 function BuiltinApiKeyHeader({
+  children,
   provider,
   onChanged,
 }: {
+  children?: ReactNode;
   provider: ProviderView;
   onChanged: () => void;
 }) {
@@ -1258,6 +1320,7 @@ function BuiltinApiKeyHeader({
 
   return (
     <DetailHeader
+      children={children}
       icon={providerIcon(provider, 18)}
       title={provider.name}
       subtitle={t('settings.providers.builtinApiKey.subtitle')}
@@ -1296,9 +1359,11 @@ function maskKey(key: string): string {
 }
 
 function XdGatewayHeader({
+  children,
   provider,
   onChanged,
 }: {
+  children?: ReactNode;
   provider?: ProviderView;
   onChanged: () => void;
 }) {
@@ -1599,6 +1664,7 @@ function XdGatewayHeader({
 
   return (
     <DetailHeader
+      children={children}
       icon={<XDIncMark size={18} />}
       title={t('settings.providers.xd.title')}
       identityBadge={
@@ -1621,10 +1687,19 @@ function XdGatewayHeader({
   );
 }
 
-function OllamaHeader({ provider, onDelete }: { provider: ProviderView; onDelete: () => void }) {
+function OllamaHeader({
+  children,
+  provider,
+  onDelete,
+}: {
+  children?: ReactNode;
+  provider: ProviderView;
+  onDelete: () => void;
+}) {
   const { t } = useTranslation();
   return (
     <DetailHeader
+      children={children}
       icon={providerIcon(provider, 18)}
       title={provider.name || t('settings.providers.local.title')}
       subtitle={t('settings.providers.local.subtitle')}
@@ -1644,11 +1719,13 @@ function OllamaHeader({ provider, onDelete }: { provider: ProviderView; onDelete
 // ---------------------------------------------------------------------------
 
 function CustomProviderHeader({
+  children,
   provider,
   onEdit,
   onDelete,
   onChanged,
 }: {
+  children?: ReactNode;
   provider: ProviderView;
   onEdit: () => void;
   onDelete: () => void;
@@ -1673,7 +1750,8 @@ function CustomProviderHeader({
       )
         return;
       setDisconnecting(true);
-      if (!(await confirmProviderChange(options => disconnectProvider(provider, scope, options)))) return;
+      if (!(await confirmProviderChange((options) => disconnectProvider(provider, scope, options))))
+        return;
     } catch {
       toast.error(t('settings.providers.genericOAuth.toast.logoutFailed', { name: provider.name }));
     } finally {
@@ -1686,6 +1764,7 @@ function CustomProviderHeader({
   if (isOAuth)
     return (
       <GenericOAuthHeader
+        children={children}
         key={provider.id}
         provider={provider}
         onChanged={onChanged}
@@ -1695,6 +1774,7 @@ function CustomProviderHeader({
     );
   return (
     <DetailHeader
+      children={children}
       icon={providerIcon(provider, 18)}
       title={provider.name}
       subtitle={customProviderSubtitleForDisplay(provider)}
@@ -2348,7 +2428,8 @@ export function ProvidersSection() {
           cancelText: t('settings.providers.custom.deleteConfirm.cancel'),
         });
         if (!ok) return;
-        if (!(await confirmProviderChange(options => deleteCustomProvider(p.id, scope, options)))) return;
+        if (!(await confirmProviderChange((options) => deleteCustomProvider(p.id, scope, options))))
+          return;
         toast.success(t('settings.providers.custom.toast.deleted'));
       } catch {
         toast.error(t('settings.providers.custom.toast.deleteFailed'));
@@ -2411,8 +2492,13 @@ export function ProvidersSection() {
           }
           anyOk = true;
           const openRouterCatalog = /^https:\/\/openrouter\.ai\/api(?:\/v1)?\/?$/.test(rt.baseUrl)
-            ? rt.modelsUrl ?? 'https://openrouter.ai/api/v1/models' : undefined;
-          const merged = appendDiscoveredCustomProviderModels(rt.models, r.models, openRouterCatalog);
+            ? (rt.modelsUrl ?? 'https://openrouter.ai/api/v1/models')
+            : undefined;
+          const merged = appendDiscoveredCustomProviderModels(
+            rt.models,
+            r.models,
+            openRouterCatalog,
+          );
           rt.models = merged.models;
           added += merged.addedIds.length;
         }
@@ -2491,27 +2577,42 @@ export function ProvidersSection() {
   );
 
   // 详情头部按供应商类型分派(鉴权逻辑与重构前一致)。
-  const renderDetailHeader = (p: ProviderView): ReactNode => {
-    if (p.id === 'xd') return <XdGatewayHeader provider={p} onChanged={refetch} />;
-    if (p.id === 'anthropic') return <AnthropicHeader provider={p} onChanged={refetch} />;
-    if (p.id === 'openai') return <OpenAiHeader provider={p} onChanged={refetch} />;
-    if (p.id === 'xai') return <XaiHeader provider={p} onChanged={refetch} />;
-    if (
-      p.source === 'builtin' &&
-      p.auth.method === 'apiKey' &&
-      isBuiltinApiKeyProviderId(p.id)
-    ) {
-      return <BuiltinApiKeyHeader key={p.id} provider={p} onChanged={refetch} />;
+  const renderDetailHeader = (p: ProviderView, children: ReactNode): ReactNode => {
+    if (p.id === 'xd')
+      return <XdGatewayHeader children={children} provider={p} onChanged={refetch} />;
+    if (p.id === 'anthropic')
+      return <AnthropicHeader children={children} provider={p} onChanged={refetch} />;
+    if (p.id === 'openai')
+      return <OpenAiHeader children={children} provider={p} onChanged={refetch} />;
+    if (p.id === 'xai') return <XaiHeader children={children} provider={p} onChanged={refetch} />;
+    if (p.source === 'builtin' && p.auth.method === 'apiKey' && isBuiltinApiKeyProviderId(p.id)) {
+      return (
+        <BuiltinApiKeyHeader children={children} key={p.id} provider={p} onChanged={refetch} />
+      );
     }
     if (p.source === 'builtin') {
-      if (supportsBuiltinConnectionManagement(p)) return <GenericOAuthHeader key={p.id} provider={p} onChanged={refetch} />;
-      return <DetailHeader icon={providerIcon(p, 18)} title={p.name} subtitle={providerSubtitleForDisplay(p, '')} provider={p} />;
+      if (supportsBuiltinConnectionManagement(p))
+        return (
+          <GenericOAuthHeader children={children} key={p.id} provider={p} onChanged={refetch} />
+        );
+      return (
+        <DetailHeader
+          children={children}
+          icon={providerIcon(p, 18)}
+          title={p.name}
+          subtitle={providerSubtitleForDisplay(p, '')}
+          provider={p}
+        />
+      );
     }
     if (p.id === MANAGED_OLLAMA_PROVIDER_ID) {
-      return <OllamaHeader provider={p} onDelete={() => void handleDeleteOllama()} />;
+      return (
+        <OllamaHeader children={children} provider={p} onDelete={() => void handleDeleteOllama()} />
+      );
     }
     return (
       <CustomProviderHeader
+        children={children}
         key={p.id}
         provider={p}
         onChanged={refetch}
@@ -2640,9 +2741,8 @@ export function ProvidersSection() {
             </div>
           </div>
 
-          {/* 右栏详情:详情头/条带固定,仅模型列表(UnifiedModelList 内部)滚动 ——
-              长清单滚动时供应商名称、连接状态与工具行不随之滚走(2026-07 定稿)。 */}
-          <div className="flex min-w-0 flex-1 flex-col">
+          {/* 右栏身份固定；说明、资产和模型共用 DetailHeader 的滚动区。 */}
+          <div key={effectiveSelected?.id} className="flex min-h-0 min-w-0 flex-1 flex-col">
             {cindySigninActive ? (
               /* 登录引导是 brand-scale surface(DESIGN §3):48px 标识 → 24px 名字 →
                  一行价值主张 → 赠送余额徽标 → 黑 CTA,间距走 8px 系统。底部留白比
@@ -2690,8 +2790,8 @@ export function ProvidersSection() {
                 />
               </div>
             ) : effectiveSelected ? (
-              <>
-                {renderDetailHeader(effectiveSelected)}
+              renderDetailHeader(
+                effectiveSelected,
                 <>
                   {/* 供应商已停用:条带讲清「发生了什么 + 下一步」并就地给恢复入口。整个
                     模型区随之收起(2026-07-28 用户反馈:停用了就别再列模型)——停用是
@@ -2775,15 +2875,18 @@ export function ProvidersSection() {
                               : undefined
                           }
                           emptyMessage={
-                            effectiveSelected.source === 'user' && effectiveSelected.modelDiscoveryFailure
-                              ? t(`settings.providers.detail.discoveryFailed.${effectiveSelected.modelDiscoveryFailure.kind}`)
-                              : effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID
-                              ? t('settings.providers.local.emptyInstalled')
-                              : t(
-                                  effectiveSelected.connected
-                                    ? 'settings.providers.detail.emptyModelsConnected'
-                                    : 'settings.providers.detail.emptyModels',
+                            effectiveSelected.source === 'user' &&
+                            effectiveSelected.modelDiscoveryFailure
+                              ? t(
+                                  `settings.providers.detail.discoveryFailed.${effectiveSelected.modelDiscoveryFailure.kind}`,
                                 )
+                              : effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID
+                                ? t('settings.providers.local.emptyInstalled')
+                                : t(
+                                    effectiveSelected.connected
+                                      ? 'settings.providers.detail.emptyModelsConnected'
+                                      : 'settings.providers.detail.emptyModels',
+                                  )
                           }
                           compactWhenEmpty={effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID}
                           compact={effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID}
@@ -2843,8 +2946,8 @@ export function ProvidersSection() {
                   {effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID && (
                     <OllamaProviderDetail onChanged={refetch} />
                   )}
-                </>
-              </>
+                </>,
+              )
             ) : (
               <div
                 className="flex flex-1 items-center justify-center px-8 text-center text-13"

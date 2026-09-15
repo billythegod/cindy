@@ -257,6 +257,41 @@ describe('ProvidersSection — 深链定位', () => {
     await waitFor(() => expect(screen.getAllByText('My renamed provider').length).toBeGreaterThanOrEqual(2));
   });
 
+  it.each(['openai', 'anthropic', 'xai', 'custom-api', 'custom-oauth'])(
+    'keeps identity outside the shared model scroll area for %s',
+    async (id) => {
+      providersState.providers = [
+        makeProvider(id, {
+          name: 'Scroll provider',
+          source: id.startsWith('custom') ? 'user' : 'builtin',
+          connected: true,
+          auth: id === 'custom-api' ? { method: 'apiKey' } : { method: 'oauth', native: 'codex' },
+          agents: ['codex'],
+          models: {
+            codex: [
+              {
+                id: 'scroll-model',
+                name: 'Scroll Model',
+                contextWindow: 0,
+                efforts: [],
+                defaultEffort: null,
+              },
+            ],
+          },
+        }),
+      ];
+      renderAt(`?tab=providers&connect=${id}`);
+      const scroll = await screen.findByTestId('provider-detail-scroll');
+      expect(scroll.contains(screen.getByTestId('provider-detail-identity'))).toBe(false);
+      expect(within(scroll).getByText('Scroll Model')).toBeTruthy();
+      expect(
+        within(scroll).getByTestId('provider-model-toolbar').classList.contains('sticky'),
+      ).toBe(true);
+      // No nested scrolling surface may trap wheel input above or below the model list.
+      expect(scroll.querySelector('.overflow-y-auto')).toBeNull();
+    },
+  );
+
   it('added OpenAI shares status and moves rename/delete into the single menu', async () => {
     providersState.providers = [
       makeProvider('openai-work', {
