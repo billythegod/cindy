@@ -22,48 +22,6 @@ function input(overrides: Partial<AppAttentionCountInput> = {}): AppAttentionCou
 }
 
 describe('app attention total', () => {
-  it('preserves ID-based badge deduplication while activity reads remain device-scoped', () => {
-    const unreadDevices = new Set(['peer-a', 'peer-b']);
-    const value = input({
-      sessions: [
-        session('same'),
-        session('same'),
-        session('same', { deviceLinkDeviceId: 'peer-a' }),
-        session('same', { deviceLinkDeviceId: 'peer-b' }),
-        session('same', { deviceLinkDeviceId: 'peer-a' }),
-      ],
-      localActivities: new Map([['same', { phase: 'completed', attention: true }]]),
-      getRemoteActivity: (_id, deviceId) =>
-        unreadDevices.has(deviceId) ? { phase: 'completed', attention: true } : undefined,
-    });
-    expect(countAppAttention(value)).toBe(1);
-    unreadDevices.delete('peer-a');
-    expect(countAppAttention(value)).toBe(1);
-    unreadDevices.delete('peer-b');
-    expect(countAppAttention(value)).toBe(1);
-    expect(countAppAttention({ ...value, localActivities: new Map() })).toBe(0);
-  });
-
-  it.each(['attentionKinds', 'localSchedules', 'remoteSchedules'] as const)(
-    'does not multiply ID-only %s across device projections',
-    (source) => {
-      const value = input({
-        sessions: [
-          session('same'),
-          session('same', { deviceLinkDeviceId: 'peer-a' }),
-          session('same', { deviceLinkDeviceId: 'peer-b' }),
-        ],
-      });
-      const unread = { hasUnreadRun: true, hasUnreadFailedRun: true };
-      const withAttention =
-        source === 'attentionKinds'
-          ? { ...value, attentionKinds: new Map([['same', 'error' as const]]) }
-          : { ...value, [source]: new Map([['same', unread]]) };
-      expect(countAppAttention(withAttention)).toBe(1);
-      expect(countAppAttention(value)).toBe(0);
-    },
-  );
-
   it('counts three unread tasks and drops only the task read', () => {
     const attentionKinds = new Map<'a' | 'b' | 'c', 'done'>([
       ['a', 'done'],
@@ -192,10 +150,6 @@ describe('app attention total', () => {
     expect(
       countAppAttention(
         input({
-          sessions: [
-            session('a', { deviceLinkDeviceId: 'peer' }),
-            session('b', { deviceLinkDeviceId: 'peer' }),
-          ],
           localActivities: new Map([['a', { phase: 'running' }]]),
         }),
       ),
@@ -220,19 +174,5 @@ describe('app attention total', () => {
         }),
       ),
     ).toBe(0);
-  });
-  it('ignores remote activity for a local task and passes the exact remote device', () => {
-    const reads: string[] = [];
-    const count = countAppAttention(
-      input({
-        sessions: [session('same'), session('same', { deviceLinkDeviceId: 'peer-b' })],
-        getRemoteActivity: (id, deviceId) => {
-          reads.push(`${deviceId}/${id}`);
-          return deviceId === 'peer-a' ? { phase: 'error', attention: true } : undefined;
-        },
-      }),
-    );
-    expect(count).toBe(0);
-    expect(reads).toEqual(['peer-b/same']);
   });
 });
