@@ -1114,7 +1114,9 @@ async function prepareInvocation(
   const db = captureMediaDb(scope);
   await ensureOwnerRecovered(scope, db);
   assertAuthScope(scope);
-  const models = await listAvailableMediaModels(capability);
+  const models = await listAvailableMediaModels(capability, {
+    skipGateway: !getAppCapabilities().canUseCindyGateway,
+  });
   assertAuthScope(scope);
   let matchingModels = models.filter(
     (candidate) => candidate.id === modelId && (!providerId || candidate.providerId === providerId),
@@ -1317,7 +1319,9 @@ async function submitInvocation(
   }
   // prepare 与实际付费提交之间可能隔着 Agent 组装参数的时间；提交边界重新读取
   // Gateway 清单和客户端停用状态，避免模型/供应商刚被停用后仍发出新请求。
-  const models = await listAvailableMediaModels(invocation.capability);
+  const models = await listAvailableMediaModels(invocation.capability, {
+    skipGateway: !getAppCapabilities().canUseCindyGateway,
+  });
   assertAuthScope(scope, invocation.owner);
   if (!models.some((model) => model.providerId === 'xd' && model.id === invocation.modelId)) {
     return failure('MODEL_NOT_AVAILABLE', '该模型已下架或被停用，本次生成未发出');
