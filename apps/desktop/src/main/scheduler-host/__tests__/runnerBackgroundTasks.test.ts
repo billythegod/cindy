@@ -92,6 +92,7 @@ function createSessionHarness(sendImpl: SendImpl): FakeSessionHarness {
   const session = {
     id: 'scheduler-session',
     agentKind: 'claude-code',
+    stablePlanModeState: { enabled: true, generation: 0 },
     send: vi.fn<SendImpl>(sendImpl),
     onEvent(listener: (event: AgentEvent) => void) {
       listeners.push(listener);

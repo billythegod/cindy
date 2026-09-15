@@ -5884,7 +5884,9 @@ export class CodexAgent extends BaseAgent {
         ...(reviewMode ? {} : readSessionMcpConfig()),
         ...capabilityRoutingConfig,
         ...customProviderThreadConfig,
-        ...(approvalsReviewer === 'auto_review' ? nativeContinuationConfig : {}),
+        // Install while the thread is created/resumed: a later switch to Auto
+        // changes the turn reviewer without rebuilding this thread config.
+        ...nativeContinuationConfig,
         // Bot memory and delegation belong to its Cindy Profile and Session
         // tasks, not the shared native home or hidden harness child threads.
         ...(opts.botRuntimeProfile ? {

@@ -190,6 +190,7 @@ function createSessionHarness(sendImpl: SendImpl): FakeSessionHarness {
       };
     },
     stablePermissionModeState: { mode: 'ask', generation: 0 },
+    stablePlanModeState: { enabled: false, generation: 0 },
     abort: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
   } as unknown as Session;
@@ -649,7 +650,7 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
     },
   );
 
-  it.each(['user', 'bot'].flatMap(source => ['permission', 'plan', 'switching', 'missing', 'replaced'].map(change => ({ source: source as 'user' | 'bot', change }))))(
+  it.each(['user', 'bot'].flatMap(source => ['permission', 'plan', 'switching', 'plan-switching', 'plan-durable-mismatch', 'missing', 'replaced'].map(change => ({ source: source as 'user' | 'bot', change }))))(
     'defers queued $source acceptance after $change changes and runs with a fresh snapshot',
     async ({ source, change }) => {
       const h = createSessionHarness(async () => ({ accepted: true }));
@@ -668,6 +669,8 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
         change === 'missing' ? null : { permissionMode: 'ask', planModeEnabled: currentPlan },
       );
       if (change === 'switching') Object.assign(h.session, { stablePermissionModeState: null });
+      if (change === 'plan-switching') Object.assign(h.session, { stablePlanModeState: null });
+      if (change === 'plan-durable-mismatch') Object.assign(h.session, { stablePlanModeState: { enabled: true, generation: 1 } });
       let acceptedSession = h;
       if (change === 'replaced') {
         acceptedSession = createSessionHarness(async () => ({ accepted: true }));
@@ -682,6 +685,7 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
 
       Object.assign(acceptedSession.session, {
         stablePermissionModeState: { mode: 'ask', generation: 1 },
+        stablePlanModeState: { enabled: currentPlan, generation: 1 },
       });
       mocks.getSessionFsSnapshot.mockResolvedValue({
         permissionMode: 'ask',
