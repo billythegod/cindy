@@ -611,7 +611,7 @@ function DetailHeader({
       <div
         data-testid="provider-detail-scroll"
         ref={detailScrollRef}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain [&>*]:shrink-0"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain [&>*]:shrink-0"
       >
         {detail && <div className="px-5 pb-4">{detail}</div>}
         {assetModule ??
@@ -1646,7 +1646,7 @@ function XdGatewayHeader({
               </p>
             </div>
             {/* 一屏一颗 Black Pill。查看用量始终是次动作；右侧按套餐状态切换。 */}
-            <div className="flex shrink-0 items-center gap-3">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
               <PillButton
                 label={t('settings.providers.xd.asset.refresh')}
                 onClick={refreshAccount}
