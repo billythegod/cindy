@@ -50,7 +50,7 @@ export type FetchProgressFn = (
 ) => void;
 
 /** 取回执行体:把远端文件完整写到 destPath(临时路径),完成返回。 */
-export type FetchExecutor = (destPath: string, onProgress: FetchProgressFn) => Promise<void>;
+export type FetchExecutor = (destPath: string, onProgress: FetchProgressFn, signal?: AbortSignal) => Promise<void>;
 
 function cacheDir(): string {
   return path.join(app.getPath('userData'), CACHE_DIR_NAME);
@@ -240,7 +240,12 @@ export async function putCachedContent(id: RemoteFileIdentity, content: string):
   }
 }
 
-const inflight = new Map<string, Promise<string>>();
+type InflightRead = {
+  promise: Promise<string>;
+  controller: AbortController;
+  consumers: Set<symbol>;
+};
+const inflight = new Map<string, InflightRead>();
 
 /**
  * 取回远程文件到本地缓存,返回缓存绝对路径。命中(size 一致)直接复用并
@@ -250,6 +255,7 @@ export async function fetchRemoteFileToCache(
   id: RemoteFileIdentity,
   executor: FetchExecutor,
   onProgress: FetchProgressFn,
+  signal?: AbortSignal,
 ): Promise<string> {
   const scope = id.scope ?? activeOwnerScopeKey();
   assertCacheOwner(scope);
@@ -261,16 +267,23 @@ export async function fetchRemoteFileToCache(
   const dest = cachePathFor(id);
   const existing = inflight.get(dest);
   if (existing) {
+    const consumer = Symbol('remote-file-consumer');
+    existing.consumers.add(consumer);
     try {
-      const result = await existing;
+      if (signal?.aborted) throw new Error('FILE_PEER_CANCELLED');
+      const result = await raceWithAbort(existing.promise, signal);
       assertCacheOwner(scope);
       return result;
     } catch (error) {
       assertCacheOwner(scope);
       throw error;
+    } finally {
+      releaseInflightConsumer(existing, consumer);
     }
   }
 
+  const controller = new AbortController();
+  const firstConsumer = Symbol('remote-file-consumer');
   const run = (async () => {
     try {
       const st = await fs.stat(dest);
@@ -292,7 +305,7 @@ export async function fetchRemoteFileToCache(
     const tmp = `${dest}.part`;
     try {
       assertCacheOwner(scope);
-      await executor(tmp, report);
+      await executor(tmp, report, controller.signal);
       assertCacheOwner(scope);
       const got = await fs.stat(tmp);
       assertCacheOwner(scope);
@@ -325,17 +338,38 @@ export async function fetchRemoteFileToCache(
     return dest;
   })();
 
-  inflight.set(dest, run);
+  const owner: InflightRead = { promise: run, controller, consumers: new Set([firstConsumer]) };
+  inflight.set(dest, owner);
+  void run.then(() => {
+    if (inflight.get(dest) === owner) inflight.delete(dest);
+  }, () => {
+    if (inflight.get(dest) === owner) inflight.delete(dest);
+  });
   try {
-    const result = await run;
+    const result = await raceWithAbort(run, signal);
     assertCacheOwner(scope);
     return result;
   } catch (error) {
     assertCacheOwner(scope);
     throw error;
   } finally {
-    inflight.delete(dest);
+    releaseInflightConsumer(owner, firstConsumer);
   }
+}
+
+function releaseInflightConsumer(owner: InflightRead, consumer: symbol): void {
+  owner.consumers.delete(consumer);
+  if (owner.consumers.size === 0 && !owner.controller.signal.aborted) owner.controller.abort();
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new Error('FILE_PEER_CANCELLED'));
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new Error('FILE_PEER_CANCELLED'));
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
 }
 
 /**

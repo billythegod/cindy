@@ -60,6 +60,30 @@ it('cancels the download and coalesced waiter after an owner switch, removing st
   expect(await fs.readdir(getRemoteFileCacheRoot())).toEqual([]);
 });
 
+it('cancels the shared executor only after the last consumer releases it', async () => {
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  let release!: () => void;
+  const pause = new Promise<void>((resolve) => { release = resolve; });
+  let transferSignal!: AbortSignal;
+  const executor = vi.fn(async (dest: string, _progress: unknown, signal?: AbortSignal) => {
+    transferSignal = signal!;
+    await fs.writeFile(dest, 'old');
+    await pause;
+  });
+  const first = fetchRemoteFileToCache(id, executor, vi.fn(), firstController.signal);
+  await vi.waitFor(() => expect(executor).toHaveBeenCalledOnce());
+  const second = fetchRemoteFileToCache(id, executor, vi.fn(), secondController.signal);
+  firstController.abort();
+  await expect(first).rejects.toThrow('FILE_PEER_CANCELLED');
+  expect(transferSignal.aborted).toBe(false);
+  secondController.abort();
+  await expect(second).rejects.toThrow('FILE_PEER_CANCELLED');
+  expect(transferSignal.aborted).toBe(true);
+  release();
+  await expect(Promise.allSettled([first, second])).resolves.toHaveLength(2);
+});
+
 it('does not return a cache hit or report progress when ownership changes during touch', async () => {
   await putCachedContent(id, 'old');
   vi.spyOn(fs, 'utimes').mockImplementationOnce(async () => {

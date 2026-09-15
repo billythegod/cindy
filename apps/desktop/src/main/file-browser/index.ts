@@ -182,6 +182,7 @@ async function fetchRemoteBigFile(
     deviceId?: string | null;
   },
   onProgress: (received: number, total: number, phase?: 'upload' | 'download') => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!args.workdir || !args.relPath || !Number.isFinite(args.size)) {
     throw new Error('bad fetch-remote args');
@@ -197,7 +198,7 @@ async function fetchRemoteBigFile(
         size: args.size,
         mtimeMs: args.mtimeMs,
       },
-      async (destPath, progress) => {
+      async (destPath, progress, transferSignal) => {
         const source = args.workdir.replace(/[\\/]$/, '') + '/' + args.relPath;
         const fetched = await readRemoteDeviceFile(
           deviceId,
@@ -237,6 +238,7 @@ async function fetchRemoteBigFile(
               let transientFails = 0;
               for (;;) {
                 await new Promise((r) => setTimeout(r, 1500));
+                if (transferSignal?.aborted) throw new Error('FILE_PEER_CANCELLED');
                 if (Date.now() > deadline) throw new Error('remote upload timed out (30min)');
                 let st: {
                   ok: boolean;
@@ -280,6 +282,7 @@ async function fetchRemoteBigFile(
               }
               return { ossKey: key, size: args.size, mimeType: 'application/octet-stream' };
             },
+            signal: transferSignal,
           },
         );
         if ('path' in fetched) {
@@ -304,13 +307,14 @@ async function fetchRemoteBigFile(
         try {
           await downloadToFile(res.key, destPath, undefined, (downloaded) => {
             progress(Math.min(downloaded, args.size), args.size, 'download');
-          });
+          }, transferSignal);
           progress(args.size, args.size, 'download');
         } finally {
           void removeRemote(res.key);
         }
       },
       onProgress,
+      signal,
     );
   }
   if (args.remoteHostId) {
@@ -333,6 +337,7 @@ async function fetchRemoteBigFile(
         args.relPath,
       ),
       onProgress,
+      signal,
     );
   }
   throw new Error('fetch-remote requires remoteHostId or deviceId');
@@ -373,6 +378,7 @@ export function registerFileBrowserIpc(): void {
           remoteHostId: args.origin.kind === 'ssh' ? args.origin.remoteHostId : undefined,
         },
         () => {},
+        signal,
       );
       if (signal?.aborted) throw new Error('PREVIEW_CANCELLED');
       return result;

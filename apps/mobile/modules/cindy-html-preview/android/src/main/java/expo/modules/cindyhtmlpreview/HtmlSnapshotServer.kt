@@ -11,6 +11,7 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
@@ -26,6 +27,7 @@ internal class HtmlSnapshotServer(root: String, private val entry: String, priva
   private val clients = mutableSetOf<Socket>()
   private val workers = ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS, ArrayBlockingQueue<Runnable>(12))
   private val deadlines = Executors.newSingleThreadScheduledExecutor()
+  private val disconnectWatchers = Executors.newCachedThreadPool()
   private val listener: ServerSocket
   @Volatile private var stopped = false
   private val origin get() = "http://127.0.0.1:${listener.localPort}"
@@ -72,6 +74,7 @@ internal class HtmlSnapshotServer(root: String, private val entry: String, priva
     synchronized(requests) { requests.values.forEach { it.complete(Resource(null, "", 502)) } }
     workers.shutdownNow()
     deadlines.shutdownNow()
+    disconnectWatchers.shutdownNow()
   }
 
   fun resolve(id: String, filename: String, mime: String, status: Int): Boolean = synchronized(requests) {
@@ -132,12 +135,24 @@ internal class HtmlSnapshotServer(root: String, private val entry: String, priva
       val id = UUID.randomUUID().toString()
       val future = CompletableFuture<Resource>()
       synchronized(requests) { requests[id] = future }
+      var disconnectWatcher: Future<*>? = null
       try {
         onRequest.invoke(id, relative)
+        // The request has no body. Keep one blocking read on the same socket so a
+        // WebView cancellation/close completes the resource future immediately;
+        // otherwise a peer fetch could remain in flight for the full 2-hour bound.
+        disconnectWatcher = disconnectWatchers.submit {
+          try {
+            if (input.read() < 0) future.complete(Resource(null, "", 499))
+          } catch (_: Exception) {
+            future.complete(Resource(null, "", 499))
+          }
+        }
         val resource = future.get(7200, TimeUnit.SECONDS)
         if (resource.file == null) send(socket, resource.status)
         else serve(socket, resource.file, resource.mime, first[0] == "HEAD")
       } finally {
+        disconnectWatcher?.cancel(true)
         synchronized(requests) {
           requests.remove(id)
           future.getNow(null)?.file?.delete()

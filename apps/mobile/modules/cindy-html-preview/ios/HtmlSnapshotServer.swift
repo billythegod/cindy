@@ -159,10 +159,22 @@ final class HtmlSnapshotServer {
       guard validPreviewPath(relative) else { send(id, status: 404); return }
       requests[id] = first[0] == "HEAD"
       onRequest(id.uuidString, relative)
+      watchDisconnect(id)
       return
     }
     guard let (url, mime) = assets[path] else { send(id, status: 404); return }
     serve(id, url, mime, first[0] == "HEAD")
+  }
+
+  /// Keep an outstanding read after handing the resource to the async owner.
+  /// WebView cancellation closes the socket while the owner may still be waiting;
+  /// closing the request immediately lets the owner release its shared transfer.
+  private func watchDisconnect(_ id: UUID) {
+    clients[id]?.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] _, _, ended, error in
+      guard let self, self.clients[id] != nil else { return }
+      if ended || error != nil { self.close(id) }
+      else { self.watchDisconnect(id) }
+    }
   }
 
   private func serve(_ id: UUID, _ url: URL, _ mime: String, _ headOnly: Bool) {
