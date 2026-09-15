@@ -76,7 +76,7 @@ it.each([false, true])('routes entry HTTP errors to retry without failing on sib
     documents: ['/report%20one.html'], onDemand, close: async () => {},
   };
   act(() => root!.render(createElement(HtmlSnapshotReader, { preview, onError })));
-  for (const path of ['image.png', 'style.css', 'other.html']) {
+  for (const path of ['image.png', 'style.css', 'other.js']) {
     act(() => state.props.onHttpError({ nativeEvent: { url: `http://127.0.0.1:1234/${path}`, statusCode: 404 } }));
   }
   expect(onError).not.toHaveBeenCalled();
