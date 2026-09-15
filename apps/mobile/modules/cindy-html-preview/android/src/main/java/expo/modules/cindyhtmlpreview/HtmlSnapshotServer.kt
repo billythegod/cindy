@@ -141,6 +141,7 @@ internal class HtmlSnapshotServer(root: String, private val entry: String, priva
         // The request has no body. Keep one blocking read on the same socket so a
         // WebView cancellation/close completes the resource future immediately;
         // otherwise a peer fetch could remain in flight for the full 2-hour bound.
+        socket.soTimeout = 0
         disconnectWatcher = disconnectWatchers.submit {
           try {
             if (input.read() < 0) future.complete(Resource(null, "", 499))
