@@ -2048,7 +2048,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       failAfterAccept = reject;
     });
     void postAcceptFailed.catch(() => undefined);
-    let acceptedModes: { permissionMode: PermissionMode; planMode: boolean } | null = null;
+    let acceptedSnapshot: { session: Session; permissionMode: PermissionMode; planMode: boolean } | null = null;
 
     /**
      * onAccepted 里"本轮绝不能真的跑起来"的统一阻断出口。
@@ -2213,7 +2213,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
             blockAcceptedDispatch(live, 'routine permissions changed');
             return;
           }
-          acceptedModes = permissions;
+          acceptedSnapshot = { session: live, ...permissions };
         }
         if (ctx.canDispatch && !ctx.canDispatch()) {
           const error = new RoutineDispatchDeferredError(
@@ -2246,10 +2246,11 @@ export class MakerScheduleRunner implements ScheduleRunner {
       },
       onAcceptedRollback: async () => {
         const current = await this.readRoutinePermissions(sessionId).catch(() => null);
-        const err = acceptedModes && (!current
-          || current.permissionMode !== acceptedModes.permissionMode
-          || current.planMode !== acceptedModes.planMode)
-          ? new RoutineDispatchDeferredError('Queued heartbeat modes changed after accept')
+        const err = acceptedSnapshot && (!current
+          || this.deps.maker.getSession(sessionId) !== acceptedSnapshot.session
+          || current.permissionMode !== acceptedSnapshot.permissionMode
+          || current.planMode !== acceptedSnapshot.planMode)
+          ? new RoutineDispatchDeferredError('Queued heartbeat session or modes changed after accept')
           : new Error('queued heartbeat dispatch rolled back after accept');
         failAfterAccept(err);
         failDispatch(err);

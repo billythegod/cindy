@@ -1734,13 +1734,15 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
     await expect(firePromise).resolves.toMatchObject({ sessionId: SESSION_ID });
   });
 
-  it.each(['plan', 'permission', 'switching'])('defers an accepted queue rollback after a late %s change', async (change) => {
+  it.each(['plan', 'permission', 'switching', 'session-replaced', 'session-missing'])('defers an accepted queue rollback after a late %s change', async (change) => {
     const harness = createSessionHarness(async () => ({ accepted: true }));
     const queue = createQueueHarness({ busy: true });
-    const { runner, notifier } = createRunnerHarness(harness.session, queue.deps);
+    const { runner, notifier, maker } = createRunnerHarness(harness.session, queue.deps);
     const fire = runner.fire(heartbeatSchedule(), { ...createFireContext(), deferToCaller: true });
     await vi.waitFor(() => expect(queue.enqueueCalls).toHaveLength(1));
     await queue.accept();
+    if (change === 'session-replaced') vi.mocked(maker.getSession).mockReturnValue(createSessionHarness(async () => ({ accepted: true })).session);
+    if (change === 'session-missing') vi.mocked(maker.getSession).mockReturnValue(undefined);
     if (change === 'switching') Object.assign(harness.session, { stablePlanModeState: null });
     if (change === 'plan') {
       Object.assign(harness.session, { stablePlanModeState: { enabled: true, generation: 1 } });
