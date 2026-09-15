@@ -91,6 +91,19 @@ function weeklyAtProgress(utilization: number, progress: number) {
 }
 
 describe('QuotaHoverCard', () => {
+  it('hides duplicate identity without windows and only makes the popover region focusable', () => {
+    const account = { title: 'ChatGPT', planLabel: 'Pro', windows: [], emptyText: 'Waiting for usage' };
+    const { rerender } = render(<UsageCard variant="embedded" hideIdentity account={account} />);
+    expect(screen.queryByText('ChatGPT')).toBeNull();
+    expect(screen.queryByText('Pro')).toBeNull();
+    expect(screen.getByText('Waiting for usage')).toBeTruthy();
+    expect(screen.getByRole('region').hasAttribute('tabindex')).toBe(false);
+    rerender(<UsageCard hideIdentity account={account} />);
+    expect(screen.getByText('ChatGPT')).toBeTruthy();
+    expect(screen.getByText('Pro')).toBeTruthy();
+    expect(screen.getByRole('region').tabIndex).toBe(0);
+  });
+
   it('keeps the provider header while waiting for quota data', () => {
     render(<QuotaHoverCard snapshot={null} nowMs={NOW_MS} />);
 

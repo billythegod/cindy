@@ -131,6 +131,11 @@ vi.mock('@/components/settings/AddProviderWizard', () => ({
 import { updateCustomProvider } from '@/lib/customProviders';
 
 import { ProvidersSection } from '@/components/settings/ProvidersSection';
+import { useProviderSubscriptionCard } from '@/components/settings/useProviderSubscriptionCard';
+
+vi.mock('@/components/settings/useProviderSubscriptionCard', () => ({
+  useProviderSubscriptionCard: vi.fn(() => null),
+}));
 
 vi.mock('@/components/settings/OllamaProviderDetail', () => ({ OllamaProviderDetail: () => null }));
 
@@ -172,6 +177,7 @@ function renderAt(search: string) {
 }
 
 beforeEach(() => {
+  vi.mocked(useProviderSubscriptionCard).mockReset().mockReturnValue(null);
   confirmSpy.mockReset().mockResolvedValue(true);
   codexAuthState.state = { kind: 'unauthenticated' };
   codexAuthState.reconnectCredentialScope = undefined;
@@ -289,6 +295,30 @@ describe('ProvidersSection — 深链定位', () => {
       ).toBe(true);
       // No nested scrolling surface may trap wheel input above or below the model list.
       expect(scroll.querySelector('.overflow-y-auto')).toBeNull();
+    },
+  );
+
+  it.each(['subscriptionAccount', 'openAiAccount'] as const)(
+    'collapses usage on %s changes but retains expansion on quota refresh',
+    async (identityField) => {
+      const account = { title: 'ChatGPT', windows: [{ key: 'weekly', title: 'Weekly', window: { utilization: 20 } }] };
+      vi.mocked(useProviderSubscriptionCard).mockReturnValue(account);
+      const provider = makeProvider('openai', {
+        connected: true,
+        [identityField]: { source: 'oauth', identity: 'first@example.test' },
+      });
+      providersState.providers = [provider];
+      const view = render(<MemoryRouter><ProvidersSection /></MemoryRouter>);
+      fireEvent.click(await screen.findByRole('button', { name: 'quotaCard.usageTitle' }));
+      const refresh = () => view.rerender(
+        <MemoryRouter><ProvidersSection /></MemoryRouter>,
+      );
+      vi.mocked(useProviderSubscriptionCard).mockReturnValue({ ...account, updatedAt: Date.now() });
+      refresh();
+      expect(screen.getByRole('button', { name: 'quotaCard.usageTitle' }).getAttribute('aria-expanded')).toBe('true');
+      providersState.providers = [{ ...provider, [identityField]: { source: 'oauth', identity: 'second@example.test' } }];
+      refresh();
+      expect(screen.getByRole('button', { name: 'quotaCard.usageTitle' }).getAttribute('aria-expanded')).toBe('false');
     },
   );
 

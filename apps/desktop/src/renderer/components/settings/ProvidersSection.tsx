@@ -604,7 +604,7 @@ function DetailHeader({
       </div>
       <div
         data-testid="provider-detail-scroll"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain [&>*]:shrink-0"
       >
         {detail && <div className="px-5 pb-4">{detail}</div>}
         {assetModule ??
@@ -615,6 +615,14 @@ function DetailHeader({
               style={{ borderColor: 'var(--settings-theme-card-border)' }}
             >
               <QuotaHoverCard
+                key={JSON.stringify([
+                  provider?.id,
+                  provider?.connected,
+                  provider?.subscriptionAccount?.source,
+                  provider?.subscriptionAccount?.identity,
+                  provider?.openAiAccount?.source,
+                  provider?.openAiAccount?.identity,
+                ])}
                 variant="embedded"
                 hideIdentity={Boolean(subscriptionProduct)}
                 account={subscription}

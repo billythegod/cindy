@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next';
 
 import { computeQuotaPace, type QuotaPace } from '@/lib/quotaPace';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import {
   formatQuotaResetCountdown,
   formatQuotaResetAt,
@@ -465,14 +466,14 @@ export function QuotaHoverCard({
         data-testid="quota-hover-card-scroll-content"
         role="region"
         aria-label={t('quotaCard.windowsRegionLabel')}
-        tabIndex={0}
+        tabIndex={embedded ? undefined : 0}
         className={cn(
           'min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]',
           !embedded && 'overflow-y-auto pt-[6px]',
         )}
         id={detailsId}
       >
-        {title && (!embedded || !hideIdentity || windows.length === 0) ? (
+        {title && (!embedded || !hideIdentity) ? (
           <>
             <div className="flex items-center gap-2 px-4 pb-2 pt-3 text-12 text-[var(--text-secondary)]">
               <span className="min-w-0 break-words font-medium">{title}</span>
@@ -551,16 +552,17 @@ export function QuotaHoverCard({
       </div>
 
       {embedded && windows.length > 0 && (
-        <button
+        <Button
+          variant="secondary"
           type="button"
           aria-expanded={expanded}
           aria-controls={detailsId}
           onClick={() => setExpanded((value) => !value)}
-          className="mx-4 flex min-h-6 w-fit items-center gap-1 text-12 text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+          className="mx-4 w-fit gap-1"
         >
           <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
           {t('quotaCard.usageTitle')}
-        </button>
+        </Button>
       )}
       {dashboardLabel ? (
         <>
