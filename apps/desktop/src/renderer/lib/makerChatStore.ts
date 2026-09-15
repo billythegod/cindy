@@ -9622,6 +9622,19 @@ function hasSessionTerminalError(sessionId: string): boolean {
   return !!s?.error && !s.lastStopWasSideTask;
 }
 
+/** Non-creating read: recovery can outlive the one-generation stop snapshot. */
+function hasSessionRecoveryPending(sessionId: string): boolean {
+  const state = sessions.get(sessionId);
+  return !!state && (
+    state.messages.some((message) =>
+      message.clientId === AUTO_RESUME_PENDING_CLIENT_ID ||
+      message.clientId === CODEX_RECONNECT_PENDING_CLIENT_ID,
+    ) ||
+    state.pendingQueue.some((item) => item.autoResume === true) ||
+    state.continuationInFlightClientId !== null
+  );
+}
+
 // 远程回执 error 免疫的兜底探针:活动镜像缺条目(推送丢失 / 未达)时,
 // sessionAttentionStore 回落到消息层的终止错误判定(注入避免循环依赖)。
 setRemoteTerminalErrorProbe(hasSessionTerminalError);
@@ -16308,6 +16321,7 @@ export const makerChatStore = {
   getRunningSnapshot,
   /** F-SB-7: Authoritative terminal-error read, immune to snapshot-generation races. */
   hasSessionTerminalError,
+  hasSessionRecoveryPending,
   wasLastStopSideTask,
   wasLastStopPrivateReply: (sessionId: string): boolean =>
     sessions.get(sessionId)?.lastStopWasPrivateReply === true,

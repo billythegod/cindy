@@ -278,6 +278,22 @@ describe('applyInputProjection 自愈进行中提示', () => {
     expect(snapshot.error).toBeNull();
   });
 
+  it('keeps notification recovery ownership through backoff, queue and dispatch', () => {
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
+    inputProjectionCb!(projection({ autoResumePending: PENDING_INFO }));
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(true);
+    inputProjectionCb!(projection({ pendingQueue: [{ clientId: 'retry', autoResume: true }] }));
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(true);
+    inputProjectionCb!(projection({ continuationInFlightClientId: 'retry' }));
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(true);
+    inputProjectionCb!(projection());
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
+    inputProjectionCb!(projection({ autoResumePending: PENDING_INFO }));
+    inputProjectionCb!(projection({ error: 'Selected model is at capacity.' }));
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
+    expect(makerChatStore.hasSessionTerminalError(SID)).toBe(true);
+  });
+
   it('进度更新时同一张卡的 systemCardData 必须跟着变(1/5 → 2/5)', () => {
     inputProjectionCb!(projection({ autoResumePending: { ...PENDING_INFO, attempt: 1 } }));
     const first = makerChatStore
@@ -349,6 +365,7 @@ describe('applyInputProjection 自愈进行中提示', () => {
         .getSnapshot(SID)
         .messages.some((m) => m.clientId === '__codex_reconnect_pending__'),
     ).toBe(true);
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(true);
   });
 
   it('无关 projection 不误删原生重连行,接管 projection 到达时才交棒', () => {
