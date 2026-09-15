@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it, vi } from 'vitest';
-import { pathToFileURL } from 'node:url';
 import type { TFunction } from 'i18next';
 const mocks = vi.hoisted(() => ({
   local: vi.fn(), sidebar: vi.fn(), preference: vi.fn(() => 'sidebar'), preview: vi.fn(), external: vi.fn(), error: vi.fn(), loading: vi.fn(() => 'loading'), dismiss: vi.fn(),
 }));
-vi.mock('@/features/right-sidebar/lib/openInSidebarBrowser', () => ({ openUrlInSidebarBrowser: mocks.sidebar, pathToFileUrl: (path: string) => pathToFileURL(path).href }));
+vi.mock('@/features/right-sidebar/lib/openInSidebarBrowser', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../features/right-sidebar/lib/openInSidebarBrowser')>(),
+  openUrlInSidebarBrowser: mocks.sidebar,
+}));
 vi.mock('@/hooks/useLinkOpenPreference', () => ({ getLinkOpenPreference: mocks.preference, getLinkOpenPreferenceForUrl: mocks.preference }));
 vi.mock('@/features/cc-agent/embeddedSessionNavigation', () => ({ useSidebarTargetSessionId: (id: string) => id }));
 vi.mock('@/lib/toast', () => ({ toast: { error: mocks.error, loading: mocks.loading, dismiss: mocks.dismiss } }));
