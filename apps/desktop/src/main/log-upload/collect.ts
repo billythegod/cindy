@@ -51,7 +51,10 @@ export interface CollectRequest {
   reason: LogUploadReason;
   /** 崩溃锚点（epoch ms）。手动上报为空数组。 */
   anchors: number[];
-  /** 反馈场景也需要安全的 proxy 上下文；普通手动日志上传保持旧行为。 */
+  /**
+   * `/issue` 同意路径专用。普通手动上传必须保持 `undefined`/`false`（不读 agent 流）；
+   * 仅当用户明确同意公开诊断信息时由 issue 提交链路设为 `true`。崩溃路径不看此字段。
+   */
   includeAgentLogs?: boolean;
 }
 
