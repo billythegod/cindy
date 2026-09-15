@@ -4905,7 +4905,8 @@ export function CCAgentSessionView({
                 />
               )}
 
-            {!readOnly && error && (
+            {/* 自动重试进度由任务内呈现；底部错误横幅只显示终止错误。 */}
+            {!readOnly && error && !errorIsRecoverable && (
               <ErrorBanner
                 error={error}
                 errorReason={errorReason}
