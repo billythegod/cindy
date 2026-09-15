@@ -154,16 +154,19 @@ export async function createViewerDisplay(
         if (
           exited &&
           !displays.some((item) => item.id === virtualDisplayId) &&
-          display &&
-          original &&
-          display.size.width === original.size.width &&
-          display.size.height === original.size.height
+          // If the source was unplugged, virtual-display cleanup is the only
+          // restoration that remains possible; retire the handle so another
+          // monitor can be selected on the next lease.
+          (!display ||
+            !original ||
+            (display.size.width === original.size.width &&
+              display.size.height === original.size.height))
         )
           return {
             id: sourceDisplayId,
-            name: display.label || 'Display',
-            width: display.size.width,
-            height: display.size.height,
+            name: display?.label || original?.label || 'Display',
+            width: display?.size.width || original?.size.width || 0,
+            height: display?.size.height || original?.size.height || 0,
           };
         await new Promise((resolve) => setTimeout(resolve, 50));
       }

@@ -40,6 +40,21 @@ function fixture() {
 }
 
 describe('viewer-sized desktop ownership', () => {
+  it('retires the handle when the source display was unplugged', async () => {
+    const f = fixture(),
+      lease = await f.start();
+    await f.host.request('phone', {
+      op: 'viewerDisplay',
+      lease: lease.lease,
+      width: 900,
+      height: 1600,
+    });
+    const restore = vi.mocked(f.handle.restore!);
+    restore.mockResolvedValue({ id: '1', name: 'Display', width: 0, height: 0 });
+    await f.host.request('phone', { op: 'control', lease: lease.lease, enabled: true });
+    await f.host.request('phone', { op: 'restoreViewerDisplay', lease: lease.lease });
+    expect(restore).toHaveBeenCalledOnce();
+  });
   it('enumerates source modes across matching, repeated resizing and restoration', async () => {
     const f = fixture(),
       lease = await f.start();
