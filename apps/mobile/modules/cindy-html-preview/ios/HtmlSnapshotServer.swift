@@ -17,6 +17,7 @@ final class HtmlSnapshotServer {
   private var ownedFiles: [UUID: URL] = [:]
   private var assets: [String: (URL, String)] = [:]
   private var clients: [UUID: NWConnection] = [:]
+  private var clientTimeouts: [UUID: DispatchWorkItem] = [:]
   private var completion: ((Result<String, Error>) -> Void)?
   private var stopped = false
   private var origin: String { "http://127.0.0.1:\(listener.port?.rawValue ?? 0)" }
@@ -86,11 +87,14 @@ final class HtmlSnapshotServer {
     clients[id] = connection
     connection.start(queue: queue)
     // Bound slow headers, remote resource preparation and stalled response readers.
-    queue.asyncAfter(deadline: .now() + (onRequest == nil ? 15 : 7200)) { [weak self] in self?.close(id) }
+    let timeout = DispatchWorkItem { [weak self] in self?.close(id) }
+    clientTimeouts[id] = timeout
+    queue.asyncAfter(deadline: .now() + (onRequest == nil ? 15 : 7200), execute: timeout)
     receive(id, Data())
   }
 
   private func close(_ id: UUID) {
+    clientTimeouts.removeValue(forKey: id)?.cancel()
     clients.removeValue(forKey: id)?.cancel()
     if requests.removeValue(forKey: id) != nil { onClose?(id.uuidString) }
     if let file = ownedFiles.removeValue(forKey: id) { try? FileManager.default.removeItem(at: file) }
