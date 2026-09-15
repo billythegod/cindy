@@ -339,6 +339,33 @@ describe('MakerScheduleRunner background subagent task tracking', () => {
     await retry;
   });
 
+  it.each(['user', 'bot'].flatMap(source => ['plan-switching', 'plan-changed', 'permission-switching'].map(change => ({ source: source as 'user' | 'bot', change }))))(
+    'defers direct $source dispatch when $change occurs after accepted preparation', async ({ source, change }) => {
+      const vendor = vi.fn();
+      const h = createSessionHarness(async (_message, opts) => {
+        await opts?.onAccepted?.();
+        await opts?.resolveAutoReviewUserIntent?.();
+        opts?.onDispatching?.();
+        vendor();
+        return { accepted: true };
+      });
+      Object.assign(h.session, { stablePermissionModeState: { mode: 'ask', generation: 0 } });
+      const { runner, maker, notifier } = createRunnerHarness(h.session, {
+        beforeDispatchUserTurn: async () => {
+          if (change === 'permission-switching') Object.assign(h.session, { stablePermissionModeState: null });
+          else Object.assign(h.session, { stablePlanModeState: change === 'plan-switching' ? null : { enabled: false, generation: 1 } });
+        },
+      });
+      vi.mocked(maker.getSessionMeta).mockResolvedValue({ id: 'scheduler-session', agentKind: 'claude-code', model: 'claude-sonnet-4-6', workDir: '/repo/project' } as never);
+      mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active', permissionMode: 'ask', planModeEnabled: true });
+      mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: 'ask', planModeEnabled: true });
+      const result = await runner.fire(baseSchedule({ source, targetSessionId: 'scheduler-session' }), { ...createFireContext(), deferToCaller: true });
+      expect(result).toMatchObject({ deferred: true });
+      expect(vendor).not.toHaveBeenCalled();
+      expect(notifier.notify).not.toHaveBeenCalled();
+    },
+  );
+
   it('无后台任务:首个 done 照常收尾,resultText 为本轮最终文本', async () => {
     const h = createSessionHarness(acceptingSend());
     const { runner, notifier } = createRunnerHarness(h.session);

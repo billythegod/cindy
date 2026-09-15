@@ -1637,10 +1637,26 @@ export class MakerScheduleRunner implements ScheduleRunner {
       const sendResult = await session.send(outgoingMessage as never, {
         origin,
         ...(schedule.targetSessionId && schedule.source !== 'bot' ? {
-          resolveAutoReviewUserIntent: async () => restoreAutoReviewUserIntent(
-            await this.deps.readAutoReviewHistory?.(session.id).catch(() => []) ?? [],
-          ),
+          resolveAutoReviewUserIntent: async () => {
+            const intent = restoreAutoReviewUserIntent(
+              await this.deps.readAutoReviewHistory?.(session.id).catch(() => []) ?? [],
+            );
+            const current = await this.readRoutinePermissions(session.id, session);
+            if (!current || current.permissionMode !== heartbeatPermissions?.permissionMode
+              || current.planMode !== heartbeatPermissions?.planMode) {
+              throw new RoutineDispatchDeferredError('Heartbeat modes changed during preparation');
+            }
+            return intent;
+          },
         } : {}),
+        onDispatching: () => {
+          const expected = routinePermissions ?? heartbeatPermissions;
+          if (expected && !routinePermissionSnapshot(session, {
+            permissionMode: expected.permissionMode, planModeEnabled: expected.planMode,
+          })) {
+            throw new RoutineDispatchDeferredError('Heartbeat modes changed before dispatch');
+          }
+        },
         planMode: routinePermissions?.planMode ?? heartbeatPermissions?.planMode ?? false,
         onAccepted: async () => {
           // createSession 之后到真正 dispatch 之间仍会 await 模型切换、baseline

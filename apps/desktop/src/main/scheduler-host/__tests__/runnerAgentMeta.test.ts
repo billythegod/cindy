@@ -29,6 +29,7 @@ vi.mock('../../localDb/ipc/messages.js', () => ({
 
 vi.mock('../../localDb/ipc/sessions.js', () => ({
   getSessionRowSnapshot: mocks.getSessionRowSnapshot,
+  getSessionFsSnapshot: mocks.getSessionRowSnapshot,
   touchUserSendInDb: mocks.touchUserSendInDb,
 }));
 
@@ -69,6 +70,8 @@ function createSessionHarness(sendImpl: SendImpl): FakeSessionHarness {
   const session = {
     id: 'scheduler-session',
     agentKind: 'codex',
+    stablePermissionModeState: { mode: 'ask', generation: 0 },
+    stablePlanModeState: { enabled: false, generation: 0 },
     send: vi.fn<SendImpl>(sendImpl),
     onEvent(listener: (event: AgentEvent) => void) {
       listeners.push(listener);
@@ -182,7 +185,7 @@ describe('MakerScheduleRunner agentMeta automation origin', () => {
     mocks.touchUserSendInDb.mockResolvedValue(undefined);
     mocks.backfillSessionMeta.mockResolvedValue(undefined);
     mocks.resolveWorkingDir.mockResolvedValue({ ok: true, path: '/repo/project' });
-    mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active' });
+    mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active', permissionMode: 'ask', planModeEnabled: false });
   });
 
   it.each(['auto', 'ask', 'bypassPermissions'] as const)('cold heartbeat preserves owner permission %s without overwriting it', async (permissionMode) => {
