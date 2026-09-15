@@ -134,28 +134,31 @@ export function resolveCatalogUrl(cfg: CatalogSourceConfig): string | null {
 }
 
 /** One-way cache compatibility on upgrade. Old scopes are read, never rewritten. */
-async function readCatalogCache(io: CatalogIO, scope: string): Promise<{ text: string; sameRepresentation: boolean } | null> {
+async function readCatalogCache(io: CatalogIO, scope: string): Promise<{ text: string; catalog: Catalog; sameRepresentation: boolean } | null> {
   if (!io.readCache) return null;
-  const current = await io.readCache(scope);
-  if (current !== null) return { text: current, sameRepresentation: true };
+  const candidates = [scope];
   try {
     const url = new URL(scope);
     if (url.pathname.endsWith('/api/model-catalog/catalog') && url.searchParams.get('catalogCapabilities') === CATALOG_CAPABILITY) {
-      const legacyV5 = new URL(url);
-      legacyV5.searchParams.delete('catalogCapabilities');
-      const mediaV4 = new URL(url);
-      mediaV4.searchParams.set('registrySchemaVersion', '4');
-      const legacyV4 = new URL(mediaV4);
-      legacyV4.searchParams.delete('catalogCapabilities');
-      const previousMediaV5 = new URL(url);
-      previousMediaV5.searchParams.set('catalogCapabilities', 'registry-v4-media');
-      mediaV4.searchParams.set('catalogCapabilities', 'registry-v4-media');
-      for (const previous of [previousMediaV5, legacyV5, mediaV4, legacyV4]) {
-        const cached = await io.readCache(previous.toString());
-        if (cached !== null) return { text: cached, sameRepresentation: false };
+      for (const [version, capability] of [['5', 'registry-v4-media'], ['5', null], ['4', 'registry-v4-media'], ['4', null]]) {
+        const previous = new URL(url);
+        previous.searchParams.set('registrySchemaVersion', version!);
+        if (capability) previous.searchParams.set('catalogCapabilities', capability);
+        else previous.searchParams.delete('catalogCapabilities');
+        candidates.push(previous.toString());
       }
     }
   } catch { /* Non-URL scopes retain their existing behavior. */ }
+  for (const candidate of candidates) {
+    try {
+      const text = await io.readCache(candidate);
+      if (text !== null) return { text, catalog: parseCatalog(text), sameRepresentation: candidate === scope };
+    } catch {
+      log(io, 'warn', 'cached catalog candidate is unreadable or invalid; trying the next same-source scope', {
+        url: catalogUrlForLog(candidate),
+      });
+    }
+  }
   return null;
 }
 
@@ -288,9 +291,7 @@ export async function loadCatalogWithSource(
             try {
               const cachedText = await readCatalogCache(io, remoteUrl);
               if (cachedText !== null) {
-                const cached = parseCatalog(
-                  cachedText.text,
-                );
+                const cached = cachedText.catalog;
                 const selected = preserveNewerCachedCatalog(parsed, cached, cachedText.sameRepresentation);
                 if (selected.catalog !== parsed) {
                   parsed = selected.catalog;
@@ -391,13 +392,12 @@ export async function loadCatalogWithSource(
         try {
           const cached = await readCatalogCache(io, remoteUrl);
           if (cached !== null) {
-            const parsed = parseCatalog(cached.text);
+            const parsed = cached.catalog;
             log(io, "info", "loaded last-known-good catalog snapshot", {
               url: logUrl,
             });
             return {
               catalog: parsed,
-              // A cached legacy OSS snapshot stays below the local Pi protocol authorities.
               authorityCatalog: parsed,
               source: "cache",
               capabilityEvidence: "fallback",

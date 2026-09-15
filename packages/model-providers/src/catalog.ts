@@ -634,7 +634,7 @@ function isLegacyAnthropicPiRuntime(
 }
 
 /**
- * runtime.modelsUrl 非法（非 http(s) URL 或含内嵌凭据）时剥掉该字段、保留预设本体——OSS 推错一个
+ * runtime.modelsUrl 非法（非 http(s) URL 或含内嵌凭据）时剥掉该字段、保留预设本体——服务端推错一个
  * 不可见字段不该让整条预设消失，更不该让用户保存时撞 main 侧 URL 校验无法自助修复。
  */
 function normalizePresetRuntimeOptions(p: ProviderPreset): ProviderPreset {
@@ -709,8 +709,8 @@ function normalizePresetRuntimeOptions(p: ProviderPreset): ProviderPreset {
 /**
  * 预设段容错清洗：逐条校验、坏条目丢弃 + 按 id 去重（first-wins）。
  *
- * 刻意**不走 assert**：预设是纯 UI 模板数据，不参与路由；OSS 推错一条预设不应让
- * 整份远端目录 parse 失败回退 bundled（那会连带丢掉远端的模型/路由更新）。
+ * 刻意**不走 assert**：预设是纯 UI 模板数据，不参与路由；服务端推错一条预设不应让
+ * 整份远端目录 parse 失败回退同源 LKG（那会连带丢掉远端的模型/路由更新）。
  */
 export function sanitizePresets(input: unknown): ProviderPreset[] {
   if (!Array.isArray(input)) return [];

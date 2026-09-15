@@ -25,6 +25,17 @@ it('rejects a late publication after the renderer changes owner', async () => {
   const pending = loadProviderPresetCatalog();
   setDataOwnerGeneration('next-owner');
   resolve({ presets: [], catalog: { version: 'late', providers: [] } });
-  await pending;
+  await expect(pending).rejects.toThrow(/owner/i);
   expect(SERVER_CATALOG.version).toBe(BUNDLED_CATALOG.version);
+});
+
+it('shares one in-flight publication between consumers in the same owner', async () => {
+  let resolve!: (value: unknown) => void;
+  const listProviderPresets = vi.fn(() => new Promise(done => { resolve = done; }));
+  vi.stubGlobal('window', { electronAPI: { maker: { listProviderPresets } } });
+  const first = loadProviderPresetCatalog();
+  const second = loadProviderPresetCatalog();
+  resolve({ presets: BUNDLED_CATALOG.presets, catalog: BUNDLED_CATALOG });
+  expect(await first).toBe(await second);
+  expect(listProviderPresets).toHaveBeenCalledTimes(1);
 });

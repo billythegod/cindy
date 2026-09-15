@@ -3,7 +3,7 @@
  *
  * - types：Provider / CatalogModel / RoutingDescriptor（models.dev 形状 + agents/routing/runtime 扩展）
  * - catalog：服务端发布 SERVER_CATALOG + parseCatalog 校验
- * - source：目录源解析与加载（公共 API / 旧 OSS / 本地 / bundled 兜底，IO 由 host 注入）
+ * - source：目录源解析与加载（服务端公共 API / 同源 LKG / 空目录；显式文件仅测试诊断，IO 由 host 注入）
  * - registry：连接状态合成、按 agent 算可见性、resolveRoute 解析路由素材
  */
 

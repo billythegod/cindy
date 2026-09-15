@@ -831,7 +831,7 @@ export function ProviderConnectionDialog({
     };
   }, [editing]);
 
-  /** 应用预设：预填显示名 + 各 runtime 的 baseUrl / 模型 / headers（创建时快照，之后与预设脱钩）。 */
+  /** 应用预设：预填显示名 + 各 runtime 的 baseUrl / 模型 / headers（保留模板引用，公共参数随服务端更新，显式编辑归用户）。 */
   const applyPreset = useCallback(
     (p: ProviderPreset) => {
       setAppliedPreset(p.id);

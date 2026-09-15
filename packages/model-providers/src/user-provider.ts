@@ -24,7 +24,7 @@ import {
  * 用户自定义供应商：把 `CustomProviderConfig` 展开成标准 `Provider`（纯逻辑，零依赖）。
  *
  * 设计要点：
- *   - 产出的 `Provider` 与内置厂商（providers.json）**同形状**，进同一 active-catalog，
+ *   - 产出的 `Provider` 与服务端供应商**同形状**，进同一 active-catalog，
  *     下游（路由 / 选择器 / listProviders）不区分内置 / 自定义，统一消费。
  *   - `source: 'user'`，鉴权可为 API key / OAuth / none。
  *   - 每个用户选中的 agent 生成一份与鉴权形态匹配的路由（upstream = baseUrl，带用户自定义

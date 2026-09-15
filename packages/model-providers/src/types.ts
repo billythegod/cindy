@@ -257,7 +257,7 @@ export interface ProviderModelDiscoverySource extends ProviderModelRouteConfig {
   modelsUrl?: string;
 }
 
-/** 模型计费（$/1M tokens）。可选——OSS 目录可后补，缺值 UI 不展示价格。 */
+/** 模型计费（$/1M tokens）。可选——服务端目录可后补，缺值 UI 不展示价格。 */
 export interface ModelCost {
   input?: number;
   output?: number;
@@ -399,7 +399,7 @@ export interface CatalogModel {
   codexCompatibilityWireProtocol?: CodexCompatibilityWireProtocol;
   /**
    * 展示图标 id —— 模型行 / composer 药丸上显示什么图标,**以 AI Gateway / 目录设定为准**
-   * (XD 模型经 model-access-server GET /models 下发,其它供应商可由 OSS 目录配置)。
+   * (XD 模型经 model-access-server GET /models 下发,其它供应商可由 服务端目录配置)。
    * 已知取值见 sections.ts `resolveModelIconKind`('claude' | 'codex' | 'cindy' 及别名);
    * 缺省或未知值 ⇒ 客户端回落该行来源供应商标(ProviderMark),桌面与手机同一套规则。
    * 故意**不纳入** `modelSignature` 跨供应商一致性校验:同一 model id 在不同供应商下
@@ -533,7 +533,7 @@ export interface Provider {
    * 图像能力的默认选型(与 imageModels 配套;值必须是 imageModels 里的 id):
    * - standard:未指定任何偏好时的默认模型(意识 cindy 槽"默认"档的真身);
    * - draft / best:档位意图的翻译表(缺省回落 standard)。
-   * 默认选型是主机资产:改这里(OSS 热更)即可整体切换所有"跟随默认"的
+   * 默认选型是主机资产:改这里(服务端发布)即可整体切换所有"跟随默认"的
    * 消费方,代码零模型字面量。
    */
   imageDefaults?: { standard: string; draft?: string; best?: string };
@@ -653,7 +653,7 @@ export interface ProviderPresetRuntime {
  *
  * 与 `Provider` 的区别：预设只在「创建自定义供应商」对话框里消费，选中即快照进用户自己的
  * `CustomProviderConfig`，地址与用户修改保持不变；新建连接可通过 catalogPresetId 继承当前模型默认资料。
- * 数据随目录走 OSS 热更：各家 baseUrl / 模型 id 变化只需推数据，无需发版。
+ * 数据随目录走 服务端发布：各家 baseUrl / 模型 id 变化只需推数据，无需发版。
  */
 export interface ProviderPreset {
   modelInterfaces?: Record<string, { baseUrl: string; api: NonNullable<ProviderRuntimeModelConfig['api']>; inputs: string[] }>;
@@ -692,7 +692,7 @@ export interface ProviderPreset {
 /** 客户端实际构建区域；模型预设排序只看该版本身份，不看 UI 语言。 */
 export type PresetSortRegion = "cn" | "global" | "dev";
 
-/** 完整目录（OSS / 本地 / 内置 三处都是这个形状）。 */
+/** 完整目录（服务端发布与同源缓存使用相同形状）。 */
 export interface Catalog {
   /** Public transport metadata from the same server publication. */
   providerModelCatalog?: { schemaVersion: number; generatedAt: string; providers: Record<string, import('./providerModelCatalog.js').ProviderModelRecord[]> };
@@ -701,7 +701,7 @@ export interface Catalog {
   providers: Provider[];
   /**
    * 自定义供应商创建模板（可选）。容错语义：解析时逐条校验、坏条目丢弃（见 catalog.ts
-   * `sanitizePresets`），绝不因预设数据错误导致整份远端目录回退 bundled。
+   * `sanitizePresets`），绝不因预设数据错误导致整份远端目录回退同源 LKG。
    */
   presets?: ProviderPreset[];
   /**

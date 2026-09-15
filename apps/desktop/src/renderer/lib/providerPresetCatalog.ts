@@ -1,12 +1,19 @@
 import { installServerCatalog } from '@cindy/model-providers';
-import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
+import { getDataOwnerGeneration, isDataOwnerGenerationCurrent, type DataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 
-let generation = 0;
-/** Renderer adapter lookups consume the same public publication already accepted by main. */
-export async function loadProviderPresetCatalog() {
-  const request = ++generation;
+type Result = Awaited<ReturnType<typeof window.electronAPI.maker.listProviderPresets>>;
+let pending: { owner: DataOwnerGeneration; promise: Promise<Result> } | undefined;
+/** Renderer adapter lookups and callers accept only the current owner's publication. */
+export function loadProviderPresetCatalog(): Promise<Result> {
+  if (pending && isDataOwnerGenerationCurrent(pending.owner)) return pending.promise;
   const owner = getDataOwnerGeneration();
-  const result = await window.electronAPI.maker.listProviderPresets();
-  if (request === generation && isDataOwnerGenerationCurrent(owner) && result.catalog) installServerCatalog(result.catalog);
-  return result;
+  const promise = window.electronAPI.maker.listProviderPresets().then(result => {
+    if (!isDataOwnerGenerationCurrent(owner)) throw new Error('Provider catalog data owner changed');
+    if (result.catalog) installServerCatalog(result.catalog);
+    return result;
+  }).finally(() => {
+    if (pending?.promise === promise) pending = undefined;
+  });
+  pending = { owner, promise };
+  return promise;
 }

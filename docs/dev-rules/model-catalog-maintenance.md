@@ -135,3 +135,10 @@ Pi 渠道资料由 Server 发布的 `providerModelCatalog` 下发，供各 Harne
 实现及回归见 [source.ts](../../packages/model-providers/src/source.ts) 与
 [source-registry.test.ts](../../packages/model-providers/src/__tests__/source-registry.test.ts)。
 本次只迁移已有、已核实的价格，不补猜测价格，不改变 XD 的缺价处理。
+
+### 官方 API 接入预设
+
+订阅入口的「改用 API Key 接入」与预设列表均读取服务端的对应 `*-api` 模板。
+模型成员、推荐选择、URL、协议和参数不在 Renderer 写死；首次迁移数据纳入原 main
+供应商向导的官方 API 配置。初始化前目录请求未完成时不展示该模板入口，模型发现等待
+相同目录请求完成。账号切换前启动的请求不会向调用方返回旧目录。

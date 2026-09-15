@@ -153,6 +153,19 @@ describe("catalog capability cache migration", () => {
     ]);
     expect(writeCache).not.toHaveBeenCalled();
   });
+  it.each(['invalid-json', 'invalid-schema', 'read-error'])("skips a corrupt current and intermediate cache (%s) and reads the next valid same-source snapshot", async failure => {
+    const readCache = vi.fn(async (scope: string) => {
+      if (scope.endsWith('registrySchemaVersion=4')) return JSON.stringify(MINIMAL);
+      if (failure === 'read-error') throw new Error('unreadable');
+      return failure === 'invalid-json' ? '{broken' : JSON.stringify({ version: 'bad', providers: 'invalid' });
+    });
+    const result = await loadCatalogWithSource({ baseUrl }, {
+      fetchText: async () => { throw new Error('offline'); }, readCache,
+    });
+    expect(result.source).toBe('cache');
+    expect(result.catalog.version).toBe('test');
+    expect(readCache.mock.calls.every(([scope]) => scope.startsWith(baseUrl + '/api/model-catalog/catalog?'))).toBe(true);
+  });
   it("prefers the capable scope and writes successful responses only to that scope", async () => {
     const readCache = vi.fn(async (scope: string) => scope === modern ? JSON.stringify(MINIMAL) : null);
     await loadCatalogWithSource({ baseUrl }, { fetchText: async () => { throw new Error("offline"); }, readCache });

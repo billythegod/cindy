@@ -1,4 +1,5 @@
 import { loadProviderPresetCatalog } from '@/lib/providerPresetCatalog';
+import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import { providerSetupLink, providerPresetOAuth, providerPresetOAuthRuntimes, buildUserProvider } from '@cindy/model-providers';
 import { bindProviderPresetRuntime, providerEndpointBindings, bindProviderEndpoint } from '@cindy/model-providers';
 /**
@@ -162,99 +163,6 @@ function isDiscoverySourceValidForRuntime(
   return source.requestPath === undefined || isProviderRequestPath(source.requestPath);
 }
 
-/**
- * bespoke OAuth 渠道的官方 API 预设——授权步「改用 API Key 接入」的替代路径
- * (API 用户没有订阅,OAuth 授权对其是错误路径)。
- *
- * 不能复用 OAuth routing 的 upstream:那是订阅专用端点(openai 是 chatgpt
- * backend)。此处声明官方 API 端点,模型清单以 Step 3 列模型接口实拉为准
- * (缺省由 baseUrl 推导 …/v1/models,见 provider-model-fetch);同时内置少量
- * 推荐模型兜底——拉取因网络/限流失败时降级为「仅推荐模型」仍可完成创建,
- * 不把用户堵死(与目录预设同语义;Greptile P1 反馈 2026-07-24)。
- * 每个 runtime 都独立声明 wire protocol：Anthropic API 同时提供 Claude Code 的
- * Messages 与 Codex 桥接所需的 Messages 端点；openai/xai 声明 Codex 与 Pi 原生协议
- * runtime(两家无 Anthropic 兼容端点),表单会自动展示实际支持的 runtime。
- */
-const ANTHROPIC_API_MODELS = [
-  { id: 'claude-opus-5', defaultEnabled: true, name: 'Claude Opus 5', contextWindow: 1_000_000 },
-  { id: 'claude-sonnet-5', defaultEnabled: true, name: 'Claude Sonnet 5', contextWindow: 1_000_000 },
-  { id: 'claude-haiku-4-5', defaultEnabled: true, name: 'Claude Haiku 4.5', contextWindow: 200_000 },
-];
-const OPENAI_API_MODELS = [
-  { id: 'gpt-5.5', defaultEnabled: true, name: 'GPT-5.5' },
-  { id: 'gpt-5.4-mini', defaultEnabled: true, name: 'GPT-5.4 mini' },
-];
-const XAI_API_MODELS = [
-  { id: 'grok-4.6', defaultEnabled: true, name: 'Grok 4.6', contextWindow: 500_000 },
-  { id: 'grok-4.5', defaultEnabled: true, name: 'Grok 4.5', contextWindow: 500_000 },
-  { id: 'grok-4.3', defaultEnabled: true, name: 'Grok 4.3', contextWindow: 1_000_000 },
-];
-
-export const OFFICIAL_API_PRESETS: Record<string, ProviderPreset> = {
-  anthropic: {
-    id: 'anthropic-api',
-    name: 'Anthropic API',
-    docsUrl: 'https://console.anthropic.com/settings/keys',
-    runtimes: {
-      'claude-code': {
-        baseUrl: 'https://api.anthropic.com',
-        // contextWindow 必须与目录(providers.json)一致:保存时它是窗口的唯一来源
-        // (拉取的模型列表不带窗口),缺省会落 200k 默认 → toSdkModelString 剥掉
-        // 1M 模型的 [1m] 路由,用户拿到 1/5 窗口。
-        models: ANTHROPIC_API_MODELS,
-      },
-      // Codex 通过 Responses → Anthropic Messages 本地桥接访问同一官方 API。
-      // 这不是 Claude.ai OAuth 路由：API key 由该 runtime 独立存储，出站只使用
-      // x-api-key，Codex 自带的 OpenAI Authorization 永不透传到 Anthropic。
-      codex: {
-        wireProtocol: 'anthropic-messages',
-        baseUrl: 'https://api.anthropic.com',
-        models: ANTHROPIC_API_MODELS,
-      },
-      pi: {
-        wireProtocol: 'anthropic-messages',
-        baseUrl: 'https://api.anthropic.com',
-        models: ANTHROPIC_API_MODELS,
-      },
-    },
-  },
-  openai: {
-    id: 'openai-api',
-    name: 'OpenAI API',
-    docsUrl: 'https://platform.openai.com/api-keys',
-    runtimes: {
-      codex: {
-        baseUrl: 'https://api.openai.com/v1',
-        models: OPENAI_API_MODELS,
-      },
-      pi: {
-        baseUrl: 'https://api.openai.com/v1',
-        wireProtocol: 'openai-responses',
-        models: OPENAI_API_MODELS,
-      },
-    },
-  },
-  xai: {
-    id: 'xai-api',
-    name: 'xAI API',
-    docsUrl: 'https://console.x.ai',
-    runtimes: {
-      codex: {
-        baseUrl: 'https://api.x.ai/v1',
-        wireProtocol: 'openai-chat',
-        // contextWindow 必须与目录一致:拉取失败时 handleFinish 只读预设窗口,
-        // 缺省会落 toCatalogModel 的 200k 默认。
-        models: XAI_API_MODELS,
-      },
-      pi: {
-        baseUrl: 'https://api.x.ai/v1',
-        wireProtocol: 'openai-chat',
-        models: XAI_API_MODELS,
-      },
-    },
-  },
-};
-
 /** 供应商卡片图标。 */
 function cardIcon(sel: { providerId?: string; name: string }): React.ReactNode {
   if (sel.providerId && hasProviderLogo(sel.providerId)) {
@@ -358,6 +266,8 @@ export function AddProviderWizard({
   );
 
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
+  const presetCatalogRequestRef = useRef<ReturnType<typeof loadProviderPresetCatalog> | null>(null);
+  const officialApiPreset = (providerId: string) => presets.find(p => p.id === `${providerId}-api`);
   const [query, setQuery] = useState('');
   // entry(左栏检测建议 / 引导卡直达):目录里找得到该渠道才直达授权步,否则回落目录页。
   const entryProvider =
@@ -446,7 +356,8 @@ export function AddProviderWizard({
 
   useEffect(() => {
     let cancelled = false;
-    void loadProviderPresetCatalog()
+    presetCatalogRequestRef.current = loadProviderPresetCatalog();
+    void presetCatalogRequestRef.current
       .then((r) => {
         if (!cancelled) setPresets(r.presets);
       })
@@ -609,6 +520,7 @@ export function AddProviderWizard({
 
   useEffect(() => () => {
     oauthAttemptRef.current += 1;
+    fetchSeqRef.current += 1;
     if (savingRef.current) return;
     const draft = oauthDraftRef.current;
     oauthDraftRef.current = null;
@@ -928,6 +840,12 @@ export function AddProviderWizard({
       );
     });
     if (!editableBaseUrlsValid) return;
+    const seq = ++fetchSeqRef.current;
+    const owner = getDataOwnerGeneration();
+    setStep(3);
+    setFetchState({ status: 'fetching' });
+    await (presetCatalogRequestRef.current ?? loadProviderPresetCatalog()).catch(() => undefined);
+    if (seq !== fetchSeqRef.current || !isDataOwnerGenerationCurrent(owner)) return;
     // Curated presets use omission as their legacy default-on; generated catalog additions
     // explicitly default off. Keep the checkbox and recommendation badge consistent.
     const initial = new Map<
@@ -983,9 +901,6 @@ export function AddProviderWizard({
       }
     }
     setPicks(initial);
-    setStep(3);
-    setFetchState({ status: 'fetching' });
-    const seq = ++fetchSeqRef.current;
     // 并行拉取**每个已配置 runtime** 的列模型端点:双 runtime 预设两端各自发现,
     // 返回结果按「实际返回它的端点」归属合并——某模型两端都返回则归属两端。
     // 同一个 modelsUrl 被多个 runtime 共用、但预设模型集合不同，说明该端点返回的是
@@ -1090,7 +1005,7 @@ export function AddProviderWizard({
       if (sibling) { result.models = sibling.models; result.ok = true; }
     }
     // 过期响应丢弃:用户已返回 / 换选了其它供应商,旧结果不得合入当前清单。
-    if (seq !== fetchSeqRef.current) return;
+    if (seq !== fetchSeqRef.current || !isDataOwnerGenerationCurrent(owner)) return;
     const defaultDiscoveredModels = new Set(
       results
         .filter((result) => !result.route)
@@ -1602,7 +1517,7 @@ export function AddProviderWizard({
                         icon={cardIcon({ providerId: p.id, name: p.name })}
                         name={p.name}
                         meta={t(
-                          OFFICIAL_API_PRESETS[p.id]
+                          officialApiPreset(p.id)
                             ? 'settings.providers.wizard.metaOAuthOrApi'
                             : 'settings.providers.wizard.metaOAuth',
                         )}
@@ -1819,10 +1734,10 @@ export function AddProviderWizard({
                     官方 API 预设表单(填 key),与从目录选预设完全同一条流水线。
                     与「授权」并排的次级描边按钮(White Pill):小灰字形态用户根本
                     注意不到(2026-07-24 实测)。 */}
-                {(OFFICIAL_API_PRESETS[sel.provider.id] ?? presets.find(p => p.id === sel.provider.id)) && (
+                {(officialApiPreset(sel.provider.id) ?? presets.find(p => p.id === sel.provider.id)) && (
                   <button
                     type="button"
-                    onClick={() => pickPreset((OFFICIAL_API_PRESETS[sel.provider.id] ?? presets.find(p => p.id === sel.provider.id))!, true)}
+                    onClick={() => pickPreset((officialApiPreset(sel.provider.id) ?? presets.find(p => p.id === sel.provider.id))!, true)}
                     disabled={loggingIn}
                     className="flex h-9 items-center justify-center rounded-full border px-6 text-13 font-medium transition-colors hover:bg-[var(--surface-hover)] disabled:opacity-50"
                     style={{
