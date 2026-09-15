@@ -255,12 +255,15 @@ sessionRunningRetry 就停。每次因 replacement 关闭而重新入队都计�
 取消条件；不得借调度扩大目标、收件人或部署／合并等未授权操作。工具元数据发现属于
 只读辅助步骤。流程细节继续由 Skill 决定，Core 不内置特定仓库的发布流程。
 
-宿主审批从 owning session 已保存的用户原话恢复范围，派发前重新读取，保留后续叫停与
-限制。自动执行消息使用受保护的 `autoReviewUserText.kind=scheduled-continuation` 标记，
+宿主审批从 owning session 已保存的用户原话恢复范围。直发与排队均通过 Session 的
+`resolveAutoReviewUserIntent` 在 accepted 回调和视觉准备结束后、vendor dispatch 前读取，
+覆盖上游旧快照；读取后仍检查本轮取消，保留后续叫停与限制。
+自动执行消息使用受保护的 `autoReviewUserText.kind=scheduled-continuation` 标记，
 不作为新授权，也不占用授权历史的行数预算；普通 `origin` 可被展示层修改，不能作为
 信任依据。没有可信记录的旧消息仍会中断授权恢复，不按旧心跳 prompt 补造用户同意。
 既有的清空、回退、附件歧义和完整消息预算继续生效。
-绑定原任务的心跳必须保留其权限与计划模式，包括冷启动恢复；不得把原任务的 Auto／Ask
+绑定原任务的心跳必须保留其权限与计划模式，包括冷启动恢复与撞忙排队；队列接受边界
+复用既有权限快照核验，变化时顺延，不按旧模式派发。不得把原任务的 Auto／Ask
 落盘改为完全访问。无法恢复权限时不能套用独立调度的完全访问默认值。
 
 Cindy reviewer 与 Codex native reviewer 使用同一份范围语义，但接入不同。Codex 的主

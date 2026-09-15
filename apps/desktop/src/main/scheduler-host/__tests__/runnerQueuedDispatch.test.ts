@@ -649,14 +649,14 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
     },
   );
 
-  it.each(['permission', 'plan', 'switching', 'missing', 'replaced'])(
-    'defers queued routine acceptance after %s changes and runs with a fresh snapshot',
-    async (change) => {
+  it.each(['user', 'bot'].flatMap(source => ['permission', 'plan', 'switching', 'missing', 'replaced'].map(change => ({ source: source as 'user' | 'bot', change }))))(
+    'defers queued $source acceptance after $change changes and runs with a fresh snapshot',
+    async ({ source, change }) => {
       const h = createSessionHarness(async () => ({ accepted: true }));
       const queue = createQueueHarness({ busy: true });
       const f = createRunnerHarness(h.session, queue.deps);
       const ctx = { ...createFireContext(), deferToCaller: true };
-      const fire = f.runner.fire(heartbeatSchedule({ source: 'bot', manual: true }), ctx);
+      const fire = f.runner.fire(heartbeatSchedule({ source, manual: true }), ctx);
       await vi.waitFor(() => expect(queue.enqueueCalls).toHaveLength(1));
       const queuedPermissions = {
         permissionMode:
@@ -687,7 +687,7 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
         permissionMode: 'ask',
         planModeEnabled: currentPlan,
       });
-      const retry = f.runner.fire(heartbeatSchedule({ source: 'bot', manual: true }), {
+      const retry = f.runner.fire(heartbeatSchedule({ source, manual: true }), {
         ...createFireContext(),
         deferToCaller: true,
       });
@@ -753,7 +753,7 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
       expect(req.text).toContain('firedAtUtc: 2023-11-14T22:13:20.100Z');
       expect(req.text).toContain('firedAtInScheduleTimezone: 2023-11-15T06:13:20[Asia/Hong_Kong]');
       expect(req.text).toContain('[Silent scheduled run]');
-      expect(req.inheritTargetPlanMode).toBe(source === 'bot' ? true : undefined);
+      expect(req.inheritTargetPlanMode).toBe(true);
       expect(req.persistedContent).toContain('PR #971 heartbeat prompt');
       if (source === 'user') expect(req.persistedContent).toBe('PR #971 heartbeat prompt');
       else expect(req.persistedContent).not.toBe('PR #971 heartbeat prompt');

@@ -38,7 +38,7 @@ import { routinePermissionSnapshot } from './routinePermission.js';
 
 import { randomUUID } from 'node:crypto';
 
-import { AUTO_REVIEW_USER_INTENT, isTerminalAgentErrorEvent } from '@cindy/maker-core';
+import { isTerminalAgentErrorEvent } from '@cindy/maker-core';
 import { restoreAutoReviewUserIntent, type AutoReviewHistoryMessage } from '../maker-ipc/autoReviewUserIntent.js';
 import type {
   Maker,
@@ -1619,9 +1619,6 @@ export class MakerScheduleRunner implements ScheduleRunner {
           setSessionProvider(session.id, verdict.providerId);
         }
       }
-      const continuationIntent = schedule.targetSessionId && schedule.source !== 'bot'
-        ? restoreAutoReviewUserIntent(await this.deps.readAutoReviewHistory?.(session.id).catch(() => []) ?? [])
-        : undefined;
       throwIfFireAborted(ctx.signal, 'agent turn dispatch');
       if (schedule.source === 'bot') {
         routinePermissions = await this.readRoutinePermissions(session.id, session);
@@ -1639,7 +1636,11 @@ export class MakerScheduleRunner implements ScheduleRunner {
       }
       const sendResult = await session.send(outgoingMessage as never, {
         origin,
-        ...(continuationIntent !== undefined ? { [AUTO_REVIEW_USER_INTENT]: continuationIntent } : {}),
+        ...(schedule.targetSessionId && schedule.source !== 'bot' ? {
+          resolveAutoReviewUserIntent: async () => restoreAutoReviewUserIntent(
+            await this.deps.readAutoReviewHistory?.(session.id).catch(() => []) ?? [],
+          ),
+        } : {}),
         planMode: routinePermissions?.planMode ?? heartbeatPermissions?.planMode ?? false,
         onAccepted: async () => {
           // createSession 之后到真正 dispatch 之间仍会 await 模型切换、baseline
@@ -2046,7 +2047,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     const enqueueResult = await sq.enqueuePrompt({
       sessionId,
       text: promptToSend,
-      ...(schedule.source === 'bot' ? { inheritTargetPlanMode: true } : {}),
+      inheritTargetPlanMode: true,
       persistedContent:
         schedule.source === 'bot'
           ? `${UI_ACTION_TRIGGER_PREFIX}${schedule.prompt}`
@@ -2155,7 +2156,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
           }
           this.deps.logger.warn?.('[runner] queued heartbeat routing sync failed (non-fatal)', err);
         }
-        if (schedule.source === 'bot') {
+        {
           const permissions = await this.readRoutinePermissions(sessionId, live);
           if (
             !permissions ||
@@ -2165,7 +2166,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
             queuedPermissions?.planMode !== permissions.planMode
           ) {
             const error = new RoutineDispatchDeferredError(
-              'Queued routine permissions changed before dispatch',
+              'Queued heartbeat permissions changed before dispatch',
             );
             failAfterAccept(error);
             failDispatch(error);

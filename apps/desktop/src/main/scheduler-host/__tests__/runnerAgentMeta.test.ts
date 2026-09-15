@@ -1,5 +1,4 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { AUTO_REVIEW_USER_INTENT } from '@cindy/maker-core';
 
 import type {
   AgentEvent,
@@ -207,7 +206,7 @@ describe('MakerScheduleRunner agentMeta automation origin', () => {
 
     await fireToCompletion(runner, schedule, h);
 
-    expect(vi.mocked(h.session.send).mock.calls[0]?.[1]?.[AUTO_REVIEW_USER_INTENT]).toBe('Submit PR. Do not merge.');
+    expect(await vi.mocked(h.session.send).mock.calls[0]?.[1]?.resolveAutoReviewUserIntent?.()).toBe('Submit PR. Do not merge.');
     expect(mocks.createMessage).toHaveBeenCalledTimes(1);
     const [sessionId, body] = mocks.createMessage.mock.calls[0];
     expect(sessionId).toBe('scheduler-session');

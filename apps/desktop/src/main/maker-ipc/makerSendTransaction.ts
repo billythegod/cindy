@@ -1209,16 +1209,17 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
       // The coordinator's scheduled continuation is not a new user message. Restore
       // the owning task's authored requests at dispatch, including later revocations.
       // Never use the agent-authored schedule prompt as evidence of permission.
-      if (restoredAutoReviewIntent === undefined && so.origin?.kind === 'scheduler') {
+      const resolveScheduledIntent = so.origin?.kind === 'scheduler' ? async () => {
         let history: AutoReviewHistoryMessage[] = [];
         try {
           history = await deps.readAutoReviewHistory?.(sessionId) ?? [];
         } catch {
           deps.log.warn('auto-review continuation history unavailable', { sessionId });
         }
-        restoredAutoReviewIntent = restoreAutoReviewUserIntent(history);
-      }
-      if (restoredAutoReviewIntent === undefined && isOrdinaryUserTurn && trustedUserText !== undefined
+        return restoreAutoReviewUserIntent(history);
+      } : undefined;
+      if (resolveScheduledIntent) restoredAutoReviewIntent = undefined;
+      if (!resolveScheduledIntent && restoredAutoReviewIntent === undefined && isOrdinaryUserTurn && trustedUserText !== undefined
         && (!mainOwnedSendContext || mainOwnedSendContext.origin.kind === 'desktop')) {
         let history: AutoReviewHistoryMessage[] = [];
         try {
@@ -1324,6 +1325,7 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
           ? Math.max(0, Date.now() - 1)
           : null;
         const sendResult = await sess.send(outgoing as never, {
+          ...(resolveScheduledIntent ? { resolveAutoReviewUserIntent: resolveScheduledIntent } : {}),
           [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent,
           ...(so[INHERITED_CAPABILITY_SELECTION] !== undefined
             ? { [INHERITED_CAPABILITY_SELECTION]: so[INHERITED_CAPABILITY_SELECTION] }
