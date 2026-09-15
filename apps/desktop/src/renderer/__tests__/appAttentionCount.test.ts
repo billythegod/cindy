@@ -16,6 +16,7 @@ function input(overrides: Partial<AppAttentionCountInput> = {}): AppAttentionCou
     attentionKinds: new Map(),
     runningSessionIds: new Set(),
     localActivities: new Map(),
+    localSchedules: new Map(),
     ...overrides,
   };
 }
@@ -41,12 +42,14 @@ describe('app attention total', () => {
             session('remote', { deviceLinkDeviceId: 'device-a' }),
             session('scheduler', { source: 'scheduler' }),
             session('learn', { source: 'learn' }),
+            session('legacy', { title: '[Schedule] nightly', source: 'desktop' }),
           ],
           attentionKinds: new Map([
             ['local', 'done'],
             ['remote', 'done'],
             ['scheduler', 'error'],
             ['learn', 'awaiting'],
+            ['legacy', 'done'],
           ]),
         }),
       ),
@@ -69,9 +72,51 @@ describe('app attention total', () => {
             ['bound-paused', 'error'],
             ['scheduler', 'done'],
           ]),
+          localSchedules: new Map([
+            ['bound-read', { hasUnreadRun: false, hasUnreadFailedRun: false }],
+            ['bound-unread', { hasUnreadRun: true, hasUnreadFailedRun: false }],
+            ['bound-paused', { hasUnreadRun: false, hasUnreadFailedRun: false }],
+            ['scheduler', { hasUnreadRun: true, hasUnreadFailedRun: true }],
+          ]),
         }),
       ),
     ).toBe(3);
+  });
+
+  it('excludes heartbeat-generated done on a bound ordinary task without dropping later user attention', () => {
+    const sessions = [session('bound')];
+    const localSchedules = new Map([
+      ['bound', { hasUnreadRun: true, hasUnreadFailedRun: false }],
+    ]);
+    expect(
+      countAppAttention(
+        input({
+          sessions,
+          attentionKinds: new Map([['bound', 'done']]),
+          localSchedules,
+        }),
+      ),
+    ).toBe(0);
+    expect(
+      countAppAttention(
+        input({
+          sessions,
+          attentionKinds: new Map([['bound', 'awaiting']]),
+          localSchedules,
+        }),
+      ),
+    ).toBe(1);
+    expect(
+      countAppAttention(
+        input({
+          sessions,
+          attentionKinds: new Map([['bound', 'error']]),
+          localSchedules: new Map([
+            ['bound', { hasUnreadRun: false, hasUnreadFailedRun: false }],
+          ]),
+        }),
+      ),
+    ).toBe(1);
   });
 
   it('deduplicates the same local task across activity and notifications', () => {

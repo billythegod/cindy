@@ -42,6 +42,9 @@ vi.mock('@/hooks/useCCSessions', () => ({
 vi.mock('@/features/device-link/remoteProjectsStore', () => ({
   useRemoteProjectSessions: () => state.remoteSessions,
 }));
+vi.mock('@/features/cc-agent/hooks/useAutomationScheduleSessionIndex', () => ({
+  usePublishedAutomationScheduleSessionIndex: () => state.empty,
+}));
 vi.mock('@/features/device-link/remoteSessionActivityStore', () => ({}));
 vi.mock('@/lib/makerChatStore', () => ({
   makerChatStore: { subscribeAll: () => () => {}, getRunningSnapshot: () => state.running },
