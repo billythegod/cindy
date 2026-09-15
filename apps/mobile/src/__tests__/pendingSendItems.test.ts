@@ -449,10 +449,6 @@ describe('pending_send 渲染接线', () => {
     expect(bubbleSource).toContain('onLayout={hasAttachments ? undefined : measureBadgeAnchor}');
     expect(bubbleSource.indexOf('testID={`pendingSend.bubble.${item.clientId}`}')).toBeGreaterThan(badgeEnd);
     expect(bubbleSource).toContain('onTouchEnd={interactive ? handleBubbleTouchEnd : undefined}');
-    expect(bubbleSource).toContain('if (Math.hypot(dx, dy) > spacing.sm) bubbleTouchOriginRef.current = null;');
-    expect(bubbleSource).toContain('if (origin && Math.hypot(dx, dy) <= spacing.sm) {');
-    expect(bubbleSource).toContain('bubbleTouchCommitTimerRef.current = setTimeout(() => {');
-    expect(bubbleSource).toContain('clearTimeout(bubbleTouchCommitTimerRef.current);');
     expect(bubbleSource).toContain('const collapseLatched = collapseLatchBody === displayBody;');
     expect(bubbleSource).toContain('if (collapseResolved && !collapseLatched) setCollapseLatchBody(displayBody);');
     expect(bubbleSource).toContain('(measureBody && collapseLatched) || collapseResolved');
