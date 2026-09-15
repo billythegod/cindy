@@ -18,8 +18,10 @@ Mobile / device-link 使用执行端目录；本地安装状态来自执行机�
 ### 配置包含什么
 
 Server 正本已迁至 Model Access 自有数据库，通过 Platform「模型目录」保存草稿并发布。
+添加供应商向导绑定打开时的账号代次；切换账号或区域后关闭旧向导，重新打开时再读取当前目录，旧选择和凭证不能转交给新账号。
 服务端仅保留 `catalog/bootstrap/migration.deprecated.json`，由客户端和服务端固定 main 提交的实际有效配置生成，首次初始化后冻结。
 客户端不携带 providers、Registry、渠道资料或接口清单的运行时 JSON；后续统一在 Platform WebUI 修改并发布。
+升级读取同源旧缓存时，比较全部有效 scope 的 Registry `updatedAt`，使用最新完整快照；同一版本优先当前能力表示，不混合不同发布，不写回旧 scope。
 逻辑结构如下；具体字段及修改位置见下表：
 
 ```text

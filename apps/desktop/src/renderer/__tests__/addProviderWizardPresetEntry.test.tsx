@@ -57,6 +57,7 @@ vi.mock('@/components/icons/ProviderLogoMark', () => ({
 import { AddProviderWizard } from '@/components/settings/AddProviderWizard';
 import { OFFICIAL_API_PRESETS } from './fixtures/officialApiPresets';
 import { createCustomProvider, updateCustomProvider, deleteCustomProvider } from '@/lib/customProviders';
+import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 
 const anthropicProvider = {
   id: 'anthropic',
@@ -263,6 +264,7 @@ it.each(['openrouter', 'minimax-cn', 'minimax-global', 'moonshot-kimi-code', 'gi
 );
 
 beforeEach(() => {
+  setDataOwnerGeneration('wizard-test-owner');
   (window as unknown as { electronAPI: unknown }).electronAPI = {
     maker: {
       onProviderOAuthProgress: vi.fn(() => () => undefined),
@@ -292,6 +294,26 @@ beforeEach(() => {
       fetchProviderModels: vi.fn(async () => ({ ok: false, code: 'NETWORK' })),
     },
   };
+});
+
+it.each(['before-fetch', 'before-save', 'rerender'])('closes a fulfilled catalog wizard after owner change (%s)', async stage => {
+  const onClose = vi.fn();
+  const props = { providers: [], entry: { kind: 'preset' as const, presetId: 'opencode-go' }, onOpenCustomForm: vi.fn(), onClose, onDone: vi.fn() };
+  const view = render(<AddProviderWizard {...props} />);
+  await screen.findByDisplayValue('OpenCode Go');
+  fireEvent.change(screen.getByPlaceholderText('sk-…'), { target: { value: 'test-key' } });
+  if (stage === 'before-save') {
+    fireEvent.click(screen.getByText('settings.providers.wizard.next'));
+    await screen.findByText('settings.providers.wizard.fetchFailed');
+    vi.mocked(window.electronAPI.maker.fetchProviderModels).mockClear();
+  }
+  setDataOwnerGeneration('wizard-next-owner');
+  if (stage === 'rerender') view.rerender(<AddProviderWizard {...props} />);
+  else fireEvent.click(screen.getByText(stage === 'before-save' ? 'settings.providers.wizard.finish' : 'settings.providers.wizard.next'));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+  expect(window.electronAPI.maker.fetchProviderModels).not.toHaveBeenCalled();
+  expect(createCustomProvider).not.toHaveBeenCalled();
+  expect(updateCustomProvider).not.toHaveBeenCalled();
 });
 
 afterEach(() => {

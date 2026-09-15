@@ -138,6 +138,27 @@ describe("catalog capability cache migration", () => {
     "registrySchemaVersion=4&catalogCapabilities=registry-v4-media",
     "registrySchemaVersion=4",
   ];
+  it.each([false, true])('selects the newest complete same-source cache across all valid scopes (online=%s)', async online => {
+    const snapshot = (version: string, day: number) => ({ ...MINIMAL, version, modelRegistry: {
+      schemaVersion: 4, updatedAt: `2099-01-${String(day).padStart(2, '0')}T00:00:00.000Z`, models: [],
+    } });
+    const scopes = [modern, ...previousQueries.map(query => baseUrl + '/api/model-catalog/catalog?' + query)];
+    for (const newestScope of scopes) {
+      const readCache = vi.fn(async (scope: string) => JSON.stringify(snapshot(scope === newestScope ? 'newest' : 'old', scope === newestScope ? 3 : 1)));
+      const writeCache = vi.fn();
+      const result = await loadCatalogWithSource({ baseUrl }, {
+        fetchText: async () => { if (!online) throw new Error('offline'); return JSON.stringify(snapshot('remote', 2)); },
+        readCache, writeCache,
+      });
+      expect(result.catalog.version).toBe('newest');
+      expect(new Set(readCache.mock.calls.map(([scope]) => scope))).toEqual(new Set(scopes));
+      if (online) {
+        expect(writeCache).toHaveBeenCalledOnce();
+        expect(writeCache.mock.calls[0][0]).toBe(modern);
+        expect(JSON.parse(writeCache.mock.calls[0][1]).version).toBe('newest');
+      } else expect(writeCache).not.toHaveBeenCalled();
+    }
+  });
   it.each(previousQueries)("reads the old %s scope after upgrade while offline, without writing or deleting it", async (query) => {
     const legacy = baseUrl + "/api/model-catalog/catalog?" + query;
     const readCache = vi.fn(async (scope: string) => scope === legacy ? JSON.stringify(MINIMAL) : null);
@@ -148,7 +169,7 @@ describe("catalog capability cache migration", () => {
     expect(result.source).toBe("cache");
     expect(readCache.mock.calls.map(call => call[0])).toEqual([
       modern,
-      ...previousQueries.slice(0, previousQueries.indexOf(query) + 1)
+      ...previousQueries
         .map(previous => baseUrl + "/api/model-catalog/catalog?" + previous),
     ]);
     expect(writeCache).not.toHaveBeenCalled();
@@ -169,7 +190,7 @@ describe("catalog capability cache migration", () => {
   it("prefers the capable scope and writes successful responses only to that scope", async () => {
     const readCache = vi.fn(async (scope: string) => scope === modern ? JSON.stringify(MINIMAL) : null);
     await loadCatalogWithSource({ baseUrl }, { fetchText: async () => { throw new Error("offline"); }, readCache });
-    expect(readCache).toHaveBeenCalledTimes(1);
+    expect(readCache).toHaveBeenCalledTimes(5);
     const writeCache = vi.fn(async () => undefined);
     await loadCatalogWithSource({ baseUrl }, { fetchText: async () => JSON.stringify(MINIMAL), readCache: async () => null, writeCache });
     expect(writeCache).toHaveBeenCalledWith(modern, expect.any(String));

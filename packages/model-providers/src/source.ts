@@ -149,17 +149,24 @@ async function readCatalogCache(io: CatalogIO, scope: string): Promise<{ text: s
       }
     }
   } catch { /* Non-URL scopes retain their existing behavior. */ }
+  let newest: { text: string; catalog: Catalog; sameRepresentation: boolean } | null = null;
   for (const candidate of candidates) {
     try {
       const text = await io.readCache(candidate);
-      if (text !== null) return { text, catalog: parseCatalog(text), sameRepresentation: candidate === scope };
+      if (text !== null) {
+        const catalog = parseCatalog(text);
+        // Capability scopes can have different shapes at the same revision. The
+        // current representation wins ties; only a newer publication replaces it.
+        if (!newest || (registryUpdatedAt(catalog) ?? -Infinity) > (registryUpdatedAt(newest.catalog) ?? -Infinity))
+          newest = { text, catalog, sameRepresentation: candidate === scope };
+      }
     } catch {
       log(io, 'warn', 'cached catalog candidate is unreadable or invalid; trying the next same-source scope', {
         url: catalogUrlForLog(candidate),
       });
     }
   }
-  return null;
+  return newest;
 }
 
 /** Strip credentials and request-only URL parts before diagnostics leave this package. */

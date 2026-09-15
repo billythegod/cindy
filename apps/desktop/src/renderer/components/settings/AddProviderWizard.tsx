@@ -257,6 +257,15 @@ export function AddProviderWizard({
   onDone,
 }: AddProviderWizardProps) {
   const { t, i18n } = useTranslation();
+  const openingOwner = useRef(getDataOwnerGeneration()).current;
+  const ensureWizardOwner = useCallback(() => {
+    if (isDataOwnerGenerationCurrent(openingOwner)) return true;
+    onClose();
+    return false;
+  }, [openingOwner, onClose]);
+  // The entire draft, including an already-resolved catalog request and API key,
+  // belongs to the owner that opened it. Auth updates rerender the settings page.
+  useEffect(() => { ensureWizardOwner(); });
 
   // Native credentials alone do not mean this Cindy account has added the local
   // connection. Keep the slot occupied when suspended or awaiting reconnection.
@@ -524,10 +533,11 @@ export function AddProviderWizard({
     if (savingRef.current) return;
     const draft = oauthDraftRef.current;
     oauthDraftRef.current = null;
-    if (draft) void deleteCustomProvider(draft.id).catch(() => undefined);
-  }, []);
+    if (draft && isDataOwnerGenerationCurrent(openingOwner)) void deleteCustomProvider(draft.id).catch(() => undefined);
+  }, [openingOwner]);
 
   const pickOauth = useCallback((provider: ProviderView) => {
+    if (!ensureWizardOwner()) return;
     const draft = oauthDraftRef.current;
     oauthDraftRef.current = null;
     if (draft) void deleteCustomProvider(draft.id).catch(() => undefined);
@@ -536,8 +546,9 @@ export function AddProviderWizard({
     setSel({ kind: 'oauth', provider });
     setApiKey('');
     setStep(2);
-  }, []);
+  }, [ensureWizardOwner]);
   const pickBuiltinApiKey = useCallback((provider: ProviderView) => {
+    if (!ensureWizardOwner()) return;
     const draft = oauthDraftRef.current;
     oauthDraftRef.current = null;
     if (draft) void deleteCustomProvider(draft.id).catch(() => undefined);
@@ -546,9 +557,10 @@ export function AddProviderWizard({
     setSel({ kind: 'builtinApiKey', provider });
     setApiKey('');
     setStep(2);
-  }, []);
+  }, [ensureWizardOwner]);
   const pickPreset = useCallback(
     (preset: ProviderPreset, useApiKey = false) => {
+      if (!ensureWizardOwner()) return;
       const oauth = providerPresetOAuth(preset.id);
       if (oauth && !useApiKey) {
         pickOauth({ ...buildUserProvider({
@@ -576,10 +588,11 @@ export function AddProviderWizard({
       setPresetBaseUrls({});
       setStep(2);
     },
-    [i18n.language, onDone, providers, pickOauth],
+    [i18n.language, onDone, providers, pickOauth, ensureWizardOwner],
   );
 
   const connectOllama = useCallback(async () => {
+    if (!ensureWizardOwner()) return;
     setSaving(true);
     try {
       let status = await window.electronAPI.maker.localModelStatus();
@@ -614,7 +627,7 @@ export function AddProviderWizard({
     } finally {
       setSaving(false);
     }
-  }, [onDone, t]);
+  }, [onDone, t, ensureWizardOwner]);
 
   // entry(preset 直达):presets 异步载入,到位后消费;找不到该预设则留在目录页。
   // 按 presetId 记录已消费值(而非布尔):同一挂载期内 entry 换成另一个 preset
@@ -639,6 +652,7 @@ export function AddProviderWizard({
   }, []);
 
   const useLocalOpenAiAccount = useCallback(async () => {
+    if (!ensureWizardOwner()) return;
     setLoggingIn(true);
     let lease: CodexLoginLease | undefined;
     const login = { cancel: () => lease?.release({ cancelIfLastOwner: true }) };
@@ -661,9 +675,10 @@ export function AddProviderWizard({
         setLoggingIn(false);
       }
     }
-  }, [onDone, t]);
+  }, [onDone, t, ensureWizardOwner]);
 
   const useLocalClaudeAccount = useCallback(async () => {
+    if (!ensureWizardOwner()) return;
     setLoggingIn(true);
     const loginKey = crypto.randomUUID();
     const login = { cancel: () => { void window.electronAPI.maker.claudeOAuthCancel(loginKey).catch(() => undefined); } };
@@ -680,11 +695,12 @@ export function AddProviderWizard({
         setLoggingIn(false);
       }
     }
-  }, [onDone, t]);
+  }, [onDone, t, ensureWizardOwner]);
 
   // ── OAuth 授权（渠道登录后进入模型选择，原生订阅沿用已有流程）────────────────────
   const handleAuthorize = useCallback(
     async (override?: ProviderView) => {
+      if (!ensureWizardOwner()) return;
       const selected = override ?? (sel?.kind === 'oauth' ? sel.provider : undefined);
       if (!selected) return;
       const attempt = ++oauthAttemptRef.current;
@@ -708,7 +724,7 @@ export function AddProviderWizard({
                 : { codex: { baseUrl: brand === 'openai' ? 'https://chatgpt.com/backend-api/codex' : 'https://api.x.ai/v1', wireProtocol: 'openai-responses', models: [] } },
             }, {});
             created = true;
-            if (accountLoginRef.current !== login) return;
+            if (!isDataOwnerGenerationCurrent(openingOwner) || accountLoginRef.current !== login) return;
             const result = await window.electronAPI.maker.providerOAuthLogin(id, { ownerId: login.ownerId });
             if (accountLoginRef.current !== login || result.reason === 'login_cancelled') return;
             // A late success belongs to a cancelled wizard until ownership is checked.
@@ -719,7 +735,7 @@ export function AddProviderWizard({
               accountLoginRef.current = null;
               clearGenericDeviceCode();
             }
-            if (created && !ok) await deleteCustomProvider(id);
+            if (created && !ok && isDataOwnerGenerationCurrent(openingOwner)) await deleteCustomProvider(id);
           }
         } else {
           const ownedLogin = beginGenericOwnedLogin();
@@ -733,10 +749,12 @@ export function AddProviderWizard({
             ownedLogin.finish();
           }
         }
+        if (!isDataOwnerGenerationCurrent(openingOwner)) return;
         if (ok && preset) {
           // Reuse the model picker after login. Credentials stay in Main; only the
           // discovered, redacted model configuration comes back to the renderer.
           const snapshot = await window.electronAPI.maker.listProviders();
+          if (!isDataOwnerGenerationCurrent(openingOwner)) return;
           if (oauthAttemptRef.current !== attempt) { await deleteCustomProvider(id); return; }
           const connected = snapshot.providers.find(p => p.id === id);
           if (!connected) { await deleteCustomProvider(id); throw new Error('provider_not_found_after_login'); }
@@ -772,6 +790,7 @@ export function AddProviderWizard({
           toast.error(t('settings.providers.wizard.authorizeFailed', { name: selected.name }));
         }
       } catch {
+        if (!isDataOwnerGenerationCurrent(openingOwner)) return;
         if (preset && id !== preset.id && !oauthDraftRef.current) await deleteCustomProvider(id).catch(() => undefined);
         toast.error(t('settings.providers.wizard.authorizeFailed', { name: selected.name }));
       } finally {
@@ -779,7 +798,7 @@ export function AddProviderWizard({
         if (!accountLoginRef.current && !localLoginRef.current) setLoggingIn(false);
       }
     },
-    [sel, presets, clearGenericDeviceCode, beginGenericOwnedLogin, onDone, t],
+    [sel, presets, clearGenericDeviceCode, beginGenericOwnedLogin, onDone, t, openingOwner, ensureWizardOwner],
   );
 
   /**
@@ -829,6 +848,7 @@ export function AddProviderWizard({
 
   // ── 预设:进入 Step 3 时自动拉取模型 ─────────────────────────────────────
   const startFetch = useCallback(async () => {
+    if (!ensureWizardOwner()) return;
     if (!sel || sel.kind !== 'preset') return;
     const preset = sel.preset;
     const agents = configuredPresetAgents(preset);
@@ -841,7 +861,7 @@ export function AddProviderWizard({
     });
     if (!editableBaseUrlsValid) return;
     const seq = ++fetchSeqRef.current;
-    const owner = getDataOwnerGeneration();
+    const owner = openingOwner;
     setStep(3);
     setFetchState({ status: 'fetching' });
     await (presetCatalogRequestRef.current ?? loadProviderPresetCatalog()).catch(() => undefined);
@@ -1100,7 +1120,7 @@ export function AddProviderWizard({
       failed: !results.some((r) => r.ok),
       empty: !results.some((r) => r.models.length > 0),
     });
-  }, [sel, apiKey, presetBaseUrls]);
+  }, [sel, apiKey, presetBaseUrls, openingOwner, ensureWizardOwner]);
 
   /**
    * 零推荐模型的本机代理（例如 LiteLLM）若 `/models` 不可用或返回空清单，仍允许用户
@@ -1146,6 +1166,7 @@ export function AddProviderWizard({
    * 图像通道 ready 都以「key 已存」为准 —— 无自定义供应商落库、无模型拉取步。
    */
   const handleSaveBuiltinApiKey = useCallback(async () => {
+    if (!ensureWizardOwner()) return;
     if (!sel || sel.kind !== 'builtinApiKey') return;
     const id = sel.provider.id;
     if (!isBuiltinApiKeyProviderId(id)) {
@@ -1167,9 +1188,10 @@ export function AddProviderWizard({
     } finally {
       setSaving(false);
     }
-  }, [sel, apiKey, onDone, t]);
+  }, [sel, apiKey, onDone, t, ensureWizardOwner]);
 
   const handleFinish = useCallback(async () => {
+    if (!ensureWizardOwner()) return;
     if (!sel || sel.kind !== 'preset') return;
     const preset = sel.preset;
     const selected = [...picks.entries()]
@@ -1274,7 +1296,7 @@ export function AddProviderWizard({
       savingRef.current = false;
       setSaving(false);
     }
-  }, [sel, picks, name, apiKey, presetBaseUrls, providers, onDone, t, i18n.language]);
+  }, [sel, picks, name, apiKey, presetBaseUrls, providers, onDone, t, i18n.language, ensureWizardOwner]);
 
   // ── 步骤指示 ─────────────────────────────────────────────────────────
   // 目录步默认按完整路径显示三步(选择供应商 → 连接 → 选择模型);选中真的
@@ -1329,6 +1351,7 @@ export function AddProviderWizard({
     presetBaseUrlsValid &&
     (!presetNeedsApiKey || apiKey.trim().length > 0);
 
+  if (!isDataOwnerGenerationCurrent(openingOwner)) return null;
   return (
     // DESIGN.md §4 Dialog:关闭 = 底部「取消」/ Esc / 点遮罩,不设右上角 ×(与 ConfirmDialog 同构)。
     <div
