@@ -278,20 +278,35 @@ describe('applyInputProjection 自愈进行中提示', () => {
     expect(snapshot.error).toBeNull();
   });
 
-  it('keeps notification recovery ownership through backoff, queue and dispatch', () => {
+  it('keeps recovery running until a pre-dispatch failure settles as error', () => {
     expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
     inputProjectionCb!(projection({ autoResumePending: PENDING_INFO }));
     expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(true);
+    expect(makerChatStore.getRunningSnapshot().get(SID)?.isRunning).toBe(true);
     inputProjectionCb!(projection({ pendingQueue: [{ clientId: 'retry', autoResume: true }] }));
     expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(true);
-    inputProjectionCb!(projection({ continuationInFlightClientId: 'retry' }));
-    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(true);
-    inputProjectionCb!(projection());
-    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
-    inputProjectionCb!(projection({ autoResumePending: PENDING_INFO }));
+    expect(makerChatStore.getSnapshot(SID).agentStatus.isRunning).toBe(false);
+    expect(makerChatStore.getRunningSnapshot().get(SID)?.isRunning).toBe(true);
     inputProjectionCb!(projection({ error: 'Selected model is at capacity.' }));
     expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
     expect(makerChatStore.hasSessionTerminalError(SID)).toBe(true);
+    expect(makerChatStore.getRunningSnapshot().get(SID)).toMatchObject({
+      isRunning: false, hasError: true,
+    });
+  });
+
+  it('does not classify a normal Continue as recovery when it finishes before projection cleanup', () => {
+    makerEventCb!({ sessionId: SID, event: { type: 'status', data: { isRunning: true } } });
+    inputProjectionCb!(projection({ continuationInFlightClientId: 'manual-continue' }));
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
+    expect(makerChatStore.getRunningSnapshot().get(SID)?.isRunning).toBe(true);
+    makerEventCb!({ sessionId: SID, event: { type: 'done', data: {} } });
+    expect(makerChatStore.getSnapshot(SID).continuationInFlightClientId).toBe('manual-continue');
+    expect(makerChatStore.getRunningSnapshot().get(SID)).toMatchObject({
+      isRunning: false, hasError: false,
+    });
+    inputProjectionCb!(projection());
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
   });
 
   it('进度更新时同一张卡的 systemCardData 必须跟着变(1/5 → 2/5)', () => {

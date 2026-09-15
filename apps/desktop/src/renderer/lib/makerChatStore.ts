@@ -9502,7 +9502,10 @@ function computeRunningSnapshot(): Map<string, SessionStatusInfo> {
     // (远程会话豁免,见 hasBackgroundAgentWork 注释。)
     const bgTaskRunning = hasBackgroundAgentWork(id, state);
 
-    if (state.agentStatus.isRunning || bgTaskRunning) {
+    // Recovery is still unfinished work. Keep the existing running edge alive
+    // so a dispatch failure can settle as error without another vendor turn.
+    const recoveryPending = !state.error && hasSessionRecoveryPending(id);
+    if (state.agentStatus.isRunning || bgTaskRunning || recoveryPending) {
       // Currently running — always include.
       next.set(id, {
         isRunning: true,
@@ -9630,8 +9633,7 @@ function hasSessionRecoveryPending(sessionId: string): boolean {
       message.clientId === AUTO_RESUME_PENDING_CLIENT_ID ||
       message.clientId === CODEX_RECONNECT_PENDING_CLIENT_ID,
     ) ||
-    state.pendingQueue.some((item) => item.autoResume === true) ||
-    state.continuationInFlightClientId !== null
+    state.pendingQueue.some((item) => item.autoResume === true)
   );
 }
 

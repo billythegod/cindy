@@ -129,17 +129,17 @@ describe('useSessionRunningStatus silenced completion handling', () => {
     expect(addSessionAttention).not.toHaveBeenCalled();
   });
 
-  it('reports final retry failure without a completion notification', async () => {
+  it('reports recovery failure before another vendor turn starts', async () => {
     vi.useFakeTimers();
     const onSessionDone = vi.fn();
     const onSessionError = vi.fn();
     renderHook(() => useSessionRunningStatus(undefined, { onSessionDone, onSessionError }));
     await emitSnapshot(new Map([['retry', status(true)]]));
     storeMock.recoverySessions.add('retry');
-    await emitSnapshot(new Map([['retry', status(false)]]));
+    // The store keeps recovery logically running even though the vendor stopped.
+    await emitSnapshot(new Map([['retry', status(true)]]));
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
     storeMock.recoverySessions.clear();
-    await emitSnapshot(new Map([['retry', status(true)]]));
     storeMock.terminalErrorSessions.add('retry');
     await emitSnapshot(new Map([['retry', status(false, true)]]));
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
