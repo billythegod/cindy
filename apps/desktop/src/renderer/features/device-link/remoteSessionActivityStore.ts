@@ -38,15 +38,15 @@ export function isRemoteSessionActivityActive(
   return activity?.phase === 'running' || activity?.phase === 'needs-interaction';
 }
 
-const listeners = new Set<(deviceId?: string) => void>();
+const listeners = new Set<(deviceId?: string, sessionId?: string) => void>();
 /** deviceId → sessionId → 活动条目；本地任务没有 deviceId，不读取远程缓存。 */
 const activityByDevice = new Map<string, Map<string, RemoteSessionActivity>>();
 /** 整表变更版本号(聚合消费方作依赖用;activityMap 本体是可变引用,不能当快照)。 */
 let revision = 0;
 
-function emit(deviceId?: string): void {
+function emit(deviceId?: string, sessionId?: string): void {
   revision++;
-  for (const l of listeners) l(deviceId);
+  for (const l of listeners) l(deviceId, sessionId);
 }
 
 function isPhase(value: unknown): value is RemoteSessionActivityPhase {
@@ -67,7 +67,9 @@ function sameActivity(a: RemoteSessionActivity, b: RemoteSessionActivity): boole
   );
 }
 
-export function subscribeRemoteSessionActivity(listener: (deviceId?: string) => void): () => void {
+export function subscribeRemoteSessionActivity(
+  listener: (deviceId?: string, sessionId?: string) => void,
+): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
@@ -160,7 +162,7 @@ export function applyRemoteSessionActivity(deviceId: string, payload: unknown): 
   const current = activityMap.get(sessionId);
   if (current && sameActivity(current, next)) return;
   activityMap.set(sessionId, next);
-  emit(deviceId);
+  emit(deviceId, sessionId);
 }
 
 /** 刚发送时丢掉上一轮 completed/error 镜像。running / needs-interaction 是本轮活档,保留。 */
@@ -183,7 +185,7 @@ export function removeRemoteSessionActivityEntry(
   const activityMap = activityByDevice.get(deviceId);
   if (!activityMap?.delete(sessionId)) return;
   if (activityMap.size === 0) activityByDevice.delete(deviceId);
-  emit(deviceId);
+  emit(deviceId, sessionId);
 }
 
 /** 设备移除时只清理该设备；瞬时断线仍保留快照。 */

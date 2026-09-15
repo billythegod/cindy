@@ -142,9 +142,13 @@ function remoteActivitySigOf(sessionId: string, deviceId = getSessionDeviceId(se
   return `${activity.phase}\u0000${activity.attention ? 1 : 0}\u0000${activity.compactDetail}`;
 }
 
-function rebasePendingReceiptsOnNewAttention(changedDeviceId?: string): void {
+function rebasePendingReceiptsOnNewAttention(
+  changedDeviceId?: string,
+  changedSessionId?: string,
+): void {
   const watched = new Set([...pendingRemoteReceipts.keys(), ...inflightReceiptSessions.keys()]);
   for (const sessionId of watched) {
+    if (changedSessionId && sessionId !== changedSessionId) continue;
     // Origin can disappear during bootstrap. A pending receipt must still become
     // conservative when new unread arrives; read that event's exact device shard.
     const deviceId = getSessionDeviceId(sessionId) ?? changedDeviceId;
