@@ -33,6 +33,8 @@ function createSession(overrides: Partial<MakerSendTransactionSession> = {}): Ma
     agentKind: 'codex',
     workDir: 'C:\\repo',
     remoteHostId: null,
+    stablePermissionModeState: { mode: 'ask', generation: 0 },
+    stablePlanModeState: { enabled: false, generation: 0 },
     isTurnRunning: vi.fn(() => false),
     send: vi.fn(async (
       _message: UserMessage | string,
@@ -40,6 +42,7 @@ function createSession(overrides: Partial<MakerSendTransactionSession> = {}): Ma
     ) => {
       await opts?.onAccepted?.();
       await opts?.onTranscriptUserEntry?.('pi-user-entry');
+      await opts?.resolveAutoReviewUserIntent?.();
       opts?.onDispatching?.();
       return { accepted: true } satisfies SessionSendResult;
     }),
@@ -50,6 +53,7 @@ function createSession(overrides: Partial<MakerSendTransactionSession> = {}): Ma
 function createDeps(overrides: Partial<MakerSendTransactionDeps> = {}) {
   const session = createSession();
   const deps: MakerSendTransactionDeps = {
+    readScheduledPermissions: vi.fn(async () => ({ permissionMode: 'ask', planModeEnabled: false })),
     getSession: vi.fn((sessionId: string) => (sessionId === session.id ? session : undefined)),
     closeSession: vi.fn(async () => {}),
     preflightBotRuntimeResources: vi.fn(async () => {}),
@@ -2179,9 +2183,42 @@ describe('session-agent-switch handoff injection', () => {
     });
     const opts = vi.mocked(session.send).mock.calls[0]![1]!;
     expect(opts[AUTO_REVIEW_USER_INTENT]).toBeUndefined();
-    expect(deps.readAutoReviewHistory).not.toHaveBeenCalled();
+    expect(deps.readAutoReviewHistory).toHaveBeenCalledOnce();
     expect(await opts.resolveAutoReviewUserIntent?.()).toBe(unavailable ? '' : 'Submit PR. Do not merge.');
   });
+
+  it.each(['plan-disabled', 'plan-enabled', 'plan-switching', 'permission-switching', 'missing-snapshot', 'replaced-session', 'final-boundary'])(
+    'rejects scheduled vendor dispatch after authorization refresh: %s', async (change) => {
+      const { deps, session } = createDeps();
+      const initialPlan = change !== 'plan-enabled';
+      Object.assign(session, { stablePlanModeState: { enabled: initialPlan, generation: 0 } });
+      vi.mocked(deps.readScheduledPermissions!).mockResolvedValue({ permissionMode: 'ask', planModeEnabled: initialPlan });
+      const vendor = vi.fn();
+      deps.readAutoReviewHistory = vi.fn(async () => {
+        if (change === 'plan-switching') Object.assign(session, { stablePlanModeState: null });
+        if (change === 'permission-switching') Object.assign(session, { stablePermissionModeState: null });
+        if (change === 'plan-disabled' || change === 'plan-enabled') {
+          Object.assign(session, { stablePlanModeState: { enabled: !initialPlan, generation: 1 } });
+          vi.mocked(deps.readScheduledPermissions!).mockResolvedValue({ permissionMode: 'ask', planModeEnabled: !initialPlan });
+        }
+        if (change === 'missing-snapshot') vi.mocked(deps.readScheduledPermissions!).mockResolvedValue(null);
+        if (change === 'replaced-session') vi.mocked(deps.getSession).mockReturnValue(createSession());
+        return [];
+      });
+      vi.mocked(session.send).mockImplementation(async (_message, opts) => {
+        await opts?.onAccepted?.();
+        await opts?.resolveAutoReviewUserIntent?.();
+        if (change === 'final-boundary') Object.assign(session, { stablePlanModeState: null });
+        opts?.onDispatching?.();
+        vendor();
+        return { accepted: true };
+      });
+      await expect(createMakerSendTransaction(deps).sendToAgentAccepted('session-1', 'Follow up', undefined, {
+        origin: { kind: 'scheduler', scheduleId: 's', scheduleName: 'Follow up', runId: 'r' },
+      })).rejects.toThrow('Scheduled task modes changed');
+      expect(vendor).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([false, true])('restores owner intent independently of a handoff (pending=%s)', async (handoff) => {
     const { deps, session } = createDeps({
@@ -2659,7 +2696,7 @@ describe('session-agent-switch handoff injection', () => {
       // 切换已关闭旧引擎 live session → drain 时拿不到,走 lazy-create。
       getSession: vi.fn(() => {
         callOrder.push('getSession');
-        return undefined;
+        return newEngineSession;
       }),
       applyPendingAgentSwitch: vi.fn(async () => {
         callOrder.push('applySwitch');

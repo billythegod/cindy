@@ -7,6 +7,7 @@ import {
   type AgentKind,
   type MainOwnedSendContext,
   type SessionSendOptions,
+  type Session,
   type SessionSendResult,
   type UserMessage,
 } from '@cindy/maker-core';
@@ -20,6 +21,7 @@ import {
   toDesktopSessionDispatchOutcome,
 } from '../maker-host/send-outcome.js';
 import { isCredentialModeSwitchBusyError } from '../maker-host/codex-credential-switch.js';
+import { routinePermissionSnapshot } from '../maker-host/routinePermission.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import {
   extractPlainText,
@@ -300,6 +302,8 @@ function extractIpcUserMessageText(message: IpcUserMessage): string {
 }
 
 export interface MakerSendTransactionSession {
+  readonly stablePermissionModeState?: Session['stablePermissionModeState'];
+  readonly stablePlanModeState?: Session['stablePlanModeState'];
   hostStartupPreferences?: CreateOpts['hostStartupPreferences'];
   id: string;
   agentKind: AgentKind;
@@ -325,6 +329,7 @@ export interface MakerSendTransactionDeps {
   getSessionMeta(sessionId: string): Promise<{ title?: string } | null>;
   /** The same clear/rewind-filtered transcript used for native context handoffs. */
   readAutoReviewHistory?(sessionId: string): Promise<AutoReviewHistoryMessage[]>;
+  readScheduledPermissions?(sessionId: string): Promise<{ permissionMode: unknown; planModeEnabled: unknown } | null>;
   ensureRemoteReadyForSessionStart(params: {
     session?: { agentKind: AgentKind; remoteHostId: string | null } | null;
     createOpts?: unknown;
@@ -1209,6 +1214,20 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
       // The coordinator's scheduled continuation is not a new user message. Restore
       // the owning task's authored requests at dispatch, including later revocations.
       // Never use the agent-authored schedule prompt as evidence of permission.
+      const plannedModes = createOpts as Partial<CreateOpts> | undefined;
+      const expectedScheduledModes = so.origin?.kind === 'scheduler' ? routinePermissionSnapshot(undefined, {
+        permissionMode: plannedModes?.permissionMode ?? sess.stablePermissionModeState?.mode,
+        planModeEnabled: plannedModes?.planMode ?? sess.stablePlanModeState?.enabled,
+      }) : null;
+      let latestScheduledModes: { permissionMode: unknown; planModeEnabled: unknown } | null = null;
+      const assertScheduledModes = () => {
+        const current = routinePermissionSnapshot(sess, latestScheduledModes);
+        if (!current || deps.getSession(sessionId) !== sess
+          || current.permissionMode !== expectedScheduledModes?.permissionMode
+          || current.planMode !== expectedScheduledModes?.planMode) {
+          throwIpcError('PRECONDITION_FAILED', 'Scheduled task modes changed before vendor dispatch');
+        }
+      };
       const resolveScheduledIntent = so.origin?.kind === 'scheduler' ? async () => {
         let history: AutoReviewHistoryMessage[] = [];
         try {
@@ -1216,6 +1235,8 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
         } catch {
           deps.log.warn('auto-review continuation history unavailable', { sessionId });
         }
+        latestScheduledModes = await deps.readScheduledPermissions?.(sessionId) ?? null;
+        assertScheduledModes();
         return restoreAutoReviewUserIntent(history);
       } : undefined;
       if (resolveScheduledIntent) restoredAutoReviewIntent = undefined;
@@ -1454,6 +1475,7 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
               }
             : undefined,
           onDispatching: () => {
+            if (resolveScheduledIntent) assertScheduledModes();
             if (persistUserMessage?.shouldBroadcast && !persistUserMessage.shouldBroadcast()) {
               throwIpcError(
                 'PRECONDITION_FAILED',

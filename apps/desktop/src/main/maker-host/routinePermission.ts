@@ -15,7 +15,7 @@ function permissionMode(mode: unknown): PermissionMode | null {
 
 /** Never fall back from an unstable live session or a missing/incomplete durable snapshot. */
 export function routinePermissionSnapshot(
-  live: Pick<Session, 'stablePermissionModeState' | 'stablePlanModeState'> | undefined,
+  live: Partial<Pick<Session, 'stablePermissionModeState' | 'stablePlanModeState'>> | undefined,
   stored: { permissionMode: unknown; planModeEnabled: unknown } | null,
 ): { permissionMode: PermissionMode; planMode: boolean } | null {
   if (!stored || typeof stored.planModeEnabled !== 'boolean') return null;

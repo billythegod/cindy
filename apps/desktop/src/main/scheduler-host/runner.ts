@@ -4,7 +4,7 @@ import {
   type ScheduledModelSelectionLease,
 } from '../maker-ipc/scheduledModelSelection';
 import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
-import { routinePermissionSnapshot } from './routinePermission.js';
+import { routinePermissionSnapshot } from '../maker-host/routinePermission.js';
 /**
  * Phase 3: MakerScheduleRunner
  *
@@ -2025,6 +2025,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       failAfterAccept = reject;
     });
     void postAcceptFailed.catch(() => undefined);
+    let acceptedModes: { permissionMode: PermissionMode; planMode: boolean } | null = null;
 
     /**
      * onAccepted 里"本轮绝不能真的跑起来"的统一阻断出口。
@@ -2189,6 +2190,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
             blockAcceptedDispatch(live, 'routine permissions changed');
             return;
           }
+          acceptedModes = permissions;
         }
         if (ctx.canDispatch && !ctx.canDispatch()) {
           const error = new RoutineDispatchDeferredError(
@@ -2219,8 +2221,13 @@ export class MakerScheduleRunner implements ScheduleRunner {
         });
         settleDispatch();
       },
-      onAcceptedRollback: () => {
-        const err = new Error('queued heartbeat dispatch rolled back after accept');
+      onAcceptedRollback: async () => {
+        const current = await this.readRoutinePermissions(sessionId).catch(() => null);
+        const err = acceptedModes && (!current
+          || current.permissionMode !== acceptedModes.permissionMode
+          || current.planMode !== acceptedModes.planMode)
+          ? new RoutineDispatchDeferredError('Queued heartbeat modes changed after accept')
+          : new Error('queued heartbeat dispatch rolled back after accept');
         failAfterAccept(err);
         failDispatch(err);
       },
@@ -2400,6 +2407,10 @@ export class MakerScheduleRunner implements ScheduleRunner {
       try {
         await Promise.race([activeWaiter.turnFinished, postAcceptFailed]);
       } catch (err) {
+        if (err instanceof RoutineDispatchDeferredError) {
+          ctx.signal.removeEventListener('abort', onAbort);
+          return this.deferFire(schedule, sessionId, 'routine-dispatch-invalidated');
+        }
         runError = err instanceof Error ? err.message : String(err);
       } finally {
         activeWaiter.stopListening();

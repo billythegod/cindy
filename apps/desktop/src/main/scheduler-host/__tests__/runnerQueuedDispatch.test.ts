@@ -1734,6 +1734,28 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
     await expect(firePromise).resolves.toMatchObject({ sessionId: SESSION_ID });
   });
 
+  it.each(['plan', 'permission', 'switching'])('defers an accepted queue rollback after a late %s change', async (change) => {
+    const harness = createSessionHarness(async () => ({ accepted: true }));
+    const queue = createQueueHarness({ busy: true });
+    const { runner, notifier } = createRunnerHarness(harness.session, queue.deps);
+    const fire = runner.fire(heartbeatSchedule(), { ...createFireContext(), deferToCaller: true });
+    await vi.waitFor(() => expect(queue.enqueueCalls).toHaveLength(1));
+    await queue.accept();
+    if (change === 'switching') Object.assign(harness.session, { stablePlanModeState: null });
+    if (change === 'plan') {
+      Object.assign(harness.session, { stablePlanModeState: { enabled: true, generation: 1 } });
+      mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: 'ask', planModeEnabled: true });
+    }
+    if (change === 'permission') {
+      Object.assign(harness.session, { stablePermissionModeState: { mode: 'auto', generation: 1 } });
+      mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: 'auto', planModeEnabled: false });
+    }
+    await enqueueLast(queue).onAcceptedRollback?.();
+    expect(await fire).toMatchObject({ deferred: true });
+    expect(harness.listenerCount()).toBe(0);
+    expect(notifier.notify).not.toHaveBeenCalled();
+  });
+
   it('fails the run (no hang) when dispatch is rolled back after accept', async () => {
     // accepted 之后 send 结局为未派发(cancelled-before-dispatch / 持久化后取消):
     // register 的 sendToAgent 包装层保证调用 onAcceptedRollback —— runner 经
