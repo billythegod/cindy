@@ -238,6 +238,7 @@ export default function RemoteDesktopScreen() {
   const [lease, setLease] = useState<RemoteDesktopLease | null>(null);
   const [viewerDisplayApplied, setViewerDisplayApplied] = useState(false);
   const [viewerViewport, setViewerViewport] = useState({ width: 0, height: 0 });
+  const viewportGeneration = useRef(0);
   const matchesViewer = (
     display: { width: number; height: number },
     width: number,
@@ -1149,7 +1150,8 @@ export default function RemoteDesktopScreen() {
           typeof message.height === "number" &&
           Number.isFinite(message.width) &&
           Number.isFinite(message.height)
-        )
+        ) {
+          viewportGeneration.current += 1;
           setViewerViewport((previous) =>
             previous.width === message.width &&
             previous.height === message.height
@@ -1159,6 +1161,7 @@ export default function RemoteDesktopScreen() {
                   height: message.height as number,
                 },
           );
+        }
         break;
       case "viewportSize":
         if (
@@ -1560,6 +1563,7 @@ export default function RemoteDesktopScreen() {
         caps.viewerDisplayRestore &&
         matchesViewer(current.display, width, height),
       );
+      const requestGeneration = viewportGeneration.current;
       const next = await viewerSession.current.fitDisplay(
         size.width,
         size.height,
@@ -1567,7 +1571,8 @@ export default function RemoteDesktopScreen() {
       );
       if (active.current !== current) return;
       recovery.current.displayId = next.display.id;
-      if (!exactResolution) setViewerViewport({ width, height });
+      if (!exactResolution && viewportGeneration.current === requestGeneration)
+        setViewerViewport({ width, height });
       setViewerDisplayApplied(!restore);
       setLease({ ...next });
       streaming.current = false;
@@ -1584,7 +1589,9 @@ export default function RemoteDesktopScreen() {
     } catch (cause) {
       if (active.current === current) {
         setSettingNotice(t("remoteDesktop.settingFailed"));
-        resolveControlFailure(cause);
+        if ((cause as { code?: string })?.code === "INVOKE_TIMEOUT")
+          fail(cause);
+        else resolveControlFailure(cause);
       }
     } finally {
       settingInFlight.current = false;

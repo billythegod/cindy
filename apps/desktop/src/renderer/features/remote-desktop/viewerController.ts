@@ -395,6 +395,12 @@ export class DesktopViewerController {
         audio: this.state.settings.audio && this.state.caps?.systemAudio === true,
       });
       await this.session.control(true);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'INVOKE_TIMEOUT') {
+        this.cancel(true);
+        void this.connect();
+      }
+      throw error;
     } finally {
       if (this.session.lease === lease) {
         this.publish({ controlPending: false });
