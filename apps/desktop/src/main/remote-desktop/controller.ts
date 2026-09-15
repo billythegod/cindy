@@ -256,7 +256,10 @@ export class RemoteDesktopController {
       if (!this.authenticationCurrent(peer, session))
         throw new Error('DESKTOP_AUTHENTICATION_REQUIRED');
       if (session !== undefined && !this.deps.authorized(peer)) throw new Error('DESKTOP_DISABLED');
-      return { ...caps, automaticReconnect: true, connectionTakeover: true };
+      const publicDisplays = this.viewerDisplay
+        ? caps.displays.filter((display) => display.id !== this.active?.display.id)
+        : caps.displays;
+      return { ...caps, displays: publicDisplays, automaticReconnect: true, connectionTakeover: true };
     }
     if (!this.deps.authorized(peer)) throw new Error('DESKTOP_DISABLED');
     if (request.op === 'permissions') {
@@ -273,7 +276,7 @@ export class RemoteDesktopController {
       const resumesActive =
         request.resume &&
         this.active?.peer === peer &&
-        this.active.display.id === request.displayId;
+        this.active.sourceDisplayId === request.displayId;
       if (
         this.locking ||
         this.starting ||
