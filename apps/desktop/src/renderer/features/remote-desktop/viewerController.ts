@@ -377,7 +377,9 @@ export class DesktopViewerController {
       if (this.session.lease !== lease) return;
       const caps = this.state.caps;
       this.publish({
-        displayId: next.display.id,
+        // Keep the physical source as the reconnect target; the temporary
+        // display is only the current capture/input surface.
+        displayId: lease.display.id,
         caps: caps
           ? {
               ...caps,

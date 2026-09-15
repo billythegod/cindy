@@ -1554,6 +1554,7 @@ export default function RemoteDesktopScreen() {
     settingInFlight.current = true;
     setSettingBusy(true);
     setSettingNotice(null);
+    const sourceDisplayId = current.display.id;
     send({ type: "control", enabled: false });
     try {
       viewerMedia.reset();
@@ -1570,7 +1571,8 @@ export default function RemoteDesktopScreen() {
         restore,
       );
       if (active.current !== current) return;
-      recovery.current.displayId = next.display.id;
+      // Reconnect the physical source display after the temporary mirror ends.
+      recovery.current.displayId = sourceDisplayId;
       if (!exactResolution && viewportGeneration.current === requestGeneration)
         setViewerViewport({ width, height });
       setViewerDisplayApplied(!restore);

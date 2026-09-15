@@ -565,6 +565,8 @@ export class RemoteDesktopController {
               // mode; otherwise delayed cleanup can overwrite the user's choice.
               const restored = await this.viewerDisplay.restore(current);
               if (!current()) throw new Error('DESKTOP_LEASE_EXPIRED');
+              if (restored.width <= 0 || restored.height <= 0)
+                throw new Error('DESKTOP_DISPLAY_MISSING');
               this.viewerDisplay = null;
               active.display = restored;
             } finally {
