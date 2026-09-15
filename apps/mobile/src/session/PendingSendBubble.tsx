@@ -12,7 +12,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, Pressable, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { Text } from '@/components/AppText';
 import { buildMessageContentLayout } from '@/session/messageContentLayout';
 import { summarizeMessageBubblePresentation } from '@/session/messagePresentation';
@@ -231,6 +231,30 @@ export function PendingSendBubble({
   const hasBody = !!displayBody;
   const hasAttachments = item.thumbs.length > 0 || !!item.fileNames?.length;
   const [badgeAnchor, setBadgeAnchor] = useState<{ clientId: string; left: number } | null>(null);
+  const bubbleTouchOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const bubbleTouchCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleBubbleTouchStart = (event: GestureResponderEvent) => {
+    bubbleTouchOriginRef.current = { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY };
+  };
+  const handleBubbleTouchMove = (event: GestureResponderEvent) => {
+    const origin = bubbleTouchOriginRef.current;
+    if (!origin) return;
+    const dx = event.nativeEvent.pageX - origin.x;
+    const dy = event.nativeEvent.pageY - origin.y;
+    if (Math.hypot(dx, dy) > spacing.sm) bubbleTouchOriginRef.current = null;
+  };
+  const handleBubbleTouchEnd = (event: GestureResponderEvent) => {
+    const origin = bubbleTouchOriginRef.current;
+    const dx = origin ? event.nativeEvent.pageX - origin.x : 0;
+    const dy = origin ? event.nativeEvent.pageY - origin.y : 0;
+    if (origin && Math.hypot(dx, dy) <= spacing.sm) {
+      bubbleTouchCommitTimerRef.current = setTimeout(() => {
+        bubbleTouchCommitTimerRef.current = null;
+        actions.onSelect(selected ? null : item.clientId);
+      }, 0);
+    }
+    bubbleTouchOriginRef.current = null;
+  };
   const measureBadgeAnchor = (event: LayoutChangeEvent) => {
     const left = Math.max(0, event.nativeEvent.layout.x - 28 - spacing.sm);
     setBadgeAnchor((current) => current?.clientId === item.clientId && current.left === left
@@ -295,7 +319,15 @@ export function PendingSendBubble({
             </View>
           ) : null}
           {hasBody ? (
-            <View key={`body:${item.clientId}`} onLayout={hasAttachments ? undefined : measureBadgeAnchor} style={[styles.bubble, density === 'compact' && styles.bubbleCompact, density === 'rich' && styles.bubbleRich]}>
+            <View
+              key={`body:${item.clientId}`}
+              onLayout={hasAttachments ? undefined : measureBadgeAnchor}
+              onTouchEnd={interactive ? handleBubbleTouchEnd : undefined}
+              onTouchMove={interactive ? handleBubbleTouchMove : undefined}
+              onTouchStart={interactive ? handleBubbleTouchStart : undefined}
+              style={[styles.bubble, density === 'compact' && styles.bubbleCompact, density === 'rich' && styles.bubbleRich]}
+              testID={`pendingSend.body.${item.clientId}`}
+            >
               {rendersSentInlineBody ? (
                 <SentInlineAtomBody
                   interactiveAtoms={false}
@@ -324,7 +356,12 @@ export function PendingSendBubble({
             {shouldCollapse ? (
               <Text accessibilityRole="button" suppressHighlighting
                 accessibilityLabel={expanded ? t('message.renderer.collapseMessage') : t('message.renderer.expandMessage')}
-                onPress={(event) => { event.stopPropagation(); setExpandedBody(expanded ? null : displayBody); }}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  if (bubbleTouchCommitTimerRef.current !== null) clearTimeout(bubbleTouchCommitTimerRef.current);
+                  bubbleTouchCommitTimerRef.current = null;
+                  setExpandedBody(expanded ? null : displayBody);
+                }}
                 style={styles.collapseToggleText}>
                 {expanded ? t('message.renderer.collapse') : t('message.renderer.expand')}
               </Text>
