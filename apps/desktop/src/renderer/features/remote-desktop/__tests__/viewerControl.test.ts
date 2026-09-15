@@ -117,7 +117,7 @@ it('matches the viewer ratio without replacing the lease or resetting input sequ
   const f = await fixture();
   present();
   await controller.fitDisplay(500, 1000);
-  expect(snapshot.displayId).toBe('viewer');
+  expect(snapshot.displayId).toBe('one');
   expect(snapshot.controlling).toBe(true);
   expect(f.control).toHaveBeenLastCalledWith(true);
   expect(runtime.receive).toHaveBeenCalledWith({
@@ -135,7 +135,7 @@ it('changes portrait resolution using the same temporary screen lease', async ()
   await controller.fitDisplay(500, 1000);
   await controller.resolution('640');
   expect(snapshot.controlling).toBe(true);
-  expect(snapshot.displayId).toBe('viewer');
+  expect(snapshot.displayId).toBe('one');
   expect(runtime.receive).toHaveBeenCalledWith({
     type: 'videoSettings',
     width: 640,
