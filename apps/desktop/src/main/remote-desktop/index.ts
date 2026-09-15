@@ -339,6 +339,7 @@ export const remoteDesktop = new RemoteDesktopController({
     windowsAvailable = (await readWindowsDesktopSupport()) === 'ready';
     const settings = readDeviceLinkSettings();
     const enabled = settings.remoteDesktopEnabled && settings.remoteControlEnabled;
+    const viewerDisplay = enabled && (await viewerDisplaySupported());
     return {
       version: 1,
       cursorOverlay: process.platform === 'darwin',
@@ -350,8 +351,8 @@ export const remoteDesktop = new RemoteDesktopController({
       backgroundViewing: true,
       systemAudio: supportsSystemAudio,
       displayModes: process.platform === 'darwin',
-      viewerDisplay: viewerDisplaySupported(),
-      viewerDisplayRestore: viewerDisplaySupported(),
+      viewerDisplay,
+      viewerDisplayRestore: viewerDisplay,
       enabled,
       canControl: process.platform === 'darwin' || process.platform === 'win32',
       platform: process.platform,

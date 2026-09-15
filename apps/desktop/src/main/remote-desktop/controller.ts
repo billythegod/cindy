@@ -252,14 +252,23 @@ export class RemoteDesktopController {
       // capabilities response includes display information and is post-auth.
       const session = this.authenticationSession(peer);
       if (session !== undefined && !this.deps.authorized(peer)) throw new Error('DESKTOP_DISABLED');
+      const viewerDisplay = this.viewerDisplay;
       const caps = await this.deps.capabilities();
       if (!this.authenticationCurrent(peer, session))
         throw new Error('DESKTOP_AUTHENTICATION_REQUIRED');
       if (session !== undefined && !this.deps.authorized(peer)) throw new Error('DESKTOP_DISABLED');
-      const publicDisplays = this.viewerDisplay
-        ? caps.displays.filter((display) => display.id !== this.active?.display.id)
-        : caps.displays;
-      return { ...caps, displays: publicDisplays, automaticReconnect: true, connectionTakeover: true };
+      // Keep the handle alive across the read: stop clears the lease before the
+      // helper disappears, and restoration can settle while capabilities awaits.
+      const publicDisplays = caps.displays.filter(
+        (display) =>
+          display.id !== viewerDisplay?.displayId && display.id !== this.viewerDisplay?.displayId,
+      );
+      return {
+        ...caps,
+        displays: publicDisplays,
+        automaticReconnect: true,
+        connectionTakeover: true,
+      };
     }
     if (!this.deps.authorized(peer)) throw new Error('DESKTOP_DISABLED');
     if (request.op === 'permissions') {

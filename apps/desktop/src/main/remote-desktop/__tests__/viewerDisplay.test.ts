@@ -5,6 +5,7 @@ import type { ViewerDisplayHandle } from '../viewerDisplay';
 
 function fixture() {
   const handle: ViewerDisplayHandle = {
+    displayId: '2',
     resize: vi.fn(async (width, height) => ({ id: '2', name: 'Viewer', width, height })),
     restore: vi.fn(async () => ({ id: '1', name: 'Main', width: 1920, height: 1080 })),
     dispose: vi.fn(),
@@ -40,6 +41,39 @@ function fixture() {
 }
 
 describe('viewer-sized desktop ownership', () => {
+  it('hides the helper display during and across stopped-lease restoration', async () => {
+    const f = fixture();
+    const lease = await f.start();
+    await f.host.request('phone', {
+      op: 'viewerDisplay',
+      lease: lease.lease,
+      width: 900,
+      height: 1600,
+    });
+    const caps = await f.deps.capabilities();
+    caps.displays.push({ id: '2', name: 'Viewer', width: 900, height: 1600 });
+    f.deps.capabilities = async () => caps;
+    let finish!: () => void;
+    f.handle.restore = () =>
+      new Promise((resolve) => {
+        finish = () => resolve(lease.display);
+      });
+    f.host.stop('phone');
+    expect(await f.host.request('other', { op: 'capabilities' })).toMatchObject({
+      displays: [{ id: '1' }],
+    });
+    let read!: () => void;
+    f.deps.capabilities = () =>
+      new Promise((resolve) => {
+        read = () => resolve(caps);
+      });
+    const pending = f.host.request('other', { op: 'capabilities' });
+    finish();
+    await Promise.resolve();
+    await Promise.resolve();
+    read();
+    expect(await pending).toMatchObject({ displays: [{ id: '1' }] });
+  });
   it('retires the handle when the source display was unplugged', async () => {
     const f = fixture(),
       lease = await f.start();

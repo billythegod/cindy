@@ -10,12 +10,18 @@ const exec = promisify(execFile);
 let build: Promise<string> | undefined;
 
 /** Prototype only: SPI is not shipped until supported OS/signing tests are complete. */
-export function viewerDisplaySupported(): boolean {
-  return process.platform === 'darwin' && !app.isPackaged;
+export async function viewerDisplaySupported(): Promise<boolean> {
+  try {
+    await binary();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function binary(): Promise<string> {
-  if (!viewerDisplaySupported()) throw new Error('DESKTOP_VIEWER_DISPLAY_UNAVAILABLE');
+  if (process.platform !== 'darwin' || app.isPackaged)
+    throw new Error('DESKTOP_VIEWER_DISPLAY_UNAVAILABLE');
   if (build) return build;
   build = (async () => {
     const source = path.join(
@@ -54,14 +60,20 @@ async function binary(): Promise<string> {
     );
     await fs.rename(temporary, target);
     return target;
-  })().catch(() => {
-    build = undefined;
-    throw new Error('DESKTOP_VIEWER_DISPLAY_UNAVAILABLE');
-  });
+  })()
+    .then(async (target) => {
+      await exec(target, ['--probe'], { timeout: 5000 });
+      return target;
+    })
+    .catch(() => {
+      build = undefined;
+      throw new Error('DESKTOP_VIEWER_DISPLAY_UNAVAILABLE');
+    });
   return build;
 }
 
 export interface ViewerDisplayHandle {
+  readonly displayId?: string;
   resize(width: number, height: number, isCurrent: () => boolean): Promise<RemoteDesktopDisplay>;
   restore?(isCurrent: () => boolean): Promise<RemoteDesktopDisplay>;
   dispose(): void;
@@ -93,6 +105,9 @@ export async function createViewerDisplay(
   child.on('exit', failed);
   child.stdin.on('error', failed);
   return {
+    get displayId() {
+      return virtualDisplayId === undefined ? undefined : String(virtualDisplayId);
+    },
     async resize(width, height, current) {
       if (closed || !current()) throw new Error('DESKTOP_LEASE_EXPIRED');
       const result = await new Promise<{ id: number }>((resolve, reject) => {
