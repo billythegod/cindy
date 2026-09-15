@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AgentKind, CatalogModel, ProviderView } from '@cindy/model-providers';
 
-import { resolveNewMakerDefaultTuple } from '@/lib/newMakerDefaultTuple';
+import { resolveNewMakerDefaultTuple, resolveNewMakerDefaultTuples } from '@/lib/newMakerDefaultTuple';
 
 function model(
   id: string,
@@ -345,4 +345,24 @@ describe('resolveNewMakerDefaultTuple', () => {
     });
     expect(resolve([openai])).toMatchObject({ effort: 'medium' });
   });
+});
+
+it.each([false, true])('orders independent subscriptions by catalog brand while keeping their account IDs (%s)', reverse => {
+  const disconnected = provider({ id: 'openai', access: 'subscription', connected: false, models: { codex: [model('gpt-5.6-sol')] } });
+  const openai = { ...provider({ id: 'openai-account', access: 'subscription', models: { codex: [model('configured-openai')] } }),
+    auth: { method: 'oauth' as const, native: 'codex' as const }, newSessionDefaults: { codex: 'configured-openai' } };
+  const anthropic = provider({ id: 'anthropic', access: 'subscription', models: { 'claude-code': [model('claude-opus-5')] } });
+  const xai = { ...provider({ id: 'xai-account', access: 'subscription', models: { pi: [model('configured-xai')] } }),
+    auth: { method: 'oauth' as const, native: 'xai' as const }, newSessionDefaults: { pi: 'configured-xai' } };
+  const unknown = { ...provider({ id: 'another-subscription', access: 'subscription', models: { pi: [model('configured-other')] } }),
+    newSessionDefaults: { pi: 'configured-other' } };
+  const gateway = provider({ id: 'xd', access: 'managed', models: { pi: [model('configured-gateway', 'high', ['pi'], ['text', 'image'])] } });
+  const sources = [unknown, xai, anthropic, disconnected, openai];
+  if (reverse) sources.reverse();
+  expect(resolve(sources)).toMatchObject({ providerId: 'openai-account', vendor: 'codex', model: 'configured-openai' });
+  expect(resolveNewMakerDefaultTuples({ providers: [...sources, gateway], providersLoading: false,
+    availableAgents: allAgents, availableAgentsLoaded: true }).map(tuple => tuple.providerId))
+    .toEqual(['xd', 'openai-account', 'anthropic', 'xai-account', 'another-subscription']);
+  openai.connected = false;
+  expect(resolve(sources)).toMatchObject({ providerId: 'anthropic' });
 });

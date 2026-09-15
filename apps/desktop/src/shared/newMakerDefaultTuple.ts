@@ -135,12 +135,22 @@ export function resolveNewMakerDefaultTuples(args: {
   if (providersLoading || !availableAgentsLoaded) return [];
   const tuples: NewMakerDefaultTuple[] = [];
 
-  const policies: readonly ProviderDefaultPolicy[] = [...DEFAULT_POLICIES, ...providers
+  const additionalPolicies = providers
     .filter(provider => provider.access?.kind === 'subscription' && provider.newSessionDefaults !== undefined
       && !DEFAULT_POLICIES.some(policy => policy.providerId === provider.id))
-    .map(provider => ({ providerId: provider.id, accessKind: 'subscription' as const,
+    .map(provider => ({ catalogId: providerCatalogId(provider), policy: {
+      providerId: provider.id, accessKind: 'subscription' as const,
       agents: DEFAULT_POLICIES.find(policy => policy.providerId === providerCatalogId(provider))?.agents ?? provider.agents,
-    }))];
+    } }));
+  // Independent accounts stay with their brand; only unknown subscriptions follow
+  // the fixed brand order. Account IDs still address credentials and user preferences.
+  const policies: readonly ProviderDefaultPolicy[] = [
+    ...DEFAULT_POLICIES.flatMap(policy => [policy,
+      ...additionalPolicies.filter(account => account.catalogId === policy.providerId).map(account => account.policy),
+    ]),
+    ...additionalPolicies.filter(account => !DEFAULT_POLICIES.some(policy => policy.providerId === account.catalogId))
+      .map(account => account.policy),
+  ];
   for (const policy of policies) {
     const provider = providers.find(
       (candidate) =>

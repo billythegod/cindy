@@ -1,3 +1,4 @@
+import { trimTrailingSlashes } from '@cindy/model-compat/url';
 import { sourceProviderForPreset } from './providerPresetIdentity.js';
 import { providerEndpointBindings } from './providerEndpointTemplate.js';
 import { SERVER_CATALOG } from './builtin.js';
@@ -37,7 +38,7 @@ export const PROVIDER_MODEL_CATALOG = {
 let indexed: typeof empty | undefined;
 const byEndpointAndId = new Map<string, ProviderModelRecord[]>();
 const apisByEndpoint = new Map<string, Set<string>>();
-const normalize = (url: string) => url.trim().replace(/\/+$/, "");
+const normalize = (url: string) => trimTrailingSlashes(url.trim());
 function ensureIndexes(): void {
   const source = SERVER_CATALOG.providerModelCatalog ?? empty;
   if (indexed === source) return;

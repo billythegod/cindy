@@ -1,9 +1,10 @@
+import { trimTrailingSlashes } from '@cindy/model-compat/url';
 import { SERVER_CATALOG } from './builtin.js';
 import { compatibilityProtocol } from '@cindy/model-compat/protocol';
 import type { AgentKind, ProviderPreset, ProviderRuntimeModelConfig, ProviderWireProtocol } from './types.js';
 
 type Route = { baseUrl: string; api: string; inputs: string[] };
-const clean = (value: string) => value.replace(/\/+$/, '');
+const clean = (value: string) => trimTrailingSlashes(value);
 
 /** SDK adapter names and public wire languages share one projection. */
 export function providerWireProtocolForApi(api: string | null | undefined): ProviderWireProtocol | undefined {
