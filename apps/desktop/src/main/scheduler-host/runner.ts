@@ -67,7 +67,7 @@ import type {
   Scheduler,
 } from '@cindy/maker-scheduler';
 
-import { createMessage } from '../localDb/ipc/messages.js';
+import { createMessage, rewindPersistedUserMessageAfterClear } from '../localDb/ipc/messages.js';
 import {
   getSessionRowSnapshot,
   getSessionFsSnapshot,
@@ -1542,6 +1542,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     // agentMeta(renderer 据此渲染"由自动化任务发送"标签)。同一份,保持一致。
     let baselineStarted = false;
     let turnAccepted = false;
+    let acceptedMessageClientId: string | undefined;
     try {
       // 落库放在 onAccepted(dispatch 前)是**刻意**的:落库失败即判 send 失败
       // (SchedulerOnAcceptedError → failed run),且错误信息脱敏(不泄露 prompt 原文),
@@ -1636,14 +1637,15 @@ export class MakerScheduleRunner implements ScheduleRunner {
       }
       const sendResult = await session.send(outgoingMessage as never, {
         origin,
-        ...(schedule.targetSessionId && schedule.source !== 'bot' ? {
+        ...(schedule.targetSessionId || schedule.source === 'bot' ? {
           resolveAutoReviewUserIntent: async () => {
             const intent = restoreAutoReviewUserIntent(
               await this.deps.readAutoReviewHistory?.(session.id).catch(() => []) ?? [],
             );
             const current = await this.readRoutinePermissions(session.id, session);
-            if (!current || current.permissionMode !== heartbeatPermissions?.permissionMode
-              || current.planMode !== heartbeatPermissions?.planMode) {
+            const expected = routinePermissions ?? heartbeatPermissions;
+            if (!current || current.permissionMode !== expected?.permissionMode
+              || current.planMode !== expected?.planMode) {
               throw new RoutineDispatchDeferredError('Heartbeat modes changed during preparation');
             }
             return intent;
@@ -1675,8 +1677,9 @@ export class MakerScheduleRunner implements ScheduleRunner {
           ctx.onTurnActive?.(session.id);
           noteSilentStopUserSend(session.id);
           try {
+            acceptedMessageClientId = randomUUID();
             await createMessage(session.id, {
-              clientId: randomUUID(),
+              clientId: acceptedMessageClientId,
               role: 'user',
               content:
                 schedule.source === 'bot'
@@ -1752,6 +1755,18 @@ export class MakerScheduleRunner implements ScheduleRunner {
         baselineStarted = false;
       }
     } catch (err) {
+      // A preparation guard proves this turn never reached the vendor. Reuse
+      // the exact-message soft rewind; do not roll back ambiguous send errors.
+      if (err instanceof RoutineDispatchDeferredError && acceptedMessageClientId) {
+        try {
+          await rewindPersistedUserMessageAfterClear(session.id, acceptedMessageClientId);
+        } catch (rollbackError) {
+          waiter.stopListening();
+          ctx.signal.removeEventListener('abort', onAbort);
+          if (baselineStarted) this.deps.onUndispatchedUserTurn?.(session.id);
+          throw rollbackError;
+        }
+      }
       if (baselineStarted) {
         this.deps.onUndispatchedUserTurn?.(session.id);
         baselineStarted = false;

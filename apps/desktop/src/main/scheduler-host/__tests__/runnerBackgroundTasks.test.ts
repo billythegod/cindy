@@ -16,6 +16,7 @@ import type {
 
 const mocks = vi.hoisted(() => ({
   createMessage: vi.fn(),
+  rewindPersistedUserMessageAfterClear: vi.fn(),
   getSessionRowSnapshot: vi.fn(),
   getSessionFsSnapshot: vi.fn(),
   ensureDialogueWorkspaceDir: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock('../../im/shared/turnRetryNotice.js', () => ({ terminalErrorText: (error
 
 vi.mock('../../localDb/ipc/messages.js', () => ({
   createMessage: mocks.createMessage,
+  rewindPersistedUserMessageAfterClear: mocks.rewindPersistedUserMessageAfterClear,
 }));
 
 vi.mock('../../localDb/ipc/sessions.js', () => ({
@@ -362,9 +364,40 @@ describe('MakerScheduleRunner background subagent task tracking', () => {
       const result = await runner.fire(baseSchedule({ source, targetSessionId: 'scheduler-session' }), { ...createFireContext(), deferToCaller: true });
       expect(result).toMatchObject({ deferred: true });
       expect(vendor).not.toHaveBeenCalled();
+      expect(mocks.createMessage).toHaveBeenCalledOnce();
+      expect(mocks.rewindPersistedUserMessageAfterClear).toHaveBeenCalledExactlyOnceWith(
+        h.session.id, mocks.createMessage.mock.calls[0][1].clientId,
+      );
       expect(notifier.notify).not.toHaveBeenCalled();
     },
   );
+
+
+  it.each(['user', 'bot'] as const)('refreshes owner authorization for direct %s dispatch', async (source) => {
+    const vendor = vi.fn();
+    const h = createSessionHarness(async (_message, opts) => {
+      await opts?.onAccepted?.();
+      vendor(await opts?.resolveAutoReviewUserIntent?.());
+      opts?.onDispatching?.();
+      return { accepted: true };
+    });
+    Object.assign(h.session, { stablePermissionModeState: { mode: 'ask', generation: 0 } });
+    let ownerIntent = 'Initial scope';
+    const { runner, maker } = createRunnerHarness(h.session, {
+      beforeDispatchUserTurn: async () => { ownerIntent = 'Submit PR. Do not merge.'; },
+      readAutoReviewHistory: async () => [{ clientId: 'owner', role: 'user',
+        content: { text: ownerIntent },
+        agentMeta: { delivery: 'turn', autoReviewUserText: ownerIntent } }],
+    });
+    vi.mocked(maker.getSessionMeta).mockResolvedValue({ id: 'scheduler-session', agentKind: 'claude-code', model: 'claude-sonnet-4-6', workDir: '/repo/project' } as never);
+    mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active', permissionMode: 'ask', planModeEnabled: true });
+    mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: 'ask', planModeEnabled: true });
+    const result = runner.fire(baseSchedule({ source, targetSessionId: 'scheduler-session' }), createFireContext());
+    await vi.waitFor(() => expect(vendor).toHaveBeenCalledWith('Submit PR. Do not merge.'));
+    h.emit({ type: 'done', data: {} });
+    await result;
+    expect(mocks.rewindPersistedUserMessageAfterClear).not.toHaveBeenCalled();
+  });
 
   it('无后台任务:首个 done 照常收尾,resultText 为本轮最终文本', async () => {
     const h = createSessionHarness(acceptingSend());
