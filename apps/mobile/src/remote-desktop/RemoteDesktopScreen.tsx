@@ -1952,15 +1952,8 @@ export default function RemoteDesktopScreen() {
                     onResolution: changeResolution,
                   }}
                   inputMode={inputMode}
-                  displays={
-                    lease &&
-                    !caps?.displays.some(
-                      (display) => display.id === lease.display.id,
-                    )
-                      ? [...(caps?.displays ?? []), lease.display]
-                      : (caps?.displays ?? [])
-                  }
-                  displayId={lease?.display.id}
+                  displays={caps?.displays ?? []}
+                  displayId={recovery.current.displayId ?? lease?.display.id}
                   onViewOnly={() => void toggleControl()}
                   onInputMode={(value) => {
                     setInputMode(value);
