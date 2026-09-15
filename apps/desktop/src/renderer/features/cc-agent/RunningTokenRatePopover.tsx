@@ -69,7 +69,7 @@ export function RunningTokenRatePopover({
   const card = (
     <div
       aria-description={t('chat.runningStatus.tokenRateDescription')}
-      className="grid grid-cols-[minmax(0,1fr)_128px] gap-x-3 gap-y-3"
+      className="grid grid-cols-[minmax(0,1fr)_128px] gap-x-3 gap-y-3 pr-1"
     >
       <div className="contents">
         <div className="col-start-1 row-start-1 min-w-0 self-center">
@@ -185,7 +185,7 @@ export function RunningTokenRatePopover({
         side="top"
         align="end"
         sideOffset={8}
-        className={surface}
+        className={`${surface} relative`}
         aria-label={t('chat.runningStatus.rateHistory')}
         onInteractOutside={(event) => event.preventDefault()}
         onEscapeKeyDown={(event) => {
@@ -193,16 +193,14 @@ export function RunningTokenRatePopover({
           setMode('dismissed');
         }}
       >
-        <div className="mb-1 flex justify-end">
-          <button
-            type="button"
-            aria-label={t('titleBar.close')}
-            onClick={() => setMode('dismissed')}
-            className="inline-flex size-6 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--button-secondary-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--text-secondary)]"
-          >
-            <X size={14} aria-hidden="true" />
-          </button>
-        </div>
+        <button
+          type="button"
+          aria-label={t('titleBar.close')}
+          onClick={() => setMode('dismissed')}
+          className="absolute right-2 top-2 inline-flex size-6 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--button-secondary-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--text-secondary)]"
+        >
+          <X size={12} aria-hidden="true" />
+        </button>
         {card}
       </PopoverContent>
     </Popover>
