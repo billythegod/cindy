@@ -1206,6 +1206,18 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
       const autoReviewSourceContent = so[AUTO_REVIEW_SOURCE_CONTENT]
         ?? (typeof normalized === 'string' ? normalized : normalized.content) as UserMessage['content'];
       let restoredAutoReviewIntent = so[AUTO_REVIEW_USER_INTENT];
+      // The coordinator's scheduled continuation is not a new user message. Restore
+      // the owning task's authored requests at dispatch, including later revocations.
+      // Never use the agent-authored schedule prompt as evidence of permission.
+      if (restoredAutoReviewIntent === undefined && so.origin?.kind === 'scheduler') {
+        let history: AutoReviewHistoryMessage[] = [];
+        try {
+          history = await deps.readAutoReviewHistory?.(sessionId) ?? [];
+        } catch {
+          deps.log.warn('auto-review continuation history unavailable', { sessionId });
+        }
+        restoredAutoReviewIntent = restoreAutoReviewUserIntent(history);
+      }
       if (restoredAutoReviewIntent === undefined && isOrdinaryUserTurn && trustedUserText !== undefined
         && (!mainOwnedSendContext || mainOwnedSendContext.origin.kind === 'desktop')) {
         let history: AutoReviewHistoryMessage[] = [];
@@ -1388,7 +1400,9 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
                       content: persistUserMessage.content,
                       agentMeta: {
                         uuid: so.messageUuid,
-                        ...(trustedUserText !== undefined ? { autoReviewUserText: trustedUserText } : {}),
+                        ...(so.origin?.kind === 'scheduler'
+                          ? { autoReviewUserText: { kind: 'scheduled-continuation' } }
+                          : trustedUserText !== undefined ? { autoReviewUserText: trustedUserText } : {}),
                         sdkSessionId: persistUserMessage.sdkSessionId,
                         ...(persistUserMessage.delivery
                           ? { delivery: persistUserMessage.delivery }

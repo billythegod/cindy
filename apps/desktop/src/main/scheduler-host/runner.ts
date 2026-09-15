@@ -38,7 +38,8 @@ import { routinePermissionSnapshot } from './routinePermission.js';
 
 import { randomUUID } from 'node:crypto';
 
-import { isTerminalAgentErrorEvent } from '@cindy/maker-core';
+import { AUTO_REVIEW_USER_INTENT, isTerminalAgentErrorEvent } from '@cindy/maker-core';
+import { restoreAutoReviewUserIntent, type AutoReviewHistoryMessage } from '../maker-ipc/autoReviewUserIntent.js';
 import type {
   Maker,
   AgentEvent,
@@ -193,7 +194,7 @@ const INTERRUPTED_ERROR_DONE_FALLBACK_MS = 250;
  *
  * 普通 schedule 的 permissionMode 两个 agent 都用 'bypassPermissions'（types/common.ts:23 注释确认
  * codex 支持子集 ask/auto/bypassPermissions）—— 调度本质是 unattended，bypass 是
- * 既有无人值守策略。伙伴例行任务不使用此默认值，继承伙伴的权限与计划模式。
+ * 既有独立调度策略。绑定任务的心跳与伙伴例行任务不使用此默认值，继承原任务的权限与计划模式。
  */
 function defaultPermissionModeForSchedule(): PermissionMode {
   // 两个 agent 都支持 bypassPermissions（types/common.ts:23），暂不按 agentKind 分支
@@ -245,6 +246,7 @@ export interface MakerScheduleRunnerDeps {
   getDb: () => SchedulerDrizzleDb;
   notifier: Notifier;
   logger: Logger;
+  readAutoReviewHistory?: (sessionId: string) => Promise<AutoReviewHistoryMessage[]>;
   beforeDispatchUserTurn?: (sessionId: string) => void | Promise<void>;
   onUndispatchedUserTurn?: (sessionId: string) => void;
   /**
@@ -687,6 +689,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     let heartbeatAgentKind: AgentKind | undefined;
     // 持续会话沿用 session 自己存的 fast 态（与 model 同源取 meta）。
     let heartbeatFastMode: boolean | undefined;
+    let heartbeatPermissions: { permissionMode: PermissionMode; planMode: boolean } | undefined;
     // 持续会话当前选定的来源(供应商)id —— schedule.providerId 留空时沿用它
     // （与 model 留空沿用 meta.model 对称）。取自 sessions.provider_id 快照,null=未选。
     let heartbeatProviderId: string | null = null;
@@ -847,6 +850,12 @@ export class MakerScheduleRunner implements ScheduleRunner {
         heartbeatAgentKind = meta?.agentKind;
         heartbeatFastMode = meta?.fastMode;
         heartbeatProviderId = row?.providerId ?? null;
+        // A cold heartbeat is still the owner's existing task. Never upgrade it
+        // to the independent-schedule default merely because its runtime was closed.
+        heartbeatPermissions = routinePermissionSnapshot(undefined, {
+          permissionMode: row.permissionMode,
+          planModeEnabled: row.planModeEnabled,
+        }) ?? { permissionMode: 'ask', planMode: false };
       }
     }
 
@@ -1206,8 +1215,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
         model,
         effort: reconciledEffort,
         fastMode,
-        permissionMode: routinePermissions?.permissionMode ?? defaultPermissionModeForSchedule(),
-        ...(routinePermissions ? { planMode: routinePermissions.planMode } : {}),
+        permissionMode: routinePermissions?.permissionMode ?? heartbeatPermissions?.permissionMode ?? defaultPermissionModeForSchedule(),
+        ...((routinePermissions ?? heartbeatPermissions) ? { planMode: (routinePermissions ?? heartbeatPermissions)!.planMode } : {}),
         title: isHeartbeat ? undefined : `[Schedule] ${schedule.name}`,
         resumeSessionId,
         // Pi distinguishes an explicit null (Cindy default route) from undefined
@@ -1397,8 +1406,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
       this.deps.getDb(),
       session.id,
       {
-        // The routine owns no permission choice; never overwrite the teammate (including a concurrent edit).
-        ...(schedule.source === 'bot' ? { permissionMode: null } : {}),
+        // Bound continuations own no permission choice; never overwrite the owner (including a concurrent edit).
+        ...(schedule.source === 'bot' || isHeartbeat ? { permissionMode: null } : {}),
         // 复用路径 setEffort 失败时跳过落库 —— 保留旧 meta.effort, 下次 fire
         // heartbeatEffortChanged 仍为 true 会重试同步（4.4.1 注释的固化问题）。
         // 落 runtimeReconciledEffort（按实际运行模型 clamp 后的值),session 行 effort 反映真跑的档,
@@ -1610,6 +1619,10 @@ export class MakerScheduleRunner implements ScheduleRunner {
           setSessionProvider(session.id, verdict.providerId);
         }
       }
+      const continuationIntent = schedule.targetSessionId && schedule.source !== 'bot'
+        ? restoreAutoReviewUserIntent(await this.deps.readAutoReviewHistory?.(session.id).catch(() => []) ?? [])
+        : undefined;
+      throwIfFireAborted(ctx.signal, 'agent turn dispatch');
       if (schedule.source === 'bot') {
         routinePermissions = await this.readRoutinePermissions(session.id, session);
         if (!routinePermissions) {
@@ -1626,7 +1639,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
       }
       const sendResult = await session.send(outgoingMessage as never, {
         origin,
-        planMode: routinePermissions?.planMode ?? false,
+        ...(continuationIntent !== undefined ? { [AUTO_REVIEW_USER_INTENT]: continuationIntent } : {}),
+        planMode: routinePermissions?.planMode ?? heartbeatPermissions?.planMode ?? false,
         onAccepted: async () => {
           // createSession 之后到真正 dispatch 之间仍会 await 模型切换、baseline
           // 等准备工作。复用 desktop session 时不能在这些准备阶段把用户正在跑的
@@ -1651,7 +1665,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
                 schedule.source === 'bot'
                   ? `${UI_ACTION_TRIGGER_PREFIX}${schedule.prompt}`
                   : schedule.prompt,
-              agentMeta: { origin },
+              agentMeta: { origin, autoReviewUserText: { kind: 'scheduled-continuation' } },
             });
           } catch (err) {
             throw new SchedulerOnAcceptedError(err);

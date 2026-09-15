@@ -14483,6 +14483,26 @@ describe('CodexAgent MCP thread context hooks', () => {
     await handle.close();
   });
 
+  it.each([undefined, '11111111-1111-1111-1111-111111111111'])(
+    'passes scoped follow-up policy to native review on start/resume (%s)', async (resumeSessionId) => {
+      const agent = new CodexAgent(createDeps());
+      const host = installFakeHost(agent, undefined, { userAgent: 'codex_cli_rs/0.145.0' });
+      const handle = await agent.startSession({
+        sessionId: 'session-followup-policy', model: 'gpt-5.5', providerId: 'openai',
+        workingDir: '/repo', permissionMode: 'auto', ...(resumeSessionId ? { resumeSessionId } : {}),
+      });
+      const method = resumeSessionId ? Method.ThreadResume : Method.ThreadStart;
+      const params = host.request.mock.calls.find(([name]) => name === method)?.[1] as {
+        config?: Record<string, unknown>; approvalsReviewer?: string; approvalPolicy?: string;
+      };
+      expect(params.approvalsReviewer).toBe('auto_review');
+      expect(params.approvalPolicy).toBe('on-request');
+      expect(params.config?.['auto_review.policy']).toContain('authorization to complete work');
+      expect(params.config?.['auto_review.policy']).toContain('### Data Exfiltration');
+      await handle.close();
+    },
+  );
+
   it('maps auto permission mode to Codex built-in automatic approval review', async () => {
     const agent = new CodexAgent(createDeps());
     const host = installFakeHost(agent, (method) => {

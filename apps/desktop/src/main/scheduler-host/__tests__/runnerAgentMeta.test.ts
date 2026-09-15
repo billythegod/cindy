@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { AUTO_REVIEW_USER_INTENT } from '@cindy/maker-core';
 
 import type {
   AgentEvent,
@@ -147,6 +148,8 @@ function createRunnerHarness(
     getDb: () => ({}) as never,
     notifier,
     logger,
+    readAutoReviewHistory: async () => [{ clientId: 'owner', role: 'user', content: { text: 'Submit PR. Do not merge.' },
+      agentMeta: { delivery: 'turn', autoReviewUserText: 'Submit PR. Do not merge.' } }],
   });
   return { runner, logger, notifier, maker };
 }
@@ -183,6 +186,18 @@ describe('MakerScheduleRunner agentMeta automation origin', () => {
     mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active' });
   });
 
+  it.each(['auto', 'ask', 'bypassPermissions'] as const)('cold heartbeat preserves owner permission %s without overwriting it', async (permissionMode) => {
+    mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active', permissionMode, planModeEnabled: true });
+    const h = createSessionHarness(acceptingSend());
+    const { runner, maker } = createRunnerHarness(h.session, {
+      sessionMeta: { sdkSessionId: 'sdk-1', workDir: '/repo/project' },
+    });
+    await fireToCompletion(runner, baseSchedule({ targetSessionId: 'scheduler-session' }), h);
+    expect(maker.createSession).toHaveBeenCalledWith(expect.objectContaining({ permissionMode, planMode: true }));
+    expect(h.session.send).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ planMode: true }));
+    expect(mocks.backfillSessionMeta).toHaveBeenCalledWith(expect.anything(), 'scheduler-session', expect.objectContaining({ permissionMode: null }), expect.anything());
+  });
+
   it('heartbeat fire 注入的 user 消息带 scheduler origin 标记', async () => {
     const h = createSessionHarness(acceptingSend());
     const { runner } = createRunnerHarness(h.session, {
@@ -192,12 +207,14 @@ describe('MakerScheduleRunner agentMeta automation origin', () => {
 
     await fireToCompletion(runner, schedule, h);
 
+    expect(vi.mocked(h.session.send).mock.calls[0]?.[1]?.[AUTO_REVIEW_USER_INTENT]).toBe('Submit PR. Do not merge.');
     expect(mocks.createMessage).toHaveBeenCalledTimes(1);
     const [sessionId, body] = mocks.createMessage.mock.calls[0];
     expect(sessionId).toBe('scheduler-session');
     expect(body.role).toBe('user');
     expect(body.content).toBe('check the PR status');
     expect(body.agentMeta).toEqual({
+      autoReviewUserText: { kind: 'scheduled-continuation' },
       origin: {
         kind: 'scheduler',
         scheduleId: 'schedule-1',
