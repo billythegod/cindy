@@ -1,3 +1,4 @@
+import { normalizeProviderOrder } from "../../shared/providerOrder.js";
 /**
  * dispatch —— device-link 被控端隧道层。
  *
@@ -549,7 +550,7 @@ function projectInvokeResultForTunnel(
     return capScheduleSidebarIndexForTunnel(result);
   }
   if (channel !== 'maker:provider:list') return result;
-  const r = result as { providers?: unknown; modelVisibilityOverrides?: unknown };
+  const r = result as { providers?: unknown; modelVisibilityOverrides?: unknown; providerOrder?: unknown };
   if (!Array.isArray(r.providers)) return result;
   const providers = (r.providers as Record<string, unknown>[]).map((p) => {
     const rest = { ...p };
@@ -579,6 +580,7 @@ function projectInvokeResultForTunnel(
   return {
     providers,
     ...(modelVisibilityOverrides !== undefined ? { modelVisibilityOverrides } : {}),
+    ...(Array.isArray(r.providerOrder) ? { providerOrder: normalizeProviderOrder(r.providerOrder) } : {}),
   };
 }
 
