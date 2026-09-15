@@ -43,7 +43,7 @@ Catalog (version)
 | 型号公共名称、说明、窗口、输出、思考能力 | Registry `baseModels[].defaults` | 价格、账号权限、地址和凭证不在公共继承内 |
 | 接入条目状态、排序、默认开启标记 | Registry `models[]` 顶层 | 显示开关不等于成员资格；见下文默认可见性 |
 | 某供应商的上游 ID、支持路由、普通默认 | `models[].routes[]` / `routes[].defaults` | 普通默认不能压过实报 |
-| Claude Code / Codex 的工作默认 | `models[].perAgent`，Harness必须被该条目 route 声明 | 不把工作预算当供应商承诺容量 |
+| Claude Code / Codex / Pi 的工作默认 | 订阅 Pi 用 `providers[].models.pi`；Gateway 三个 Harness 用数据库 `models[].perAgent` | 普通默认不覆盖上游明确实报；Gateway Pi 参数仅在服务端保存并通过实时 `/models` 投影 |
 | Pi 公共成员和 Pi 默认资料 | `providers[].models.pi`；公共资料仍按 Registry 合并 | 不从其他Harness名单复制出 Pi 路由 |
 | 经核实的错误实报 | 匹配 route 的 `forceOverrides` + `overrideReason` | 不影响其他供应商，也不压过用户配置 |
 | 厂商官方参考价及历史价区间 | `baseModels[].referencePriceGroups[].prices[]`（Registry V5） | 按市场分组，保留币种、标准/Fast、输入区间及生效日期 |
@@ -55,7 +55,7 @@ Catalog (version)
 | 新执行协议、SDK 参数、token 计量 | 本仓对应 host / harness / bridge | 加目录字段不会自动获得执行能力 |
 
 结构例外：条目没有 `models[].defaults`；Registry agents / perAgent 只接受 Claude Code、Codex，
-Pi 走 `providers[].models.pi`（用户补丁 perAgent.pi 另属合法 schema）。媒体 route 使用 `agents: []`。
+订阅 Pi 走 `providers[].models.pi`；Gateway 的数据库 `perAgent.pi` 会在公开 Registry 中剥离，按实时能力投影到 `/models`。用户补丁 perAgent.pi 另属合法 schema。媒体 route 使用 `agents: []`。
 订阅 `newSessionDefaults` 按 Claude Code / Codex / Pi 保存模型 ID，消费端在实际模型装配后按 Harness 投影默认标记；独立于 Gateway 的 Registry 默认及区域规则。字段缺省或显式 `{}` 均不恢复旧写死型号；旧客户端忽略该 Provider 扩展字段。原生订阅的多个账号沿用同一供应商默认配置，账号 ID、凭证和用户覆盖保持独立。新任务与伙伴复用当前选择器，连接失败、缺失/隐藏/停用/退役模型和不可用 Harness 不被推荐，用户显式选择仍优先。
 `contextWindowMax` 是客户端容量投影，不能填进 Registry；容量与工作预算见 [运行时细则](model-catalog-runtime.md)。
 
@@ -74,11 +74,12 @@ Pi 走 `providers[].models.pi`（用户补丁 perAgent.pi 另属合法 schema）
 详细字段及成员空值规则以 [模型资料优先级](../product-rules/model-metadata-precedence.md) 为唯一正本。
 
 <a id="visibility"></a>
-## 默认可见性：产品合同与实现差异
+## 默认可见性
 
-[产品合同](configuration-and-overrides.md#模型可见性)：用户开关优先，否则跟随目录 defaultEnabled。
-但 `active-catalog.ts` 的 `selectDefaultModels` 仍可能将订阅/Gateway 的 true 筛成 false；不删除成员或写用户偏好。
-这是待收敛的行为差异，不是合同豁免。排查须同时检查上游值、活动目录值和用户 override；本文不改变行为。
+用户显式开关优先，否则跟随服务端发布的 `defaultEnabled`。客户端不再按模型代际、家族、
+名称后缀或折扣筛选默认显示项；预览型号和长上下文变体也由服务端配置控制。
+成员资格、实际协议能力与账号权限仍分别检查，不因显示开关而获得访问权限。
+恢复默认仅移除用户 override。新用户与未自定义的旧用户随服务端配置变化，已自定义用户保留自己的开关。
 
 <a id="release"></a>
 ## 更新、下发与验收

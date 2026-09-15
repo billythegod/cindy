@@ -125,8 +125,8 @@ describe('Server catalog updates with independent Cindy native protocols', () =>
       piApi: 'google-generative-ai',
       contextWindow: 1234567,
     });
-    expect(models.codex.defaultEnabled).toBe(false);
-    expect(models['claude-code'].defaultEnabled).toBe(false);
+    expect(models.codex.defaultEnabled).toBeUndefined();
+    expect(models['claude-code'].defaultEnabled).toBeUndefined();
     const comparison = modelProtocolComparison(gateway, models);
     expect(comparison.forAgent('pi')?.mode).toBe('matching');
     expect(comparison.forAgent('codex')?.mode).toBe('compatibility');

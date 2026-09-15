@@ -62,8 +62,6 @@ import {
   type ProviderWireProtocol,
 } from '@cindy/model-providers';
 
-import { selectDefaultModels } from './model-default-selection.js';
-
 import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import {
   MANAGED_OLLAMA_PROVIDER_ID,
@@ -1337,7 +1335,7 @@ function computeMerged(): Catalog {
   //   - perAgent 覆盖块按 tab 应用在基线字段之上;
   //   - efforts 缺失或 [] = 没有可调档位，不合成任何档位;
   //   - defaultEffort 优先 Cindy 已接受的 Registry 模型默认，缺失时按实际能力优先选中档;
-  //   - supportsFastMode 缺失保持缺失；defaultEnabled 叠加本地精简陈列策略，用户显式选择另行优先;
+  //   - supportsFastMode 缺失保持缺失；defaultEnabled 直接使用服务端结果，用户显式选择另行优先;
   //   - v3 name / contextWindow 已在 HTTP 协议边界强制要求，这里绝不补 id / 200K。
   // 放在所有 augment 之后:只影响 xd 供应商自己的模型列表,同 id 模型经其它供应商
   // (如 anthropic 订阅直连)仍照常可用。
@@ -1387,21 +1385,10 @@ function computeMerged(): Catalog {
           efforts.length === 0
             ? null
             : ((clampEffortToSupported(intent, efforts) ?? null) as Effort | null);
-        // Canonical Registry API determines native versus compatibility defaults. Explicit
-        // per-harness policy remains an override; user visibility preferences are applied later.
+        // Execution metadata and display policy are independent. The server owns all defaults.
         const nativeApi = nativeApiForRoute('xd', gm.id);
         const piApi = agent === 'pi' ? resolveXdPiGatewayModelApi(gm) : undefined;
-        const harnessApi =
-          agent === 'claude-code'
-            ? 'anthropic-messages'
-            : agent === 'codex'
-              ? 'openai-responses'
-              : piApi;
-        const outboundApi = agent === 'pi' ? piApi : (ov.wireProtocol ?? harnessApi);
-        const compatible = Boolean(
-          nativeApi && (harnessApi !== nativeApi || outboundApi !== nativeApi),
-        );
-        const defaultEnabled = ov.defaultEnabled ?? (compatible ? false : gm.defaultEnabled);
+        const defaultEnabled = ov.defaultEnabled ?? gm.defaultEnabled;
         const cost = effectiveGatewayModelCost(gm);
         const contextWindow = ov.contextWindow ?? gm.contextWindow;
         const merged: CatalogModel = {
@@ -1438,27 +1425,6 @@ function computeMerged(): Catalog {
         };
         models[agent]!.push(merged);
       }
-    }
-    // Choose only among routes which have a usable, default-enabled harness after the
-    // native/compatibility projection. A cheaper but unsupported route must not hide its sibling.
-    const eligibleIds = new Set(
-      Object.values(models).flatMap((entries) =>
-        (entries ?? []).filter((model) => model.defaultEnabled !== false).map((model) => model.id),
-      ),
-    );
-    const defaultGatewayModels = selectDefaultModels(
-      gwModels
-        .filter((model) => eligibleIds.has(model.id))
-        .map((model) => ({ ...model, defaultEnabled: true })),
-      'xd',
-    );
-    for (const agent of agentKeys) {
-      models[agent] = models[agent]!.map((model) =>
-        (!model.mode || model.mode === 'chat' || model.mode === 'responses') &&
-        !defaultGatewayModels.has(model.id)
-          ? { ...model, defaultEnabled: false }
-          : model,
-      );
     }
     // 每个 tab 内按 sortOrder 稳定排序(无 sortOrder 的合成条目排最后,按进入序)。
     for (const agent of agentKeys) {
@@ -1540,38 +1506,13 @@ function computeMerged(): Catalog {
       ]),
     ),
   }));
-  // Subscription providers use the same small default selection, scoped per harness so
-  // chatgpt/ aliases never hide their sibling Codex route. Explicit user visibility stays external.
+  // Model defaults come from the accepted server publication. User overrides stay external.
   providers = providers.map(provider => {
     const defaults = b.providers.find(source => source.id === providerCatalogId(provider))?.newSessionDefaults;
     // Native subscription accounts share catalog policy, while retaining their own identity/overrides.
     return applySubscriptionDefaults(provider.access?.kind === 'subscription'
       && provider.newSessionDefaults === undefined && defaults !== undefined
       ? { ...provider, newSessionDefaults: defaults } : provider);
-  });
-  providers = providers.map((provider) => {
-    const catalogId = providerCatalogId(provider);
-    if (!isOpenAiSubscriptionProvider(provider) &&
-      ((provider.source === 'user' && !provider.auth.native) || !['anthropic', 'xai'].includes(catalogId)))
-      return provider;
-    return {
-      ...provider,
-      models: Object.fromEntries(
-        Object.entries(provider.models).map(([agent, models]) => {
-          const selected = selectDefaultModels(models ?? []);
-          return [
-            agent,
-            models?.map((model) =>
-              (!model.mode || model.mode === 'chat' || model.mode === 'responses') &&
-              !model.newSessionDefault?.includes(agent as AgentKind) &&
-              !selected.has(model.id)
-                ? { ...model, defaultEnabled: false }
-                : model,
-            ),
-          ];
-        }),
-      ),
-    };
   });
   // The xAI API-key preset is chat-first in CustomProviderConfig, but its official
   // endpoint can execute the same Imagine catalog. Keep the executable media facts

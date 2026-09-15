@@ -86,16 +86,6 @@ function withNativeMetadataAndDefaults(
   providerId: string,
   models: readonly CatalogModel[] = [],
 ): CatalogModel[] {
-  const defaults: Record<string, readonly string[]> = {
-    xai: ['grok-4.6'],
-    anthropic: ['claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'],
-    openai: [
-      'chatgpt/gpt-6-astra',
-      'chatgpt/gpt-5.6-sol',
-      'chatgpt/gpt-5.6-terra',
-      'chatgpt/gpt-5.6-luna',
-    ],
-  };
   return models.map((model) => {
     const nativeApi = resolveModelNativeApi(getActiveCatalog().modelRegistry, providerId, model.id);
     return {
@@ -107,7 +97,6 @@ function withNativeMetadataAndDefaults(
       nativeApi === 'google-generative-ai'
         ? { nativeApi }
         : {}),
-      ...(defaults[providerId]?.includes(model.id) ? {} : { defaultEnabled: false }),
     };
   });
 }
