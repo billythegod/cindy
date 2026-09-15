@@ -17,7 +17,7 @@
  *     fetchProviderModels,additions-only 合并进配置(与 OAuth 动态发现同语义)。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -444,6 +444,12 @@ function DetailHeader({
         }
       : undefined);
   const subscription = useProviderSubscriptionCard(provider);
+  const detailScrollRef = useRef<HTMLDivElement>(null);
+  const hasDetail = Boolean(detail);
+  useLayoutEffect(() => {
+    // Reveal newly opened authentication content without resetting on typing or quota refresh.
+    if (hasDetail && detailScrollRef.current) detailScrollRef.current.scrollTop = 0;
+  }, [hasDetail]);
   const subscriptionProduct =
     provider?.access?.kind === 'subscription' ? provider.access.product : null;
   // 单 agent 供应商在头部统一说明(行级不再逐条标注,见 UnifiedModelList 头注释)。
@@ -604,6 +610,7 @@ function DetailHeader({
       </div>
       <div
         data-testid="provider-detail-scroll"
+        ref={detailScrollRef}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain [&>*]:shrink-0"
       >
         {detail && <div className="px-5 pb-4">{detail}</div>}

@@ -435,6 +435,43 @@ describe('ProvidersSection — 深链定位', () => {
     expect(within(actions).getByRole('button', { name: 'settings.providers.button.disconnect' })).toBeTruthy();
   });
 
+  it('reveals replacement-key inputs once without resetting scroll while typing', async () => {
+    providersState.providers = [makeProvider('gemini', { connected: true, auth: { method: 'apiKey' } })];
+    renderAt('?tab=providers&connect=gemini');
+    const scroll = await screen.findByTestId('provider-detail-scroll');
+    scroll.scrollTop = 500;
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'settings.providers.detail.moreActionsAria' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByText('settings.providers.builtinApiKey.replaceKey'));
+    const input = await screen.findByPlaceholderText('settings.providers.builtinApiKey.keyPlaceholder');
+    expect(scroll.scrollTop).toBe(0);
+    scroll.scrollTop = 100;
+    fireEvent.change(input, { target: { value: 'fixture-key' } });
+    expect(scroll.scrollTop).toBe(100);
+    fireEvent.click(screen.getByRole('button', { name: 'settings.providers.button.cancel' }));
+    expect(scroll.scrollTop).toBe(100);
+  });
+
+  it('reveals device-code authorization above a scrolled model list', async () => {
+    let complete!: (result: { ok: boolean }) => void;
+    Object.assign(window.electronAPI.maker, {
+      providerOAuthLogin: vi.fn(() => new Promise<{ ok: boolean }>((resolve) => { complete = resolve; })),
+      providerOAuthCancel: vi.fn(async () => ({ ok: true })),
+    });
+    providersState.providers = [makeProvider('device-provider', {
+      source: 'user',
+      auth: { method: 'oauth', oauth: {
+        flow: 'device-code', deviceAuthorizationUrl: 'https://auth.example.test/device',
+        tokenUrl: 'https://auth.example.test/token', clientId: 'fixture', scopes: 'openid',
+      } },
+    })];
+    renderAt('?tab=providers&connect=device-provider');
+    const scroll = await screen.findByTestId('provider-detail-scroll');
+    scroll.scrollTop = 500;
+    fireEvent.click(screen.getByRole('button', { name: 'settings.providers.wizard.authorizeWithDeviceCode' }));
+    expect(scroll.scrollTop).toBe(0);
+    await act(async () => complete({ ok: false }));
+  });
+
   it('added OpenAI recovery overrides a stale connected snapshot', async () => {
     providersState.providers = [
       makeProvider('openai-work', {
