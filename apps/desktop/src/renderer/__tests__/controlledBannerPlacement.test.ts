@@ -55,7 +55,7 @@ describe('controlled banner placement', () => {
       'const controlledBannerMaxWidth = `min(${inputHalfWidth}, ${CONTROLLED_BANNER_MAX_WIDTH}px)`;',
     );
     expect(sessionViewSource).toContain(
-      'if (isHidden && !rightLeadingSlot && !ratePanelPinned) return null;',
+      'if (suppressContent || (isHidden && !rightLeadingSlot && !ratePanelPinned)) return null;',
     );
     expect(controlledBannerSource).toContain("placement?: 'floating' | 'inline' | 'composer';");
     expect(controlledBannerSource).toContain(

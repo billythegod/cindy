@@ -5733,7 +5733,6 @@ function RunningStatusBar({
     generationDurationMs,
     generationReliable:
       generationReliable &&
-      !isHidden &&
       !sideTaskRunning &&
       !backgroundTasksRunning &&
       !workflowWaiting,
@@ -5741,7 +5740,7 @@ function RunningStatusBar({
   const latestRate = rateHistory.latestRate;
   const latestRateText = latestRate !== null ? formatRecentOutputTokenRate(latestRate) : null;
   const rateText =
-    usageMeta.kind === 'rate'
+    !isHidden && usageMeta.kind === 'rate'
       ? latestRateText !== null
         ? t('chat.runningStatus.tokenRate', { rate: latestRateText })
         : t('chat.runningStatus.waitingSample')
