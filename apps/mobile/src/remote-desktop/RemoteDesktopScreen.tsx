@@ -1581,6 +1581,7 @@ export default function RemoteDesktopScreen() {
         type: "videoSettings",
         width: next.display.width,
         height: next.display.height,
+        restore,
         audio: Boolean(caps.systemAudio && videoSettingsRef.current.audio),
       });
       const control = await viewerSession.current.control(true);

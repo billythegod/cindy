@@ -1544,13 +1544,13 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
           Number.isInteger(message.width) &&
           Number.isInteger(message.height) &&
           message.width >= 320 &&
-          message.width <= 2560 &&
           message.height >= 320 &&
-          message.height <= 2560
+          (message.restore === true ||
+            (message.width <= 2560 && message.height <= 2560))
         ) {
           release();
           stopPanAnimation();
-          viewerSized = true;
+          viewerSized = message.restore !== true;
           zoom = 1;
           fx = fy = 0.5;
           followRest = null;
