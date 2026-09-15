@@ -82,6 +82,10 @@ describe('app attention total', () => {
     expect(
       countAppAttention(
         input({
+          sessions: [
+            session('a', { deviceLinkDeviceId: 'peer' }),
+            session('b', { deviceLinkDeviceId: 'peer' }),
+          ],
           localActivities: new Map([['a', { phase: 'running' }]]),
           getRemoteActivity: (id) =>
             id === 'a'
@@ -112,5 +116,19 @@ describe('app attention total', () => {
         }),
       ),
     ).toBe(0);
+  });
+  it('ignores remote activity for a local task and passes the exact remote device', () => {
+    const reads: string[] = [];
+    const count = countAppAttention(
+      input({
+        sessions: [session('same'), session('same', { deviceLinkDeviceId: 'peer-b' })],
+        getRemoteActivity: (id, deviceId) => {
+          reads.push(`${deviceId}/${id}`);
+          return deviceId === 'peer-a' ? { phase: 'error', attention: true } : undefined;
+        },
+      }),
+    );
+    expect(count).toBe(0);
+    expect(reads).toEqual(['peer-b/same']);
   });
 });

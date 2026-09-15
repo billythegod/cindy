@@ -91,8 +91,8 @@ function dotToneOf(
  *  与置顶瓷砖必须并入同一镜像,否则远程会话「行亮而入口不亮」(codex review)。
  *  phase → 灯语映射与 SessionItem.remoteRightStatus 同一张表;镜像里 completed/
  *  error 条目仅在未读(attention)期间存在,存在即未读。 */
-export function remoteLampOf(id: string): { running: boolean; tone: AttentionKind | null } | null {
-  const remote = getRemoteSessionActivity(id);
+export function remoteLampOf(id: string, deviceId: string | null | undefined): { running: boolean; tone: AttentionKind | null } | null {
+  const remote = getRemoteSessionActivity(id, deviceId);
   if (!remote) return null;
   if (remote.phase === 'running') return { running: true, tone: null };
   return {
@@ -230,6 +230,10 @@ export function RailNav({
   // store,不是 React 状态,必须靠版本号入依赖才能跟上被控端 relay 推送)。
   const remoteActivityRevision = useRemoteSessionActivityRevision();
 
+  const sessionDeviceIds = useMemo(
+    () => new Map(sessions.map((session) => [session.id, session.deviceLinkDeviceId])),
+    [sessions],
+  );
   const aggregateIds = useCallback(
     (ids: readonly string[]) => {
       let running = false;
@@ -240,7 +244,7 @@ export function RailNav({
       for (const id of ids) {
         if (runningSessionIds.has(id)) running = true;
         consider(dotToneOf(id, notifications, attentionKinds, urgentSessionIds));
-        const remote = remoteLampOf(id);
+        const remote = remoteLampOf(id, sessionDeviceIds.get(id));
         if (remote) {
           if (remote.running) running = true;
           consider(remote.tone);
@@ -249,7 +253,7 @@ export function RailNav({
       return { running, dotTone: best };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- remoteActivityRevision 代表 remoteLampOf 读到的整表内容
-    [runningSessionIds, notifications, attentionKinds, urgentSessionIds, remoteActivityRevision],
+    [sessionDeviceIds, runningSessionIds, notifications, attentionKinds, urgentSessionIds, remoteActivityRevision],
   );
 
   // 项目段聚合灯从 sessions(sessionsWithRemote,已按机器切换过滤)派生 ——
@@ -329,7 +333,7 @@ export function RailNav({
         renderItem={(session) => {
         const isActive = session.id === activeSessionId;
         // 置顶瓷砖与聚合灯同口径:远程会话的 running/未读并入远程活动镜像。
-        const remoteLamp = remoteLampOf(session.id);
+        const remoteLamp = remoteLampOf(session.id, session.deviceLinkDeviceId);
         const isRunning = runningSessionIds.has(session.id) || remoteLamp?.running === true;
         const hasUnread = notifications.has(session.id) || remoteLamp?.tone != null;
         // 瓷砖短标签、aria-label、悬浮预览卡都用同一个显示标题:置顶一条刚建的会话时
