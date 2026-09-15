@@ -372,6 +372,7 @@ export class DesktopViewerController {
     this.publish({ controlPending: true });
     this.syncControl();
     this.media.reset();
+    const sourceDisplayId = this.state.displayId;
     try {
       const next = await this.session.fitDisplay(size.width, size.height);
       if (this.session.lease !== lease) return;
@@ -379,7 +380,7 @@ export class DesktopViewerController {
       this.publish({
         // Keep the physical source as the reconnect target; the temporary
         // display is only the current capture/input surface.
-        displayId: lease.display.id,
+        displayId: sourceDisplayId,
         caps: caps
           ? {
               ...caps,

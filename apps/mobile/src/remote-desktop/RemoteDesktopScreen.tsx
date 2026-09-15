@@ -1554,7 +1554,7 @@ export default function RemoteDesktopScreen() {
     settingInFlight.current = true;
     setSettingBusy(true);
     setSettingNotice(null);
-    const sourceDisplayId = current.display.id;
+    const sourceDisplayId = recovery.current.displayId || current.display.id;
     send({ type: "control", enabled: false });
     try {
       viewerMedia.reset();
