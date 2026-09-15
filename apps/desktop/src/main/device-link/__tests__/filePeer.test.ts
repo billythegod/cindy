@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, truncate } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 const mock = vi.hoisted(() => ({
@@ -73,11 +73,23 @@ describe('authorized file peer source', () => {
     const { connection } = await connect(),
       { ticket, size } = await open(connection);
     expect(size).toBe(5);
-    expect(mock.resolve).toHaveBeenCalledWith(expect.anything(), 104857600);
+    expect(mock.resolve).toHaveBeenCalledWith(expect.anything(), 2147483648);
     expect(await read(connection, ticket, 0)).toBe(Buffer.from('hello').toString('base64'));
     expect(await read(connection, ticket, 5)).toBe('');
     await expect(read(connection, ticket, 5)).rejects.toThrow();
     expect((await open(connection)).ticket).not.toBe(ticket);
+  });
+  it('accepts a sparse 2 GiB source and rejects one byte above the transport limit', async () => {
+    const limit = 2 * 1024 * 1024 * 1024;
+    await truncate(file, limit);
+    mock.resolve.mockResolvedValue({ absPath: file, mimeType: 'application/octet-stream', maxBytes: limit });
+    expect(await requestFilePeer('device-a', { action: 'caps' })).toEqual({ version: 1, maxBytes: limit });
+    const first = await connect();
+    expect((await open(first.connection)).size).toBe(limit);
+    stopFilePeers();
+    await truncate(file, limit + 1);
+    const second = await connect();
+    await expect(open(second.connection)).rejects.toThrow('SIZE');
   });
   it('rejects another peer using a connection handle', async () => {
     const { connection } = await connect();
@@ -120,4 +132,19 @@ describe('authorized file peer source', () => {
     mock.current = false;
     await expect(read(b.connection, fb.ticket, 5)).rejects.toThrow('CLOSED');
   });
+  it('keeps a stalled transfer alive past 30 seconds, renews on progress and closes after 60 idle seconds', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { connection } = await connect();
+      const { ticket } = await open(connection);
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(await read(connection, ticket, 0)).toBe(Buffer.from('hello').toString('base64'));
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(await read(connection, ticket, 5)).toBe('');
+      const next = await open(connection);
+      await vi.advanceTimersByTimeAsync(61_000);
+      await expect(read(connection, next.ticket, 0)).rejects.toThrow('FILE_PEER_BLOCK');
+    } finally { vi.useRealTimers(); }
+  });
+
 });

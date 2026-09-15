@@ -7,6 +7,7 @@ public class CindyHtmlPreviewModule: Module {
 
   public func definition() -> ModuleDefinition {
     Name("CindyHtmlPreview")
+    Events("resourceRequest", "resourceClosed")
     AsyncFunction("start") { (root: String, entry: String, token: String, csp: String, files: [[String]], promise: Promise) in
       do {
         guard self.foreground, self.servers.count < 4, self.servers[token] == nil,
@@ -24,6 +25,29 @@ public class CindyHtmlPreviewModule: Module {
           }
         }
       } catch { promise.reject("HTML_PREVIEW_START_FAILED", "Unable to start HTML preview") }
+    }.runOnQueue(queue)
+    AsyncFunction("startOnDemand") { (root: String, entry: String, token: String, csp: String, promise: Promise) in
+      do {
+        guard self.foreground, self.servers.count < 4, self.servers[token] == nil,
+          let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
+          URL(fileURLWithPath: root).resolvingSymlinksInPath().path.hasPrefix(cache.resolvingSymlinksInPath().path + "/")
+        else { throw HtmlSnapshotServer.Failure.invalid }
+        let server = try HtmlSnapshotServer(root: root, entry: entry, token: token, csp: csp, files: [], queue: self.queue,
+          onRequest: { [weak self] id, path in self?.sendEvent("resourceRequest", ["token": token, "id": id, "path": path]) },
+          onClose: { [weak self] id in self?.sendEvent("resourceClosed", ["token": token, "id": id]) })
+        self.servers[token] = server
+        server.start { result in
+          switch result {
+          case .success(let url): promise.resolve(url)
+          case .failure:
+            self.servers.removeValue(forKey: token)?.stop()
+            promise.reject("HTML_PREVIEW_START_FAILED", "Unable to start HTML preview")
+          }
+        }
+      } catch { promise.reject("HTML_PREVIEW_START_FAILED", "Unable to start HTML preview") }
+    }.runOnQueue(queue)
+    AsyncFunction("resolveRequest") { (token: String, id: String, filename: String, mime: String, status: Int) -> Bool in
+      self.servers[token]?.resolve(id, filename: filename, mime: mime, status: status) ?? false
     }.runOnQueue(queue)
     AsyncFunction("stop") { (token: String) in self.servers.removeValue(forKey: token)?.stop() }.runOnQueue(queue)
     OnAppEntersBackground { self.queue.async { self.foreground = false; self.stopAll() } }

@@ -1,3 +1,5 @@
+import { canStagePeerMedia } from './peerFileRegistry';
+import { createFileReadQueue } from '@cindy/device-link';
 import { useEffect, useRef, useState } from "react";
 import { AppState, View } from "react-native";
 import { WebView } from "react-native-webview";
@@ -57,6 +59,7 @@ export function PeerFileTransport() {
         resolve(value: unknown): void;
         reject(error: Error): void;
         timer: ReturnType<typeof setTimeout>;
+        refresh?(): void;
       }
     >(),
   );
@@ -80,14 +83,19 @@ export function PeerFileTransport() {
   async function command(action: string, args: unknown[]) {
     return new Promise<unknown>((resolve, reject) => {
       const id = randomUUID();
-      const timer = setTimeout(
+      let timer = setTimeout(
         () => {
           pending.current.delete(id);
           reject(new Error("FILE_PEER_TIMEOUT"));
         },
-        action === "receive" ? 600_000 : 15000,
+        action === "receive" ? 60_000 : 15000,
       );
-      pending.current.set(id, { resolve, reject, timer });
+      const entry = { resolve, reject, timer, refresh: action === "receive" ? () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => { pending.current.delete(id); reject(new Error("FILE_PEER_TIMEOUT")); }, 60_000);
+        entry.timer = timer;
+      } : undefined };
+      pending.current.set(id, entry);
       send({ id, action, args });
     });
   }
@@ -200,6 +208,7 @@ export function PeerFileTransport() {
           await invoke({ action: "open", connection: remote, url }),
         );
         if (!current() || signal?.aborted) throw new Error("FILE_PEER_CLOSED");
+        if (!canStagePeerMedia(file.size, Paths.availableDiskSpace)) return null;
         const directory = new Directory(
           Paths.cache,
           "remote-media-share",
@@ -258,7 +267,9 @@ export function PeerFileTransport() {
         }
       }
     };
-    const unregister = installPeerFileDownload(transfer);
+    const queueRead = createFileReadQueue();
+    const unregister = installPeerFileDownload((device, url, signal) =>
+      queueRead('connection', () => transfer(device, url, signal), signal));
     return () => {
       close();
       ++epoch.current;
@@ -344,6 +355,7 @@ export function PeerFileTransport() {
                   throw new Error();
                 sink.handle.writeBytes(bytes);
                 sink.offset += bytes.length;
+                for (const operation of pending.current.values()) operation.refresh?.();
                 ok = true;
               } catch {}
               send({ type: "writeReply", id: m.id, ok });

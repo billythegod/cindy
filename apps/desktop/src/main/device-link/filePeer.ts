@@ -4,8 +4,10 @@ import { constants, promises as fs } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  createFileReadQueue,
   FILE_PEER_CHUNK_BYTES,
   FILE_PEER_MAX_BYTES,
+  FILE_PEER_IDLE_MS,
   FILE_PEER_CHANNEL,
   parseFilePeerRequest,
   parseFilePeerFile,
@@ -75,13 +77,13 @@ function touch(id: string) {
     throw new Error('FILE_PEER_REVOKED');
   }
   clearTimeout(c.timer);
-  c.timer = setTimeout(() => stopConnection(id), 30_000);
+  c.timer = setTimeout(() => stopConnection(id), FILE_PEER_IDLE_MS);
   c.timer.unref();
   return c;
 }
 function track(id: string, peer: string, incoming: boolean) {
   if (connections.size >= 4) throw new Error('FILE_PEER_BUSY');
-  const timer = setTimeout(() => stopConnection(id), 30_000);
+  const timer = setTimeout(() => stopConnection(id), FILE_PEER_IDLE_MS);
   timer.unref();
   connections.set(id, { peer, incoming, owner: captureDataOwnerBroadcastScope(), timer });
 }
@@ -146,7 +148,7 @@ async function command(c: FilePeerCommand): Promise<string | undefined> {
         stopConnection(c.connection);
         reject(new Error('FILE_PEER_TIMEOUT'));
       },
-      c.action === 'receive' ? 600_000 : 15_000,
+      c.action === 'receive' ? 60_000 : 15_000,
     );
     timer.unref();
     replies.set(id, { connection: c.connection, resolve, reject, timer });
@@ -156,7 +158,7 @@ async function command(c: FilePeerCommand): Promise<string | undefined> {
 
 export async function requestFilePeer(peer: string, value: unknown): Promise<unknown> {
   const r = parseFilePeerRequest(value);
-  if (r.action === 'caps') return { version: 1 };
+  if (r.action === 'caps') return { version: 1, maxBytes: FILE_PEER_MAX_BYTES };
   if (r.action === 'offer') {
     const id = randomUUID();
     track(id, peer, true);
@@ -283,6 +285,9 @@ export function registerFilePeerIpc() {
         touch(connection);
         if (sources.get(ticket) !== s) throw new Error('FILE_PEER_CLOSED');
         s.offset += bytes.length;
+        // Receive deadlines measure stalled disk/network progress, not total file duration.
+        for (const pending of replies.values())
+          if (pending.connection === s.connection) pending.timer.refresh();
         if (!bytes.length) {
           sources.delete(ticket);
           await s.file.close();
@@ -321,6 +326,9 @@ export function registerFilePeerIpc() {
         if (written.bytesWritten !== bytes.length || sinks.get(id) !== s)
           throw new Error('FILE_PEER_CLOSED');
         s.offset += bytes.length;
+        // Receive deadlines measure stalled disk/network progress, not total file duration.
+        for (const pending of replies.values())
+          if (pending.connection === s.connection) pending.timer.refresh();
       } finally {
         s.busy = false;
       }
@@ -335,7 +343,15 @@ type Invoke = (
   args: unknown[],
 ) => Promise<{ ok: boolean; result?: unknown }>;
 /** A caller owns the returned temporary file and must dispose it after consuming it. */
-export async function tryPeerFile(peer: string, url: string, invoke: Invoke, signal?: AbortSignal) {
+const queuePeerRead = createFileReadQueue();
+export function tryPeerFile(peer: string, url: string, invoke: Invoke, signal?: AbortSignal) {
+  const owner = captureDataOwnerBroadcastScope();
+  return queuePeerRead(peer, () => {
+    if (!isDataOwnerBroadcastScopeCurrent(owner)) throw new Error('FILE_PEER_CANCELLED');
+    return receivePeerFile(peer, url, invoke, signal);
+  }, signal);
+}
+async function receivePeerFile(peer: string, url: string, invoke: Invoke, signal?: AbortSignal) {
   if (signal?.aborted) throw new Error('FILE_PEER_CANCELLED');
   const owner = captureDataOwnerBroadcastScope();
   let out = outgoing.get(peer);
@@ -385,6 +401,8 @@ export async function tryPeerFile(peer: string, url: string, invoke: Invoke, sig
     if (!opened.ok) throw new Error('FILE_PEER_OPEN');
     const file: FilePeerFile = parseFilePeerFile(opened.result);
     touch(id);
+    const space = await fs.statfs(app.getPath('temp'));
+    if (space.bavail * space.bsize < 2 * file.size + 256 * 1024 * 1024) return null;
     directory = await fs.mkdtemp(path.join(app.getPath('temp'), 'cindy-file-peer-'));
     const destination = path.join(directory, 'file');
     const handle = await fs.open(destination, 'wx', 0o600),

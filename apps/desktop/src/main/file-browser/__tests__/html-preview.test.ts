@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { get } from 'node:http';
-import { listDir } from '@cindy/file-browser-core';
+import { statEntry } from '@cindy/file-browser-core';
 import { HTML_SNAPSHOT_CSP, withSnapshotHtmlCsp } from '@cindy/maker-shared/file-preview';
 import {
   createHtmlPreview,
@@ -26,7 +26,7 @@ async function fixture() {
   );
   await fs.writeFile(path.join(dir, 'dist/app.js'), 'export const test = true;');
   const source: PreviewSource = {
-    list: (root, rel) => listDir(root, rel),
+    stat: (root, rel) => statEntry(root, rel),
     read: async (root, entry) => path.join(root, entry.relPath),
     materialize: async (from, to) => {
       await fs.copyFile(from, to);
@@ -59,7 +59,7 @@ describe('directory HTML preview', () => {
       copyPreviewFile(path.join(dir, 'link.html'), path.join(dir, 'linked.html'), size),
     ).rejects.toThrow();
   });
-  it('serves a complete immutable tree and root-relative module assets through authenticated HTTP', async () => {
+  it('serves requested resources and root-relative module assets through authenticated HTTP', async () => {
     const { dir, source, args } = await fixture();
     await fs.writeFile(path.join(dir, '.env'), 'fixture');
     const secondPage = '<script>window.authorScript = true;</script><a href="index.html">Back</a>';
@@ -94,7 +94,7 @@ describe('directory HTML preview', () => {
     await fs.writeFile(path.join(dir, 'dist/app.js'), 'changed');
     const js = await fetch(origin + '/dist/app.js', { headers: { Cookie: cookie } });
     expect(js.headers.get('content-type')).toBe('text/javascript');
-    expect(await js.text()).toBe('export const test = true;');
+    expect(await js.text()).toBe('changed');
     expect((await fetch(origin + '/dist/app.js')).status).toBe(403);
     expect(
       (
@@ -133,41 +133,31 @@ describe('directory HTML preview', () => {
     expect(await response.text()).toBe(withSnapshotHtmlCsp(original));
     expect(await fs.readFile(args.absPath, 'utf8')).toBe(original);
   });
-  it('does not open a partial snapshot on transfer failure or excessive size', async () => {
+  it('opens without enumerating siblings and isolates failed resource reads', async () => {
     const { args, source } = await fixture();
-    await expect(
-      createHtmlPreview(args, {
-        ...source,
-        read: async () => {
-          throw new Error('offline');
-        },
-      }),
-    ).rejects.toThrow('offline');
-    await expect(
-      createHtmlPreview(args, {
-        ...source,
-        list: async () => [
-          {
-            name: 'index.html',
-            relPath: 'index.html',
-            type: 'file',
-            size: 101 * 1024 * 1024,
-            mtimeMs: 0,
-          },
-        ],
-      }),
-    ).rejects.toThrow('PREVIEW_TOO_LARGE');
-  });
-  it('rejects untrusted remote entries before reading any files', async () => {
-    const { args, source } = await fixture();
-    await expect(
-      createHtmlPreview(args, {
-        ...source,
-        list: async () => [
-          { name: '../secret', relPath: '../secret', type: 'file', size: 1, mtimeMs: 0 },
-        ],
-      }),
-    ).rejects.toThrow('BAD_ARGS');
+    const read = vi.fn(source.read);
+    const stat = vi.fn(source.stat);
+    const preview = await createHtmlPreview(args, { ...source, stat, read });
+    cleanups.push(preview.close);
+    expect(read).not.toHaveBeenCalled();
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledWith(args.workdir, 'index.html');
+    const initial = await fetch(preview.url, { redirect: 'manual' });
+    const cookie = initial.headers.get('set-cookie')!.split(';')[0];
+    const load = (p: string) => fetch(new URL(p, preview.url), { headers: { cookie } });
+    read.mockRejectedValueOnce(new Error('offline'));
+    expect((await load('/dist/app.js')).status).toBe(502);
+    expect((await load('/index.html')).status).toBe(200);
+    stat.mockResolvedValueOnce({ relPath: 'huge.bin', type: 'file', size: 101 * 1024 * 1024, mtimeMs: 0 });
+    expect((await load('/huge.bin')).status).toBe(404);
+    expect(read).toHaveBeenLastCalledWith(args.workdir, expect.objectContaining({ relPath: 'huge.bin' }), expect.any(AbortSignal));
+    expect((await load('/index.html')).status).toBe(200);
+    read.mockClear();
+    expect((await load('/.hidden/secret')).status).toBe(404);
+    expect(read).not.toHaveBeenCalled();
+    stat.mockResolvedValueOnce({ relPath: '../secret', type: 'file', size: 1, mtimeMs: 0 });
+    expect((await load('/other.txt')).status).toBe(404);
+    expect(read).not.toHaveBeenCalled();
   });
   it('keeps Windows remote roots separate from the controller OS and confines SSH', () => {
     expect(
@@ -185,4 +175,42 @@ describe('directory HTML preview', () => {
       }),
     ).toThrow('OUTSIDE_WORKDIR');
   });
+});
+
+
+it('closes promptly and discards a shared read that finishes after cancellation', async () => {
+  const { args, source } = await fixture();
+  let finish!: (path: string) => void;
+  let signal: AbortSignal | undefined;
+  const materialize = vi.fn(source.materialize);
+  const read = vi.fn((_root, _entry, currentSignal) => {
+    signal = currentSignal;
+    return new Promise<string>((resolve) => { finish = resolve; });
+  });
+  const preview = await createHtmlPreview(args, { ...source, read, materialize });
+  cleanups.push(preview.close);
+  const initial = await fetch(preview.url, { redirect: 'manual' });
+  const cookie = initial.headers.get('set-cookie')!.split(';')[0];
+  const response = fetch(new URL('/index.html', preview.url), { headers: { cookie } }).catch(() => null);
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  await preview.close();
+  expect(signal?.aborted).toBe(true);
+  finish(args.absPath);
+  await response;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(materialize).not.toHaveBeenCalled();
+});
+
+it('serves metadata for a resource above 100 MiB without a preview size rejection', async () => {
+  const { dir, args, source } = await fixture();
+  const file = path.join(dir, 'large.bin');
+  await fs.writeFile(file, '');
+  await fs.truncate(file, 101 * 1024 * 1024);
+  const preview = await createHtmlPreview(args, { ...source, materialize: async (from) => from });
+  cleanups.push(preview.close);
+  const initial = await fetch(preview.url, { redirect: 'manual' });
+  const cookie = initial.headers.get('set-cookie')!.split(';')[0];
+  const response = await fetch(new URL('/large.bin', preview.url), { method: 'HEAD', headers: { cookie } });
+  expect(response.status).toBe(200);
+  expect(Number(response.headers.get('content-length'))).toBe(101 * 1024 * 1024);
 });

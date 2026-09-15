@@ -23,7 +23,7 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 
 import { toast } from '@/lib/toast';
-import { extractIpcError } from '@/utils/ipcError';
+import { extractIpcError, mapIpcErrorToI18nKey } from '@/utils/ipcError';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,7 +31,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { openUrlInSidebarBrowser } from '@/features/right-sidebar/lib/openInSidebarBrowser';
+import { openUrlInSidebarBrowser, pathToFileUrl } from '@/features/right-sidebar/lib/openInSidebarBrowser';
 import { getLinkOpenPreference, getLinkOpenPreferenceForUrl } from '@/hooks/useLinkOpenPreference';
 import { useSidebarTargetSessionId } from '@/features/cc-agent/embeddedSessionNavigation';
 import type { SessionFileOrigin } from '@/lib/sessionFileOrigin';
@@ -67,7 +67,7 @@ export async function openUrlByPreference(
   if (!res.success) toast.error(t('chat.markdownRenderer.openLinkFailed'));
 }
 
-/** HTML 目录快照通过本机 HTTP 打开，内置和系统浏览器共用内部网页偏好。 */
+/** Local HTML opens in place; remote HTML uses the viewer-local HTTP preview. */
 export async function openHtmlFileByPreference(
   sessionId: string,
   absPath: string,
@@ -78,6 +78,20 @@ export async function openHtmlFileByPreference(
   },
   target?: 'sidebar' | 'external',
 ): Promise<void> {
+  if (context.origin.kind === 'local') {
+    if ((target ?? getLinkOpenPreference('local')) === 'sidebar' && sessionId) {
+      await openInSidebar(sessionId, pathToFileUrl(absPath), t);
+    } else {
+      try {
+        await window.electronAPI.openFileInBrowser(absPath);
+      } catch (error) {
+        toast.error(t(mapIpcErrorToI18nKey(error, {
+          namespace: 'chat.markdownRenderer', fallback: 'chat.markdownRenderer.openInBrowserFailed',
+        })));
+      }
+    }
+    return;
+  }
   let loading: string | null = null;
   const delayed = setTimeout(() => {
     loading = toast.loading(t('chat.remoteFile.previewFetching'));

@@ -16,7 +16,7 @@ export function createFilePeerRuntime(bridge: FilePeerRuntimeBridge) {
     { pc: RTCPeerConnection; dc: RTCDataChannel | null; busy: boolean }
   >();
   const chunkBytes = 16384;
-  const maxBytes = 104857600;
+  const maxBytes = 2147483648;
   function close(id: string) {
     const p = peers.get(id);
     peers.delete(id);
@@ -188,7 +188,7 @@ export function createFilePeerRuntime(bridge: FilePeerRuntimeBridge) {
           let received = offset;
           const timer = setTimeout(
             () => done(new Error("FILE_PEER_TIMEOUT")),
-            15000,
+            60000,
           );
           function done(error?: Error) {
             clearTimeout(timer);

@@ -14,39 +14,39 @@ try {
   const page = await browser.newPage();
   await page.addScriptTag({ content: output.outputFiles[0].text });
   await page.addScriptTag({ content: await page.evaluate(() => PeerRuntimeSource.FILE_PEER_RUNTIME_SOURCE) });
-  const result = await page.evaluate(async () => {
+  const result = await page.evaluate(async (large) => {
     const { createFilePeerRuntime } = CindyFilePeerRuntime;
-    let source = new Uint8Array(), output = [], sourceOffset = 0, failWrite = false;
+    let sourceSize = 0, outputSize = 0, sourceOffset = 0, failWrite = false;
     const ticket = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
     const host = createFilePeerRuntime({
       read: async (_id, t, offset) => {
         if (t !== ticket || offset !== sourceOffset) throw new Error('source offset');
-        const chunk = source.slice(offset, offset + 16384); sourceOffset += chunk.length;
+        const chunk = Uint8Array.from({ length: Math.min(16384, sourceSize - offset) }, (_, i) => ((offset + i) * 31) % 251); sourceOffset += chunk.length;
         return btoa(String.fromCharCode(...chunk));
       }, write: async () => { throw new Error('host write'); },
     });
     const client = createFilePeerRuntime({ read: async () => { throw new Error('client read'); },
       write: async (_sink, offset, data) => {
         if (failWrite) throw new Error('disk full');
-        if (offset !== output.length) throw new Error('sink offset');
-        for (const c of atob(data)) output.push(c.charCodeAt(0));
+        if (offset !== outputSize) throw new Error('sink offset');
+        for (const c of atob(data)) { if (c.charCodeAt(0) !== (outputSize * 31) % 251) throw new Error('bytes differ'); outputSize++; }
       },
     });
     const offer = await client.offer('client', []);
     await client.answer('client', await host.accept('host', [], offer));
-    const sizes = [0, 1, 16384, 16385, 262144, 262145, 1048576];
+    const sizes = [0, 1, 16384, 16385, 262144, 262145, 1048576, ...(large ? [large === '2g' ? 2 * 1024 * 1024 * 1024 : 101 * 1024 * 1024] : [])];
     try {
       for (const size of sizes) {
-        source = Uint8Array.from({ length: size }, (_, i) => (i * 31) % 251); sourceOffset = 0; output = [];
+        sourceSize = size; sourceOffset = 0; outputSize = 0;
         await client.receive('client', ticket, size, 'sink');
-        if (output.length !== size || output.some((n, i) => n !== source[i])) throw new Error('bytes differ');
+        if (outputSize !== size) throw new Error('bytes differ');
       }
-      source = new Uint8Array(10); sourceOffset = 0; output = []; failWrite = true;
+      sourceSize = 10; sourceOffset = 0; outputSize = 0; failWrite = true;
       let rejected = false;
       try { await client.receive('client', ticket, 10, 'sink'); } catch { rejected = true; }
       if (!rejected) throw new Error('incomplete sink accepted');
       return { passedSizes: sizes, diskFailureRejected: rejected };
     } finally { host.dispose(); client.dispose(); }
-  });
+  }, process.argv.includes('--2g') ? '2g' : process.argv.includes('--large'));
   console.log(JSON.stringify(result));
 } finally { await browser.close(); }

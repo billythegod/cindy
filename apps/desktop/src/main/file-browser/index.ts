@@ -208,6 +208,7 @@ async function fetchRemoteBigFile(
             Math.max(1, args.size),
           remoteInvoke,
           {
+            // Cache fills are shared: closing one preview must not cancel another consumer.
             workdir: args.workdir,
             relPath: args.relPath,
             maxBytes: Math.max(1, args.size),
@@ -347,41 +348,22 @@ export function registerFileBrowserIpc(): void {
   // 日志设施由宿主注入——desktop 侧接统一 logger(规则 12),scope 与抽包前一致。
   setFileBrowserCoreLoggerFactory(createLogger);
   registerHtmlPreviewIpc({
-    list: async (args, root, relPath) => {
+    stat: async (args, root, relPath) => {
       if (args.origin.kind === 'device') {
-        if (!relPath) {
-          const caps = await deviceOpInvoke<{ completeDirectoryListing?: boolean }>(
-            args.origin.deviceId,
-            { op: 'caps', workdir: root },
-          );
-          if (caps?.completeDirectoryListing !== true)
-            throw new Error('COMPLETE_DIRECTORY_LISTING_UNSUPPORTED');
-        }
-        return deviceOpInvoke<import('@cindy/file-browser-core').DirEntry[]>(args.origin.deviceId, {
-          op: 'listDir',
-          workdir: root,
-          relPath,
-          includeIgnored: true,
-          maxEntries: 2000,
+        return deviceOpInvoke<import('@cindy/file-browser-core').FileStat>(args.origin.deviceId, {
+          op: 'stat', workdir: root, relPath,
         });
       }
       if (args.origin.kind !== 'ssh') throw new Error('BAD_ARGS');
-      // Preserve the original SSH workdir boundary before treating the HTML parent as a root.
       await getRemoteFileBrowser().request(args.origin.remoteHostId, 'stat', {
         workdir: args.workdir,
         relPath: toWorkdirRel(args.workdir, args.absPath)!,
       });
-      return (
-        await getRemoteFileBrowser().request(args.origin.remoteHostId, 'listDir', {
-          workdir: root,
-          relPath,
-          includeIgnored: true,
-          maxEntries: 2000,
-        })
-      ).entries;
+      return getRemoteFileBrowser().request(args.origin.remoteHostId, 'stat', { workdir: root, relPath });
     },
-    read: (args, root, entry) =>
-      fetchRemoteBigFile(
+    read: async (args, root, entry, signal) => {
+      if (signal?.aborted) throw new Error('PREVIEW_CANCELLED');
+      const result = await fetchRemoteBigFile(
         {
           workdir: root,
           relPath: entry.relPath,
@@ -391,7 +373,10 @@ export function registerFileBrowserIpc(): void {
           remoteHostId: args.origin.kind === 'ssh' ? args.origin.remoteHostId : undefined,
         },
         () => {},
-      ),
+      );
+      if (signal?.aborted) throw new Error('PREVIEW_CANCELLED');
+      return result;
+    },
   });
 
   // 缓存启动清扫(残留 .part + 超容量 LRU),异步不阻塞注册。

@@ -2,7 +2,7 @@ import Foundation
 import Network
 
 /// Intentionally HTTP/1 GET/HEAD only: one bounded request per connection, no uploads or listing.
-/// Only the immutable manifest is addressable. All state runs on the supplied serial queue.
+/// Resources come from the legacy manifest or an on-demand callback on the supplied serial queue.
 final class HtmlSnapshotServer {
   enum Failure: Error { case invalid, stopped }
   private let listener: NWListener
@@ -11,15 +11,21 @@ final class HtmlSnapshotServer {
   private let entry: String
   private let token: String
   private let csp: String
+  private let onRequest: ((String, String) -> Void)?
+  private let onClose: ((String) -> Void)?
+  private var requests: [UUID: Bool] = [:]
+  private var ownedFiles: [UUID: URL] = [:]
   private var assets: [String: (URL, String)] = [:]
   private var clients: [UUID: NWConnection] = [:]
   private var completion: ((Result<String, Error>) -> Void)?
   private var stopped = false
   private var origin: String { "http://127.0.0.1:\(listener.port?.rawValue ?? 0)" }
 
-  init(root: String, entry: String, token: String, csp: String, files: [[String]], queue: DispatchQueue) throws {
+  init(root: String, entry: String, token: String, csp: String, files: [[String]], queue: DispatchQueue, onRequest: ((String, String) -> Void)? = nil, onClose: ((String) -> Void)? = nil) throws {
     guard token.range(of: "^[a-f0-9]{48}$", options: .regularExpression) != nil,
-      !csp.contains("\r"), !csp.contains("\n"), files.count <= 2000 else { throw Failure.invalid }
+      !csp.contains("\r"), !csp.contains("\n") else { throw Failure.invalid }
+    self.onRequest = onRequest
+    self.onClose = onClose
     self.queue = queue
     self.root = URL(fileURLWithPath: root).resolvingSymlinksInPath()
     self.entry = entry
@@ -36,7 +42,7 @@ final class HtmlSnapshotServer {
       guard values.isRegularFile == true, values.isSymbolicLink != true else { throw Failure.invalid }
       assets["/" + file[0]] = (url, file[2])
     }
-    guard assets["/" + entry]?.1 == "text/html" else { throw Failure.invalid }
+    guard (onRequest != nil && validPreviewPath(entry)) || assets["/" + entry]?.1 == "text/html" else { throw Failure.invalid }
     let params = NWParameters.tcp
     params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
     listener = try NWListener(using: params)
@@ -70,8 +76,7 @@ final class HtmlSnapshotServer {
     guard !stopped else { return }
     stopped = true
     listener.cancel()
-    clients.values.forEach { $0.cancel() }
-    clients.removeAll()
+    Array(clients.keys).forEach { close($0) }
     finish(.failure(Failure.stopped))
   }
 
@@ -80,12 +85,27 @@ final class HtmlSnapshotServer {
     let id = UUID()
     clients[id] = connection
     connection.start(queue: queue)
-    // Covers slow headers and stalled response readers. Resources are local, no indefinite sockets.
-    queue.asyncAfter(deadline: .now() + 15) { [weak self] in self?.close(id) }
+    // Bound slow headers, remote resource preparation and stalled response readers.
+    queue.asyncAfter(deadline: .now() + (onRequest == nil ? 15 : 7200)) { [weak self] in self?.close(id) }
     receive(id, Data())
   }
 
-  private func close(_ id: UUID) { clients.removeValue(forKey: id)?.cancel() }
+  private func close(_ id: UUID) {
+    clients.removeValue(forKey: id)?.cancel()
+    if requests.removeValue(forKey: id) != nil { onClose?(id.uuidString) }
+    if let file = ownedFiles.removeValue(forKey: id) { try? FileManager.default.removeItem(at: file) }
+  }
+
+  func resolve(_ requestId: String, filename: String, mime: String, status: Int) -> Bool {
+    guard let id = UUID(uuidString: requestId), let headOnly = requests[id], clients[id] != nil, ownedFiles[id] == nil, !stopped else { return false }
+    if status != 200 { send(id, status: status == 404 ? 404 : 502); return false }
+    guard filename.range(of: "^[0-9]+$", options: .regularExpression) != nil,
+      mime.range(of: "^[a-z]+/[a-z0-9.+-]+$", options: .regularExpression) != nil else { send(id, status: 502); return false }
+    let url = root.appendingPathComponent(filename)
+    ownedFiles[id] = url
+    serve(id, url, mime, headOnly)
+    return true
+  }
 
   private func receive(_ id: UUID, _ previous: Data) {
     clients[id]?.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] data, _, ended, error in
@@ -130,7 +150,19 @@ final class HtmlSnapshotServer {
       !path.split(separator: "/").contains(where: { $0 == "." || $0 == ".." })
     else { send(id, status: 403); return }
     if path.hasSuffix("/") { path += "index.html" }
-    guard let (url, mime) = assets[path],
+    if let onRequest {
+      let relative = String(path.dropFirst())
+      guard validPreviewPath(relative) else { send(id, status: 404); return }
+      requests[id] = first[0] == "HEAD"
+      onRequest(id.uuidString, relative)
+      return
+    }
+    guard let (url, mime) = assets[path] else { send(id, status: 404); return }
+    serve(id, url, mime, first[0] == "HEAD")
+  }
+
+  private func serve(_ id: UUID, _ url: URL, _ mime: String, _ headOnly: Bool) {
+    guard
       let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
       values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
       let file = try? FileHandle(forReadingFrom: url)
@@ -140,7 +172,7 @@ final class HtmlSnapshotServer {
     let head = responseHead(200, length: size, extra: "Content-Type: \(contentType)\r\n")
     clients[id]?.send(content: Data(head.utf8), completion: .contentProcessed { [weak self] error in
       guard let self else { try? file.close(); return }
-      if error != nil || first[0] == "HEAD" { try? file.close(); self.close(id) }
+      if error != nil || headOnly { try? file.close(); self.close(id) }
       else { self.stream(id, file) }
     })
   }
@@ -162,4 +194,9 @@ final class HtmlSnapshotServer {
       self.stream(id, file)
     })
   }
+}
+
+private func validPreviewPath(_ path: String) -> Bool {
+  !path.isEmpty && !path.contains("\\") && !path.contains(":") && !path.contains("\0") &&
+    !path.split(separator: "/", omittingEmptySubsequences: false).contains { $0.isEmpty || $0.hasPrefix(".") }
 }

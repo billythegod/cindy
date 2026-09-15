@@ -104,3 +104,27 @@ export async function exportDeviceFile(
     await new Promise<void>((resolve) => setTimeout(resolve, 700));
   }
 }
+
+/** Serialize work per connection; busy peers should queue, not spill into OSS. */
+export function createFileReadQueue() {
+  const tails = new Map<string, Promise<void>>();
+  return function run<T>(key: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    let started = false;
+    const previous = tails.get(key) ?? Promise.resolve();
+    const result = previous.then(() => {
+      assertFileReadActive(signal);
+      started = true;
+      return operation();
+    });
+    const tail = result.then(() => {}, () => {});
+    tails.set(key, tail);
+    void tail.then(() => { if (tails.get(key) === tail) tails.delete(key); });
+    if (!signal) return result;
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => { if (!started) reject(new Error('FILE_PEER_CANCELLED')); };
+      if (signal.aborted) abort();
+      else signal.addEventListener('abort', abort, { once: true });
+      void result.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    });
+  };
+}

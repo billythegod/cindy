@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearPeerMedia,
+  canStagePeerMedia,
   installPeerFileDownload,
   peerMediaUri,
   recordPeerMedia,
@@ -47,11 +48,12 @@ describe("peer file staging ownership", () => {
   it("bounds aggregate staging storage and keeps replacement providers registered", async () => {
     expect(
       recordPeerMedia(
-        { ossKey: "", size: 256 * 1024 * 1024, mimeType: "text/plain" },
+        { ossKey: "", size: 2 * 1024 * 1024 * 1024, mimeType: "text/plain" },
         "file:///full",
         vi.fn(),
       ),
     ).toBe(true);
+    expect(recordPeerMedia({ ossKey: "", size: 2 * 1024 * 1024 * 1024, mimeType: "text/plain" }, "file:///full-two", vi.fn())).toBe(true);
     expect(
       recordPeerMedia(
         { ossKey: "", size: 1, mimeType: "text/plain" },
@@ -67,4 +69,11 @@ describe("peer file staging ownership", () => {
     remove();
     expect(await tryMobilePeerFile("device", "url")).toBeNull();
   });
+});
+
+it("reserves space for a 2 GiB consumer copy before transfer, and rejects invalid sizes", () => {
+  const size = 2 * 1024 * 1024 * 1024;
+  expect(canStagePeerMedia(size, 2 * size + 256 * 1024 * 1024)).toBe(true);
+  expect(canStagePeerMedia(size, 2 * size)).toBe(false);
+  for (const invalid of [-1, NaN, Infinity, size + 1]) expect(canStagePeerMedia(invalid)).toBe(false);
 });

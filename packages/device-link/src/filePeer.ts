@@ -2,9 +2,9 @@
 export const FILE_PEER_CHANNEL = "device-link:file-peer";
 export const FILE_PEER_VERSION = 1;
 export const FILE_PEER_CHUNK_BYTES = 16 * 1024;
-export const FILE_PEER_MAX_BYTES = 100 * 1024 * 1024;
+export const FILE_PEER_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const FILE_PEER_MAX_CONNECTIONS = 4;
-export const FILE_PEER_IDLE_MS = 30_000;
+export const FILE_PEER_IDLE_MS = 60_000;
 
 export type FilePeerRequest =
   | { action: "caps" }

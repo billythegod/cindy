@@ -37,9 +37,9 @@ it('bounds concurrent preparations before allocating more snapshots', async () =
     release = resolve;
   });
   registerHtmlPreviewIpc({
-    list: async () => {
+    stat: async () => {
       await paused;
-      return [];
+      throw new Error('offline');
     },
     read: vi.fn(),
   });
@@ -53,36 +53,32 @@ it('rejects an untrusted guest before any filesystem or remote operation', async
   mocks.trusted.mockImplementationOnce(() => {
     throw new Error('PERMISSION_DENIED');
   });
-  const list = vi.fn();
-  registerHtmlPreviewIpc({ list, read: vi.fn() });
+  const stat = vi.fn();
+  registerHtmlPreviewIpc({ stat, read: vi.fn() });
   await expect(mocks.handle.mock.calls[0][1]({}, args)).rejects.toThrow('PERMISSION_DENIED');
-  expect(list).not.toHaveBeenCalled();
+  expect(stat).not.toHaveBeenCalled();
 });
-it('returns an actionable typed error for an old remote without directory snapshots', async () => {
-  const list = vi.fn().mockRejectedValue(new Error('COMPLETE_DIRECTORY_LISTING_UNSUPPORTED'));
-  registerHtmlPreviewIpc({ list, read: vi.fn() });
+it('returns an actionable typed error when the remote cannot read files', async () => {
+  const stat = vi.fn().mockRejectedValue(new Error('METHOD_NOT_FOUND'));
+  registerHtmlPreviewIpc({ stat, read: vi.fn() });
   await expect(mocks.handle.mock.calls[0][1]({}, args)).rejects.toMatchObject({
     code: 'HTML_PREVIEW_UNSUPPORTED',
   });
-  expect(list).toHaveBeenCalledWith(args, '/remote/preview', '');
+  expect(stat).toHaveBeenCalledWith(args, '/remote/preview', 'index.html');
 });
-it('checks the full manifest budget before starting downloads', async () => {
+it('opens a preview before downloading even a large entry file', async () => {
   const read = vi.fn();
   registerHtmlPreviewIpc({
-    list: async () => [
-      {
+    stat: async () => ({
         name: 'index.html',
         relPath: 'index.html',
         type: 'file',
         size: 101 * 1024 * 1024,
         mtimeMs: 0,
-      },
-    ],
+    }),
     read,
   });
-  await expect(mocks.handle.mock.calls[0][1]({}, args)).rejects.toMatchObject({
-    code: 'HTML_PREVIEW_TOO_LARGE',
-  });
+  await expect(mocks.handle.mock.calls[0][1]({}, args)).resolves.toMatchObject({ ok: true });
   expect(read).not.toHaveBeenCalled();
 });
 it('passes the captured owner guard through reference-free cache ingestion', async () => {
@@ -102,19 +98,17 @@ it('passes the captured owner guard through reference-free cache ingestion', asy
       params.assertStillValid();
     });
     registerHtmlPreviewIpc({
-      list: async () =>
-        ['index.html', 'image.png'].map((name) => ({
+      stat: async (_args, _root, name) => ({
           name,
           relPath: name,
           type: 'file' as const,
           size: name === 'image.png' ? png.length : 0,
           mtimeMs: 0,
-        })),
+        }),
       read: async (_args, _root, entry) => path.join(dir, entry.relPath),
     });
-    await expect(mocks.handle.mock.calls[0][1]({}, args)).rejects.toMatchObject({
-      code: 'BROWSER_FILE_OPEN_FAILED',
-    });
+    const { url } = await mocks.handle.mock.calls[0][1]({}, args);
+    expect((await readResource(url, '/image.png')).status).toBe(502);
     expect(mocks.ingest).toHaveBeenCalledTimes(1);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
@@ -135,14 +129,15 @@ it('serves independent media after cache loss without refs across failure and re
       return { url: 'cindy-media://blobs/unavailable.png', refIds: [] };
     });
     registerHtmlPreviewIpc({
-      list: async () => ['index.html', 'image.png'].map((name) => ({
+      stat: async (_args, _root, name) => ({
         name, relPath: name, type: 'file' as const,
         size: name === 'image.png' ? png.length : 0, mtimeMs: 0,
-      })),
+      }),
       read: async (_args, _root, entry) => path.join(dir, entry.relPath),
     });
     const open = mocks.handle.mock.calls[0][1];
-    await expect(open({}, args)).rejects.toMatchObject({ code: 'BROWSER_FILE_OPEN_FAILED' });
+    const failed = await open({}, args);
+    expect((await readResource(failed.url, '/image.png')).status).toBe(502);
     for (let i = 0; i < 3; i++) {
       const { url } = await open({}, args);
       const bootstrap = await fetch(url, { redirect: 'manual' });
@@ -163,9 +158,7 @@ it('opens beyond eight sequential snapshots by reclaiming the oldest completed o
     const source = path.join(dir, 'index.html');
     await fs.writeFile(source, '');
     registerHtmlPreviewIpc({
-      list: async () => [
-        { name: 'index.html', relPath: 'index.html', type: 'file', size: 0, mtimeMs: 0 },
-      ],
+      stat: async () => ({ relPath: 'index.html', type: 'file', size: 0, mtimeMs: 0 }),
       read: async () => source,
     });
     const open = mocks.handle.mock.calls[0][1];
@@ -181,3 +174,10 @@ it('opens beyond eight sequential snapshots by reclaiming the oldest completed o
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+async function readResource(url: string, pathname: string) {
+  const bootstrap = await fetch(url, { redirect: 'manual' });
+  const cookie = bootstrap.headers.get('set-cookie')!.split(';')[0];
+  await bootstrap.body?.cancel();
+  return fetch(new URL(pathname, url), { headers: { cookie } });
+}

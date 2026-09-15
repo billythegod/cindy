@@ -1,3 +1,4 @@
+import { FILE_PEER_MAX_BYTES } from '@cindy/device-link';
 export interface LocalPeerMedia {
   ossKey: string;
   size: number;
@@ -33,7 +34,7 @@ export function recordPeerMedia(
   uri: string,
   dispose: () => void,
 ) {
-  if (ownedBytes + value.size > 256 * 1024 * 1024) return false;
+  if (!canStagePeerMedia(value.size)) return false;
   const timer = setTimeout(() => releasePeerMedia(uri), 5 * 60_000);
   owned.set(uri, { size: value.size, dispose, timer });
   ownedBytes += value.size;
@@ -61,4 +62,11 @@ export async function tryMobilePeerFile(
   signal?: AbortSignal,
 ) {
   return download?.(device, url, signal) ?? null;
+}
+
+/** Budget includes retained files; reserve room for the consumer copy and keep 256 MiB free. */
+export function canStagePeerMedia(size: number, availableBytes = Infinity): boolean {
+  return Number.isSafeInteger(size) && size >= 0 && size <= FILE_PEER_MAX_BYTES &&
+    ownedBytes + size <= 4 * 1024 * 1024 * 1024 &&
+    availableBytes >= 2 * size + 256 * 1024 * 1024;
 }

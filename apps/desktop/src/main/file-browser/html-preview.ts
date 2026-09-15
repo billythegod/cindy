@@ -1,4 +1,5 @@
 import { createServer, type Server } from 'node:http';
+import { pipeline } from 'node:stream/promises';
 import { createReadStream, constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -18,13 +19,13 @@ export interface HtmlPreviewArgs {
 }
 export interface PreviewSource {
   isCurrent?(): boolean;
-  list(root: string, rel: string): Promise<DirEntry[]>;
-  read(root: string, entry: DirEntry): Promise<string>;
+  onResourceError?(status: number): void;
+  stat(root: string, rel: string): Promise<Omit<DirEntry, 'name'>>;
+  read(root: string, entry: DirEntry, signal?: AbortSignal): Promise<string>;
   /** Media goes through the existing managed store; other files are copied into staging. */
   materialize(source: string, destination: string, expectedSize: number): Promise<string>;
 }
-const MAX_BYTES = 100 * 1024 * 1024;
-const MAX_ENTRIES = 2000;
+
 
 /** Copy a fixed-size ordinary file, refusing growth and symlink substitution. */
 export async function copyPreviewFile(
@@ -44,6 +45,8 @@ export async function copyPreviewFile(
       stat.ino !== before.ino
     )
       throw new Error('PREVIEW_CHANGED');
+    const space = await fs.statfs(path.dirname(destination));
+    if (space.bavail * space.bsize < expectedSize + 256 * 1024 * 1024) throw new Error('PREVIEW_DISK_FULL');
     const output = await fs.open(destination, 'wx', 0o600);
     try {
       const buffer = Buffer.alloc(64 * 1024);
@@ -120,63 +123,41 @@ export function previewLocation(args: HtmlPreviewArgs): { root: string; entry: s
   return { root: p.dirname(args.absPath), entry: p.basename(args.absPath) };
 }
 
-/** One bounded immutable snapshot per open. Never publish a partially fetched tree. */
+/** Fetch only requested resources. A failed resource never invalidates another page. */
 export async function createHtmlPreview(args: HtmlPreviewArgs, source: PreviewSource) {
   const { root, entry } = previewLocation(args);
   const staging = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-html-preview-'));
   let server: Server | undefined;
+  let closed = false;
+  const controller = new AbortController();
+  const pending = new Set<Promise<void>>();
+  const current = () => !closed && source.isCurrent?.() !== false;
   const close = async () => {
+    closed = true;
+    controller.abort();
     if (server?.listening) {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server!.close(() => resolve()));
     }
-    await fs.rm(staging, { recursive: true, force: true });
+    // Shared cache fills may finish after cancellation; never delete their destination mid-write.
+    void Promise.allSettled([...pending])
+      .then(() => fs.rm(staging, { recursive: true, force: true }))
+      .catch(() => { /* Temporary storage can be reclaimed by the OS if cleanup fails. */ });
   };
   try {
-    const pending = [''];
-    const files: DirEntry[] = [];
-    const seen = new Set<string>();
-    let bytes = 0;
-    while (pending.length) {
-      if (source.isCurrent && !source.isCurrent()) throw new Error('PREVIEW_CANCELLED');
-      const rel = pending.pop()!;
-      if (rel.split('/').length > 32) throw new Error('PREVIEW_TOO_LARGE');
-      for (const item of await source.list(root, rel)) {
-        const expected = rel ? `${rel}/${item.name}` : item.name;
-        if (
-          !item.name ||
-          /[\\/:\0]/.test(item.name) ||
-          item.name === '.' ||
-          item.name === '..' ||
-          item.relPath !== expected ||
-          seen.has(expected) ||
-          !Number.isSafeInteger(item.size) ||
-          item.size < 0
-        ) {
-          throw new Error('BAD_ARGS');
-        }
-        // Publishing a snapshot has a separate policy from browsing files.
-        // Hidden files remain browsable, but are not automatically served to a web page.
-        if (item.name.startsWith('.')) continue;
-        seen.add(expected);
-        if (seen.size > MAX_ENTRIES) throw new Error('PREVIEW_TOO_LARGE');
-        if (item.type === 'directory') pending.push(expected);
-        else if (item.type === 'file') {
-          bytes += item.size;
-          if (bytes > MAX_BYTES) throw new Error('PREVIEW_TOO_LARGE');
-          files.push(item);
-        } else throw new Error('BAD_ARGS');
-      }
-    }
-    if (!files.some((file) => file.relPath === entry)) throw new Error('NOT_FOUND');
-    const assets = new Map<string, { path: string; size: number }>();
-    for (const file of files) {
-      if (source.isCurrent && !source.isCurrent()) throw new Error('PREVIEW_CANCELLED');
-      const sourcePath = await source.read(root, file);
+    const initial = await source.stat(root, entry);
+    if (initial.type !== 'file') throw new Error('NOT_FOUND');
+    const materialize = async (relPath: string, directory: string, signal: AbortSignal) => {
+      if (!current() || signal.aborted) throw new Error('PREVIEW_CANCELLED');
+      const metadata = await source.stat(root, relPath);
+      if (metadata.type !== 'file' || metadata.relPath !== relPath || !Number.isSafeInteger(metadata.size) || metadata.size < 0)
+        throw new Error('NOT_FOUND');
+      const file = { ...metadata, name: relPath.split('/').pop()! };
+      const sourcePath = await source.read(root, file, signal);
+      if (!current() || signal.aborted) throw new Error('PREVIEW_CANCELLED');
       const stat = await fs.stat(sourcePath);
       if (!stat.isFile() || stat.size !== file.size) throw new Error('PREVIEW_CHANGED');
-      const dest = path.join(staging, ...file.relPath.split('/'));
-      await fs.mkdir(path.dirname(dest), { recursive: true });
+      const dest = path.join(directory, 'asset');
       const materialized = await source.materialize(sourcePath, dest, file.size);
       if ((await fs.stat(materialized)).size !== file.size) throw new Error('PREVIEW_CHANGED');
       // Guard HTML documents, including secondary pages, before publishing the snapshot.
@@ -205,8 +186,9 @@ export async function createHtmlPreview(args: HtmlPreviewArgs, source: PreviewSo
           assetSize = Buffer.byteLength(guarded);
         }
       }
-      assets.set('/' + file.relPath, { path: assetPath, size: assetSize });
-    }
+      if (!current() || signal.aborted) throw new Error('PREVIEW_CANCELLED');
+      return { path: assetPath, size: assetSize };
+    };
     const token = randomBytes(24).toString('hex');
     const cookieName = `cindy_preview_${token}`;
     let origin = '';
@@ -220,7 +202,7 @@ export async function createHtmlPreview(args: HtmlPreviewArgs, source: PreviewSo
         res.writeHead(status);
         res.end();
       };
-      if (source.isCurrent && !source.isCurrent()) return deny(410);
+      if (!current()) return deny(410);
       if (req.headers.host !== origin.slice('http://'.length)) return deny(403);
       if (req.method !== 'GET' && req.method !== 'HEAD') return deny(405);
       if (
@@ -257,21 +239,34 @@ export async function createHtmlPreview(args: HtmlPreviewArgs, source: PreviewSo
         return deny(400);
       }
       if (pathname.endsWith('/')) pathname += 'index.html';
-      const asset = assets.get(pathname);
-      if (!asset) return deny(404);
-      res.setHeader(
-        'Content-Type',
-        MIME[path.extname(pathname).toLowerCase()] ?? 'application/octet-stream',
-      );
-      res.setHeader('Content-Length', asset.size);
-      if (req.method === 'HEAD') {
-        res.end();
-        return;
-      }
-      const stream = createReadStream(asset.path);
-      stream.on('error', () => res.destroy());
-      res.on('close', () => stream.destroy());
-      stream.pipe(res);
+      const relPath = pathname.slice(1);
+      if (!relPath || /[\\:\0\r\n]/.test(relPath) || relPath.split('/').some((part) => !part || part.startsWith('.')))
+        return deny(404);
+      const requestController = new AbortController();
+      res.once('close', () => requestController.abort());
+      const signal = AbortSignal.any([controller.signal, requestController.signal]);
+      const work = (async () => {
+        const directory = await fs.mkdtemp(path.join(staging, 'request-'));
+        try {
+          const asset = await materialize(relPath, directory, signal);
+          if (res.destroyed || !current()) return;
+          res.setHeader('Content-Type', MIME[path.extname(pathname).toLowerCase()] ?? 'application/octet-stream');
+          res.setHeader('Content-Length', asset.size);
+          if (req.method === 'HEAD') { res.end(); return; }
+          await pipeline(createReadStream(asset.path), res);
+        } finally {
+          await fs.rm(directory, { recursive: true, force: true });
+        }
+      })();
+      pending.add(work);
+      void work.catch((error) => {
+        if (res.destroyed) return;
+        if (res.headersSent) { res.destroy(); return; }
+        const message = error instanceof Error ? error.message : '';
+        const status = /NOT_FOUND|ENOENT/.test(message) ? 404 : /TOO_LARGE/.test(message) ? 413 : 502;
+        source.onResourceError?.(status);
+        deny(status);
+      }).finally(() => pending.delete(work));
     });
     await new Promise<void>((resolve, reject) => {
       server!.once('error', reject);

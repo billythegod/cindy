@@ -61,3 +61,18 @@ describe('snapshot navigation and policy', () => {
     expect(HTML_SNAPSHOT_CSP).not.toMatch(/https?:|\*/);
   });
 });
+
+
+describe('on-demand navigation', () => {
+  const initial = 'http://127.0.0.1:43123/__cindy/token';
+  it.each(['/index.html', '/nested/second.htm?x=1#anchor', '/', '/nested/', '/%E4%B8%AD%E6%96%87.html'])(
+    'allows guarded pages without a directory manifest: %s', (path) => {
+      expect(interceptSnapshotNavigation('http://127.0.0.1:43123' + path, initial, [], true)).toBe(true);
+    });
+  it.each(['https://example.org/index.html', 'file:///tmp/index.html', 'http://127.0.0.1:43124/index.html',
+    'http://127.0.0.1:43123/image.svg', 'http://127.0.0.1:43123/.hidden/index.html',
+    'http://127.0.0.1:43123/%2e%2e%2fsecret.html', 'http://user@127.0.0.1:43123/index.html'])(
+    'rejects unguarded navigation: %s', (url) => {
+      expect(interceptSnapshotNavigation(url, initial, [], true)).toBe(false);
+    });
+});

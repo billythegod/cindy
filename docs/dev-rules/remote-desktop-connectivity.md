@@ -100,7 +100,7 @@ initial selection of a reachable backup, and RTT from input-to-visible-response
 latency. Test the previous STUN-only behavior on the same pairs. Include JPEG and
 object-storage transfer regression checks; do not report unavailable metrics as zero.
 
-## Remote files and HTML snapshots
+## Remote files and HTML previews
 
 `device-link:file-peer` is an allowlisted DeviceLink RPC, with a 30-second request
 budget and versioned `caps`, `offer`, `open`, `close` actions. Signaling keeps the
@@ -112,14 +112,14 @@ input handling, capture permissions or capture-process lifetime.
 File access has two layers. `packages/device-link/src/fileAccess.ts` owns the
 shared directory/text operation facade and whole-file transfer selection; Desktop
 and Mobile adapters provide platform I/O. Sidebar downloads, message files/media,
-Mobile export/share and HTML snapshot files use this policy. Directory listing
+Mobile export/share and requested HTML resources use this policy. Directory listing
 keeps the existing `remote-op` and separates complete enumeration from display
 filtering. Bounded text previews retain binary detection, truncation and gzip;
 they are preview projections rather than whole-file downloads.
 
 Whole-file reads request `prepareOnly` after host authorization. Up to 64 KiB,
 including empty files, returns inline bytes; larger files attempt the reusable
-file WebRTC connection, then OSS. The 100 MiB peer limit remains; range-streaming
+file WebRTC connection, then OSS. The peer limit is 2 GiB; range-streaming
 media intentionally use OSS, selected before downloading any peer bytes. Workdir
 downloads probe `caps.fileRead` first: old hosts retain two-phase export jobs, so
 large uploads do not regress to a single relay invocation. `fileUrl` resolves a
@@ -144,24 +144,35 @@ still own their copied files independently from the short-lived transfer staging
 
 An `open` request resolves the same authorized media URL as OSS. Only Main resolves
 paths, checks the effective size limit and opens the descriptor. The renderer sees
-an opaque one-use ticket. Files are limited to 100 MiB, transferred in 16 KiB blocks
+an opaque one-use ticket. Files are limited to 2 GiB, transferred in 16 KiB blocks
 with at most 16 outstanding blocks, and checked for exact size, offsets and source
 stat changes through EOF. This is not a persistent content-hash cache. Changed files
 fail and follow the existing fallback behavior. Each source and sink rechecks its
 connection owner; revoking one controller closes only that controller's transfers.
-Connections are bounded, reusable for sequential files and expire after 30 seconds
-idle. Mobile staging has a 256 MiB aggregate cap and a five-minute lifetime; consumers
+Reads queue per Desktop peer and per Mobile file connection; a busy channel alone does
+not cause an OSS fallback. Queued cancellation skips that read without interrupting its
+predecessor. Connections are bounded, reusable for sequential files and expire after 60 seconds
+idle. Mobile staging has a 4 GiB aggregate cap and a five-minute lifetime; consumers
 copy into their existing cache/preview ownership. Backgrounding cancels in-flight
 work, but completed files retain their normal lifetime. Account changes remove them.
 
-The HTML strategy remains a directory snapshot served by a viewer-local loopback
-HTTP server. Direct/TURN changes how the bytes arrive, not how relative navigation,
-CSS, JavaScript or images resolve. It does not execute a remote site's backend.
-Desktop retains at most eight prepared/preparing snapshots; a new open evicts the
-oldest completed snapshot when full. External tab closure is not observable, so
-this bound also covers closed tabs and failed browser launches. An evicted page
-must be reopened; the existing two-hour expiry still applies. Additional requests
-are rejected while eight preparations are in flight, bounding staging work.
+Local Desktop HTML opens directly with `file://` in the sidebar or system browser,
+following the existing opening preference. It does not enumerate or copy its parent
+directory. Remote HTML uses a viewer-local loopback HTTP server. Each browser request
+stats/reads only the requested resource through existing file access; no directory
+listing, total file-count or aggregate directory-size check precedes opening.
+Resources are transferred as whole files before responding, not HTTP range streams.
+The preview layer has no separate 100 MiB resource cap; missing or failed resources fail
+individually while the page remains usable. Reloads may observe changed source files;
+there is no atomic directory snapshot. Relative resources stay within the entry's
+parent directory; hidden paths are excluded and realpath checks prevent symlink
+escape outside that root.
+This does not execute a remote site's backend.
+Desktop retains at most eight active previews; a new open evicts the oldest when
+full. External tab closure is not observable. An evicted page must be reopened;
+the two-hour expiry and concurrent preparation bound still apply. Each HTTP response
+owns its staging files, cleaned after response completion. Shared cache fills may
+complete after a preview closes without cancelling other consumers.
 Desktop and Mobile share the snapshot CSP and parser-first device API guard in
 `maker-shared/file-preview`. UTF-8 `.html`/`.htm` pages receive the guard; Desktop also
 serves the CSP as a response header. Other encodings and XML documents (XHTML/SVG) preserve their MIME
@@ -172,8 +183,10 @@ snapshot policy also explicitly denies workers, preventing Service Worker regist
 from surviving a temporary loopback origin. This is not a zero-egress
 sandbox: documents without the prolog and the shared guard's residual child realms can access WebRTC, and an
 external browser's top-level navigation is outside the loopback server's control.
-The Mobile loopback server is a native-module change and requires a compatible
-native build; the WebRTC transport itself reuses the existing WebView dependency.
+Mobile uses native request/response callbacks for on-demand resources. The legacy
+`start(files)` API remains available, and JS on older native binaries retains the
+previous directory-snapshot behavior and limits. On-demand loading requires a new
+iOS/Android native build; the WebRTC transport itself reuses the existing WebView dependency.
 
 Validation entrypoints: `node scripts/file-peer-smoke.mjs <Chrome executable>`
 checks the shipped WebView script over a real local WebRTC connection, including
@@ -182,3 +195,12 @@ permission/descriptor and Mobile staging tests cover bounded failure paths. This
 local browser probe does not establish deployed TURN, physical phone, network
 switching or release-build acceptance; test those separately with matching accounts
 and record versions and the actual selected path.
+
+Large-file transport retains protocol version 1 and advertises optional `caps.maxBytes`.
+Old peers keep their previous limits and rejected peer reads retain the existing OSS fallback.
+Both receivers reserve disk space for the incoming file and its consumer copy plus 256 MiB
+headroom; preview copies and Mobile OSS downloads also check disk headroom. WebRTC receive
+commands use a 60-second deadline renewed by successful disk writes rather than a ten-minute
+total deadline. Mobile on-demand HTTP requests allow up to two hours including queueing,
+transfer and response consumption; cancellation/backgrounding still closes them immediately.
+This does not add Range streaming or make very large HTML document parsing memory-bounded.

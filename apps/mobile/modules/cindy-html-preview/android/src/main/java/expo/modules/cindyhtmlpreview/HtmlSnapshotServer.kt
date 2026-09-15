@@ -2,6 +2,8 @@ package expo.modules.cindyhtmlpreview
 
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.UUID
+import java.util.concurrent.CompletableFuture
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -14,7 +16,12 @@ import java.util.concurrent.TimeUnit
 
 /** One bounded HTTP/1 GET/HEAD request per socket. No uploads, proxying, or directory listing. */
 internal class HtmlSnapshotServer(root: String, private val entry: String, private val token: String,
-  private val csp: String, files: List<List<String>>) {
+  private val csp: String, files: List<List<String>>,
+  private val onRequest: ((String, String) -> Unit)? = null,
+  private val onClose: ((String) -> Unit)? = null) {
+  private val directory = File(root).canonicalFile
+  private data class Resource(val file: File?, val mime: String, val status: Int)
+  private val requests = mutableMapOf<String, CompletableFuture<Resource>>()
   private val assets = mutableMapOf<String, Pair<File, String>>()
   private val clients = mutableSetOf<Socket>()
   private val workers = ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS, ArrayBlockingQueue<Runnable>(12))
@@ -24,8 +31,7 @@ internal class HtmlSnapshotServer(root: String, private val entry: String, priva
   private val origin get() = "http://127.0.0.1:${listener.localPort}"
 
   init {
-    require(Regex("^[a-f0-9]{48}$").matches(token) && !csp.contains('\r') && !csp.contains('\n') && files.size <= 2000)
-    val directory = File(root).canonicalFile
+    require(Regex("^[a-f0-9]{48}$").matches(token) && !csp.contains('\r') && !csp.contains('\n'))
     files.forEach { row ->
       require(row.size == 3 && Regex("^[0-9]+$").matches(row[1]) && Regex("^[a-z]+/[a-z0-9.+-]+$").matches(row[2]))
       require(row[0].split('/').none { it.isEmpty() || it.startsWith('.') } && !row[0].contains('\\') && !row[0].contains('\u0000'))
@@ -34,7 +40,7 @@ internal class HtmlSnapshotServer(root: String, private val entry: String, priva
       require(!assets.containsKey(key) && file.isFile && file.canonicalPath == file.absolutePath)
       assets[key] = file to row[2]
     }
-    require(assets["/$entry"]?.second == "text/html")
+    require((onRequest != null && validPath(entry)) || assets["/$entry"]?.second == "text/html")
     listener = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
   }
 
@@ -47,7 +53,7 @@ internal class HtmlSnapshotServer(root: String, private val entry: String, priva
           clients.add(socket)
           try {
             socket.soTimeout = 5000
-            val deadline = deadlines.schedule({ try { socket.close() } catch (_: Exception) {} }, 15, TimeUnit.SECONDS)
+            val deadline = deadlines.schedule({ try { socket.close() } catch (_: Exception) {} }, if (onRequest == null) 15 else 7200, TimeUnit.SECONDS)
             workers.execute {
               try { socket.use { respond(it) } } catch (_: Exception) { try { socket.close() } catch (_: Exception) {} }
               finally { deadline.cancel(false); synchronized(clients) { clients.remove(socket) } }
@@ -63,9 +69,23 @@ internal class HtmlSnapshotServer(root: String, private val entry: String, priva
     stopped = true
     try { listener.close() } catch (_: Exception) {}
     synchronized(clients) { clients.forEach { try { it.close() } catch (_: Exception) {} }; clients.clear() }
+    synchronized(requests) { requests.values.forEach { it.complete(Resource(null, "", 502)) } }
     workers.shutdownNow()
     deadlines.shutdownNow()
   }
+
+  fun resolve(id: String, filename: String, mime: String, status: Int): Boolean = synchronized(requests) {
+    val pending = requests[id] ?: return@synchronized false
+    if (stopped || pending.isDone) return@synchronized false
+    if (status != 200) { pending.complete(Resource(null, "", if (status == 404) 404 else 502)); return@synchronized false }
+    if (!Regex("^[0-9]+$").matches(filename) || !Regex("^[a-z]+/[a-z0-9.+-]+$").matches(mime)) {
+      pending.complete(Resource(null, "", 502)); return@synchronized false
+    }
+    pending.complete(Resource(File(directory, filename), mime, 200))
+  }
+
+  private fun validPath(path: String) = path.isNotEmpty() && !path.contains('\\') && !path.contains(':') && !path.contains('\u0000') &&
+    path.split('/').none { it.isEmpty() || it.startsWith('.') }
 
   private fun respond(socket: Socket) {
     val input = socket.getInputStream()
@@ -106,14 +126,38 @@ internal class HtmlSnapshotServer(root: String, private val entry: String, priva
     var path = try { URLDecoder.decode(rawPath.replace("+", "%2B"), "UTF-8") } catch (_: Exception) { send(socket, 400); return }
     if (path.contains('\\') || path.contains('\u0000') || path.split('/').any { it == "." || it == ".." }) { send(socket, 403); return }
     if (path.endsWith('/')) path += "index.html"
+    if (onRequest != null) {
+      val relative = path.removePrefix("/")
+      if (!validPath(relative)) { send(socket, 404); return }
+      val id = UUID.randomUUID().toString()
+      val future = CompletableFuture<Resource>()
+      synchronized(requests) { requests[id] = future }
+      try {
+        onRequest.invoke(id, relative)
+        val resource = future.get(7200, TimeUnit.SECONDS)
+        if (resource.file == null) send(socket, resource.status)
+        else serve(socket, resource.file, resource.mime, first[0] == "HEAD")
+      } finally {
+        synchronized(requests) {
+          requests.remove(id)
+          future.getNow(null)?.file?.delete()
+        }
+        onClose?.invoke(id)
+      }
+      return
+    }
     val asset = assets[path]
-    if (asset == null || !asset.first.isFile || asset.first.canonicalPath != asset.first.absolutePath) { send(socket, 404); return }
-    val (file, mime) = asset
+    if (asset == null) { send(socket, 404); return }
+    serve(socket, asset.first, asset.second, first[0] == "HEAD")
+  }
+
+  private fun serve(socket: Socket, file: File, mime: String, headOnly: Boolean) {
+    if (!file.isFile || file.canonicalPath != file.absolutePath) { send(socket, 404); return }
     val type = if (mime == "text/html") "$mime; charset=utf-8" else mime
     val output = socket.getOutputStream()
     file.inputStream().use { data ->
       output.write(head(200, file.length(), "Content-Type: $type\r\n").toByteArray(Charsets.UTF_8))
-      if (first[0] != "HEAD") data.copyTo(output, 65536)
+      if (!headOnly) data.copyTo(output, 65536)
     }
     output.flush()
   }

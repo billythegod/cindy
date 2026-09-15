@@ -8,12 +8,24 @@ const mocks = vi.hoisted(() => ({
   stop: vi.fn(),
   download: vi.fn(),
   pause: vi.fn(),
+  demand: false,
+  startOnDemand: vi.fn(),
+  resolveRequest: vi.fn(),
+  listeners: new Map<string, (event: { token: string; id: string; path?: string }) => void>(),
 }));
 vi.mock("expo-crypto", () => ({
   getRandomBytes: () => new Uint8Array(24).fill(1),
 }));
 vi.mock("../../modules/cindy-html-preview/src/CindyHtmlPreviewModule", () => ({
-  default: { start: mocks.start, stop: mocks.stop },
+  default: {
+    start: mocks.start, stop: mocks.stop,
+    get startOnDemand() { return mocks.demand ? mocks.startOnDemand : undefined; },
+    get resolveRequest() { return mocks.demand ? mocks.resolveRequest : undefined; },
+    addListener: (event: string, listener: (event: { token: string; id: string; path?: string }) => void) => {
+      mocks.listeners.set(event, listener);
+      return { remove: () => mocks.listeners.delete(event) };
+    },
+  },
 }));
 vi.mock("@/session/remoteAbsFileFetch", () => ({
   fetchRemoteAbsFileOnce: mocks.remote,
@@ -50,7 +62,7 @@ vi.mock("expo-file-system", () => {
       );
     }
   }
-  return { Directory, File, Paths: { cache: "file:///cache" } };
+  return { Directory, File, Paths: { cache: "file:///cache", availableDiskSpace: 8 * 1024 * 1024 * 1024 } };
 });
 vi.mock("expo-file-system/legacy", () => ({
   createDownloadResumable: (url: string, destination: string) => ({
@@ -90,6 +102,10 @@ function setup() {
 }
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.demand = false;
+  mocks.listeners.clear();
+  mocks.startOnDemand.mockResolvedValue("http://127.0.0.1:43123/__cindy/token");
+  mocks.resolveRequest.mockResolvedValue(true);
   mocks.contents.clear();
   mocks.removed.length = 0;
   mocks.start.mockResolvedValue("http://127.0.0.1:43123/__cindy/token");
@@ -248,5 +264,77 @@ describe("mobile HTML preview preparation", () => {
     ).rejects.toThrow();
     expect(mocks.stop).toHaveBeenCalledOnce();
     expect(mocks.contents.size).toBe(0);
+  });
+});
+
+
+describe("on-demand mobile HTML previews", () => {
+  const token = "01".repeat(24);
+  const request = (id: string, path: string) => mocks.listeners.get("resourceRequest")!({ token, id, path });
+  beforeEach(() => { mocks.demand = true; });
+
+  it("opens without listing or downloading, then fetches only requested resources", async () => {
+    const { deps, listDir, caps } = setup();
+    const preview = await prepareMobileHtmlPreview("/site/index.html", deps, new AbortController().signal);
+    expect(preview.onDemand).toBe(true);
+    expect(listDir).not.toHaveBeenCalled();
+    expect(caps).not.toHaveBeenCalled();
+    expect(mocks.remote).not.toHaveBeenCalled();
+    request("a", "index.html");
+    await vi.waitFor(() => expect(mocks.resolveRequest).toHaveBeenCalledWith(token, "a", "0", "text/html", 200));
+    expect(mocks.remote).toHaveBeenCalledWith(deps, "/site/index.html", undefined, expect.any(Function),
+      { baseDir: "/site", maxBytes: 2 * 1024 * 1024 * 1024 }, expect.any(AbortSignal));
+    expect(new TextDecoder().decode([...mocks.contents.values()][0])).toContain("Content-Security-Policy");
+    expect(deps.deleteOssObject).toHaveBeenCalledOnce();
+    await preview.close();
+    expect(mocks.listeners.size).toBe(0);
+    expect(mocks.contents.size).toBe(0);
+  });
+
+  it("isolates missing resources and refuses paths outside the preview root", async () => {
+    const { deps } = setup();
+    const preview = await prepareMobileHtmlPreview("/site/index.html", deps, new AbortController().signal);
+    mocks.remote.mockRejectedValueOnce(new Error("NOT_FOUND"));
+    request("missing", "missing.js");
+    await vi.waitFor(() => expect(mocks.resolveRequest).toHaveBeenCalledWith(token, "missing", "", "", 404));
+    request("escape", "../secret.html");
+    await vi.waitFor(() => expect(mocks.resolveRequest).toHaveBeenCalledWith(token, "escape", "", "", 404));
+    expect(mocks.remote).toHaveBeenCalledOnce();
+    request("page", "second.html");
+    await vi.waitFor(() => expect(mocks.resolveRequest).toHaveBeenCalledWith(token, "page", "1", "text/html", 200));
+    await preview.close();
+  });
+
+  it("cancels closed requests before publishing and drains cleanup before removing its directory", async () => {
+    const { deps } = setup();
+    let finish!: (value: { status: number }) => void;
+    mocks.download.mockImplementation((_url, destination) => {
+      mocks.contents.set(destination, bytes);
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    const preview = await prepareMobileHtmlPreview("/site/index.html", deps, new AbortController().signal);
+    request("active", "index.html");
+    await vi.waitFor(() => expect(mocks.download).toHaveBeenCalledOnce());
+    request("queued", "second.html");
+    const closing = preview.close();
+    expect(mocks.pause).toHaveBeenCalledOnce();
+    expect(mocks.removed).toHaveLength(0);
+    finish({ status: 200 });
+    await closing;
+    expect(mocks.remote).toHaveBeenCalledOnce();
+    expect(mocks.resolveRequest).not.toHaveBeenCalled();
+    expect(mocks.contents.size).toBe(0);
+    expect(deps.deleteOssObject).toHaveBeenCalledOnce();
+  });
+
+  it("keeps SSH identity and rejects an entry outside its workdir", async () => {
+    const { deps } = setup();
+    const ssh = { workdir: "/project", remoteHostId: "ssh-a", sessionId: "session-a" };
+    await expect(prepareMobileHtmlPreview("/other/index.html", { ...deps, ssh }, new AbortController().signal)).rejects.toThrow("OUTSIDE_WORKDIR");
+    const preview = await prepareMobileHtmlPreview("/project/site/index.html", { ...deps, ssh }, new AbortController().signal);
+    request("ssh", "index.html");
+    await vi.waitFor(() => expect(mocks.resolveRequest).toHaveBeenCalledOnce());
+    expect(mocks.remote.mock.calls[0][2]).toEqual(ssh);
+    await preview.close();
   });
 });

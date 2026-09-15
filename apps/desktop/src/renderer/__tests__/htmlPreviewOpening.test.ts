@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it, vi } from 'vitest';
+import { pathToFileURL } from 'node:url';
 import type { TFunction } from 'i18next';
 const mocks = vi.hoisted(() => ({
-  sidebar: vi.fn(), preference: vi.fn(() => 'sidebar'), preview: vi.fn(), external: vi.fn(), error: vi.fn(), loading: vi.fn(() => 'loading'), dismiss: vi.fn(),
+  local: vi.fn(), sidebar: vi.fn(), preference: vi.fn(() => 'sidebar'), preview: vi.fn(), external: vi.fn(), error: vi.fn(), loading: vi.fn(() => 'loading'), dismiss: vi.fn(),
 }));
-vi.mock('@/features/right-sidebar/lib/openInSidebarBrowser', () => ({ openUrlInSidebarBrowser: mocks.sidebar }));
+vi.mock('@/features/right-sidebar/lib/openInSidebarBrowser', () => ({ openUrlInSidebarBrowser: mocks.sidebar, pathToFileUrl: (path: string) => pathToFileURL(path).href }));
 vi.mock('@/hooks/useLinkOpenPreference', () => ({ getLinkOpenPreference: mocks.preference, getLinkOpenPreferenceForUrl: mocks.preference }));
 vi.mock('@/features/cc-agent/embeddedSessionNavigation', () => ({ useSidebarTargetSessionId: (id: string) => id }));
 vi.mock('@/lib/toast', () => ({ toast: { error: mocks.error, loading: mocks.loading, dismiss: mocks.dismiss } }));
@@ -16,7 +17,7 @@ beforeEach(() => {
   mocks.preference.mockReturnValue('sidebar');
   mocks.preview.mockResolvedValue({ ok: true, url: 'http://127.0.0.1:12345/token/' });
   mocks.external.mockResolvedValue({ success: true });
-  Object.defineProperty(window, 'electronAPI', { configurable: true, value: { fileBrowser: { previewHtml: mocks.preview }, openExternal: mocks.external } });
+  Object.defineProperty(window, 'electronAPI', { configurable: true, value: { fileBrowser: { previewHtml: mocks.preview }, openExternal: mocks.external, openFileInBrowser: mocks.local } });
 });
 it('prepares the remote directory before opening the built-in browser', async () => {
   await openHtmlFileByPreference('session', '/remote/preview/index.html', t, context);
@@ -55,4 +56,31 @@ it.each([false, true])('dismisses neutral loading when preview settles (failure=
     expect(mocks.dismiss).toHaveBeenCalledWith('loading');
     expect(mocks.error).toHaveBeenCalledTimes(fails ? 1 : 0);
   } finally { vi.useRealTimers(); }
+});
+
+it.each(['sidebar', 'external'] as const)('opens local HTML in place with preference %s', async (preference) => {
+  mocks.preference.mockReturnValue(preference);
+  await openHtmlFileByPreference('session', '/private/tmp/a #1.html', t);
+  expect(mocks.preview).not.toHaveBeenCalled();
+  expect(mocks.loading).not.toHaveBeenCalled();
+  if (preference === 'sidebar') expect(mocks.sidebar).toHaveBeenCalledWith('session', 'file:///private/tmp/a%20%231.html');
+  else expect(mocks.local).toHaveBeenCalledWith('/private/tmp/a #1.html');
+});
+it('honors both explicit local menu targets and reports local open failures', async () => {
+  const local = { origin: { kind: 'local' as const }, workingDir: '/private/tmp' };
+  await openHtmlFileByPreference('session', '/private/tmp/index.html', t, local, 'external');
+  expect(mocks.local).toHaveBeenCalledOnce();
+  mocks.preference.mockReturnValue('external');
+  await openHtmlFileByPreference('session', '/private/tmp/index.html', t, local, 'sidebar');
+  expect(mocks.sidebar).toHaveBeenCalledWith('session', 'file:///private/tmp/index.html');
+  mocks.local.mockRejectedValueOnce(new Error('failed'));
+  await openHtmlFileByPreference('', '/private/tmp/index.html', t, local);
+  expect(mocks.error).toHaveBeenCalledWith('chat.markdownRenderer.openInBrowserFailed');
+  expect(mocks.preview).not.toHaveBeenCalled();
+});
+it('keeps SSH HTML on the remote preview path', async () => {
+  const ssh = { origin: { kind: 'ssh' as const, remoteHostId: 'host' }, workingDir: '/remote' };
+  await openHtmlFileByPreference('session', '/remote/index.html', t, ssh);
+  expect(mocks.preview).toHaveBeenCalledWith({ origin: ssh.origin, workdir: '/remote', absPath: '/remote/index.html' });
+  expect(mocks.local).not.toHaveBeenCalled();
 });

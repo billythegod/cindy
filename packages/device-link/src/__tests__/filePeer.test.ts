@@ -39,7 +39,8 @@ describe("file transfer signaling", () => {
       parseFilePeerFile({ ticket: connection, size: 0, mimeType: "text/html" })
         .size,
     ).toBe(0);
-    for (const size of [-1, NaN, Infinity, 1.5, 104857601])
+    expect(parseFilePeerFile({ ticket: connection, size: 2147483648, mimeType: "application/octet-stream" }).size).toBe(2147483648);
+    for (const size of [-1, NaN, Infinity, 1.5, 2147483649])
       expect(() =>
         parseFilePeerFile({ ticket: connection, size, mimeType: "text/html" }),
       ).toThrow();

@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { listDir, type DirEntry } from '@cindy/file-browser-core';
+import { statEntry, type DirEntry } from '@cindy/file-browser-core';
 import {
   createHtmlPreview,
   copyPreviewFile,
@@ -23,8 +23,8 @@ import { throwIpcError } from '../utils/ipcValidate.js';
 const log = createLogger('html-preview');
 export const HTML_PREVIEW_CHANNEL = 'maker:html-preview:open';
 interface RemoteSource {
-  list(args: HtmlPreviewArgs, root: string, rel: string): Promise<DirEntry[]>;
-  read(args: HtmlPreviewArgs, root: string, entry: DirEntry): Promise<string>;
+  stat(args: HtmlPreviewArgs, root: string, rel: string): Promise<Omit<DirEntry, 'name'>>;
+  read(args: HtmlPreviewArgs, root: string, entry: DirEntry, signal?: AbortSignal): Promise<string>;
 }
 
 const active = new Set<() => Promise<void>>();
@@ -56,15 +56,17 @@ export function registerHtmlPreviewIpc(remote: RemoteSource): void {
       if (!isCurrent()) throw new Error('PREVIEW_CANCELLED');
       const preview = await createHtmlPreview(args, {
         isCurrent,
-        list: async (root, rel) => {
-          if (args.origin.kind !== 'local') return remote.list(args, root, rel);
+        // Log status only: paths, signed URLs and page contents are not diagnostics.
+        onResourceError: (status) => log.warn('Preview resource request failed', { status }),
+        stat: async (root, rel) => {
+          if (args.origin.kind !== 'local') return remote.stat(args, root, rel);
           const real = await fs.realpath(path.join(root, rel));
           if (!isPathAllowedAgainst(real, getSensitiveMediaBlocklist()))
             throw new Error('BAD_ARGS');
-          return listDir(root, rel, null, { maxEntries: 2000 });
+          return statEntry(root, rel);
         },
-        read: async (root, entry) => {
-          if (args.origin.kind !== 'local') return remote.read(args, root, entry);
+        read: async (root, entry, signal) => {
+          if (args.origin.kind !== 'local') return remote.read(args, root, entry, signal);
           const source = path.join(root, entry.relPath);
           const [rootReal, real] = await Promise.all([fs.realpath(root), fs.realpath(source)]);
           if (

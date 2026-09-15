@@ -49,7 +49,7 @@ export function HtmlSnapshotReader({ preview, onError }: { preview: MobileHtmlPr
     testID="filePreview.htmlRendered"
     source={source}
     originWhitelist={['*']}
-    onShouldStartLoadWithRequest={(request) => interceptSnapshotNavigation(request.url, preview.url, preview.documents)}
+    onShouldStartLoadWithRequest={(request) => interceptSnapshotNavigation(request.url, preview.url, preview.documents, preview.onDemand)}
     setSupportMultipleWindows={false}
     allowFileAccess={false}
     mediaCapturePermissionGrantType="deny"
@@ -57,7 +57,8 @@ export function HtmlSnapshotReader({ preview, onError }: { preview: MobileHtmlPr
     onContentProcessDidTerminate={onError}
     onRenderProcessGone={onError}
     onHttpError={(event) => {
-      if (interceptSnapshotNavigation(event.nativeEvent.url, preview.url, preview.documents)) onError();
+      // Resource failures stay in the page; they must not replace an already loaded document.
+      if (!preview.onDemand && interceptSnapshotNavigation(event.nativeEvent.url, preview.url, preview.documents)) onError();
     }}
     incognito
     style={styles.fill}

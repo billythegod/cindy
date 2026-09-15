@@ -138,7 +138,7 @@ describe('sidebar-embedded action target', () => {
     await waitFor(() =>
       expect(openUrlInSidebarBrowser).toHaveBeenCalledWith(
         'lead-a',
-        'http://127.0.0.1:12345/preview/',
+        'file:///repo/src/index.html',
       ),
     );
   });

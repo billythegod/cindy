@@ -11,6 +11,7 @@ import net from 'node:net';
 if (process.platform !== 'darwin') throw new Error('This test requires Apple Network.framework on macOS');
 const dir = await mkdtemp(join(tmpdir(), 'cindy-html-native-test-'));
 let child;
+const demand = process.argv.includes('--on-demand');
 try {
   await writeFile(join(dir, '0'), '<!doctype html><meta charset="utf-8"><h1>中文</h1>');
   await writeFile(join(dir, '1'), 'body { color: green; }');
@@ -18,7 +19,23 @@ try {
   await writeFile(join(dir, 'main.swift'), `import Foundation
 import Network
 let queue = DispatchQueue(label: "test")
-let server = try HtmlSnapshotServer(root: CommandLine.arguments[1], entry: "index.html", token: String(repeating: "a", count: 48), csp: "default-src 'none'; style-src 'self'", files: [["index.html", "0", "text/html"], ["dist/main.css", "1", "text/css"], ["second.html", "2", "text/html"]], queue: queue)
+let files = [["index.html", "0", "text/html"], ["dist/main.css", "1", "text/css"], ["second.html", "2", "text/html"]]
+var server: HtmlSnapshotServer!
+var sequence = 100
+server = try HtmlSnapshotServer(root: CommandLine.arguments[1], entry: "index.html", token: String(repeating: "a", count: 48), csp: "default-src 'none'; style-src 'self'", files: ${demand ? '[]' : 'files'}, queue: queue${demand ? `, onRequest: { id, path in
+  guard let row = files.first(where: { $0[0] == path }) else {
+    _ = server.resolve(id, filename: "", mime: "", status: 404)
+    return
+  }
+  let filename = String(sequence)
+  sequence += 1
+  let root = URL(fileURLWithPath: CommandLine.arguments[1])
+  try! FileManager.default.copyItem(at: root.appendingPathComponent(row[1]), to: root.appendingPathComponent(filename))
+  queue.asyncAfter(deadline: .now() + 0.01) {
+    assert(server.resolve(id, filename: filename, mime: row[2], status: 200))
+    assert(!server.resolve(id, filename: filename, mime: row[2], status: 200))
+  }
+}` : ''})
 server.start { result in
   switch result {
     case .success(let url): print(url); fflush(stdout)
@@ -83,9 +100,11 @@ dispatchMain()
   assert.match(await raw(['GET /index.html HTTP/1.1\r\nHo', `st: ${initial.host}\r\nCookie: ${cookie}\r\n\r\n`]), /^HTTP\/1.1 200/);
   assert.match(await raw([`GET /index.html HTTP/1.1\r\nHost: ${initial.host}\r\n`, `Host: evil\r\nCookie: ${cookie}\r\n\r\n`]), /^HTTP\/1.1 400/);
   assert.match(await raw([`GET /%2e%2e/index.html HTTP/1.1\r\nHost: ${initial.host}\r\n`, `Cookie: ${cookie}\r\n\r\n`]), /^HTTP\/1.1 403/);
+  assert.equal((await fetch(origin + '/missing.js', { headers: { cookie } })).status, 404);
+  assert.equal((await fetch(origin + '/index.html', { headers: { cookie } })).status, 200);
   await new Promise((resolve) => { child.once('exit', resolve); child.kill('SIGTERM'); });
   await assert.rejects(fetch(origin + '/index.html', { headers: { cookie } }));
-  console.log('PASS: native loopback listener, bootstrap/cookie, HTML/CSS/navigation, HEAD, manifest isolation, foreign origin, malformed/split headers, traversal and shutdown');
+  console.log((demand ? 'ON-DEMAND ' : 'LEGACY ') + 'PASS: native loopback listener, bootstrap/cookie, HTML/CSS/navigation, HEAD, manifest isolation, foreign origin, malformed/split headers, traversal and shutdown');
 } finally {
   if (child && child.exitCode === null) child.kill('SIGKILL');
   await rm(dir, { recursive: true, force: true });
