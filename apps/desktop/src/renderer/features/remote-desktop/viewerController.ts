@@ -4,6 +4,7 @@ import {
   REMOTE_DESKTOP_ICE_SERVERS,
   REMOTE_DESKTOP_MAX_FRAME_BYTES,
   RemoteDesktopViewerSession,
+  viewerDisplaySize,
   RemoteDesktopViewerMedia,
   remoteDesktopFailureKey,
   isDesktopInput,
@@ -181,7 +182,9 @@ export class DesktopViewerController {
         takeover,
         isCurrent: () => this.epoch === epoch && !this.disposed && this.scope.active,
         onCapabilities: (caps) => this.publish({ caps }),
-        onStart: () => { this.resuming = true; },
+        onStart: () => {
+          this.resuming = true;
+        },
       });
       if (epoch !== this.epoch) return;
       this.publish({ caps, displayId: lease.display.id, status: 'connecting' });
@@ -337,10 +340,65 @@ export class DesktopViewerController {
   async resolution(modeId: string): Promise<void> {
     const lease = this.session.lease;
     if (!lease) return;
+    if (this.state.caps?.viewerDisplay && this.state.caps.viewerDisplayRestore) {
+      const mode = (await this.displayModes()).find((item) => item.id === modeId);
+      if (this.session.lease !== lease) return;
+      if (!mode) throw new Error('DESKTOP_DISPLAY_MODE_MISSING');
+      await this.fitDisplay(mode.width, mode.height, true);
+      return;
+    }
     await this.request({ op: 'resolution', lease: lease.lease, modeId });
     this.cancel(true);
     this.resuming = false;
     void this.connect();
+  }
+  async fitDisplay(width: number, height: number, exactResolution = false): Promise<void> {
+    if (
+      exactResolution &&
+      ![width, height].every((value) => Number.isInteger(value) && value >= 320 && value <= 2560)
+    )
+      throw new Error('DESKTOP_DISPLAY_MODE_MISSING');
+    const size = exactResolution ? { width, height } : viewerDisplaySize(width, height);
+    const lease = this.session.lease;
+    if (
+      !size ||
+      !lease?.controlling ||
+      !this.state.caps?.viewerDisplay ||
+      this.state.controlPending
+    )
+      return;
+    this.publish({ controlPending: true });
+    this.syncControl();
+    this.media.reset();
+    try {
+      const next = await this.session.fitDisplay(size.width, size.height);
+      if (this.session.lease !== lease) return;
+      const caps = this.state.caps;
+      this.publish({
+        displayId: next.display.id,
+        caps: caps
+          ? {
+              ...caps,
+              displays: [
+                ...caps.displays.filter((display) => display.id !== next.display.id),
+                next.display,
+              ],
+            }
+          : caps,
+      });
+      this.streaming = false;
+      this.runtime.receive({
+        type: 'videoSettings',
+        ...size,
+        audio: this.state.settings.audio && this.state.caps?.systemAudio === true,
+      });
+      await this.session.control(true);
+    } finally {
+      if (this.session.lease === lease) {
+        this.publish({ controlPending: false });
+        this.syncControl();
+      }
+    }
   }
   private async heartbeat(): Promise<void> {
     if (!this.scope.active || this.disposed) return;

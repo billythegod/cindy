@@ -57,6 +57,8 @@ async function fixture(firstControl?: Promise<{ controlling: boolean }>) {
             version: 1,
             enabled: true,
             canControl: true,
+            viewerDisplay: true,
+            viewerDisplayRestore: true,
             clipboardText: true,
             automaticReconnect: true,
             displays: [{ id: 'one', name: 'Display', width: 1280, height: 720 }],
@@ -71,6 +73,14 @@ async function fixture(firstControl?: Promise<{ controlling: boolean }>) {
           return control(request.enabled);
         case 'heartbeat':
           return heartbeat();
+        case 'displayModes':
+          return [{ id: '640', width: 640, height: 1242, current: false }];
+        case 'viewerDisplay':
+          return {
+            lease: 'lease',
+            controlling: false,
+            display: { id: 'viewer', width: request.width, height: request.height },
+          };
         case 'frame':
           return { jpeg: null };
         default:
@@ -88,6 +98,38 @@ const present = () => runtime.post?.({ type: 'streaming', epoch: 'lease' });
 const inputEnabled = () =>
   runtime.receive.mock.calls.filter(([message]) => message.type === 'control').at(-1)?.[0]
     .enabled ?? false;
+
+it('matches the viewer ratio without replacing the lease or resetting input sequence', async () => {
+  const f = await fixture();
+  present();
+  await controller.fitDisplay(500, 1000);
+  expect(snapshot.displayId).toBe('viewer');
+  expect(snapshot.controlling).toBe(true);
+  expect(f.control).toHaveBeenLastCalledWith(true);
+  expect(runtime.receive).toHaveBeenCalledWith({
+    type: 'videoSettings',
+    width: 960,
+    height: 1920,
+    audio: false,
+  });
+  expect(runtime.receive.mock.calls.filter(([m]) => m.type === 'init')).toHaveLength(1);
+});
+
+it('changes portrait resolution using the same temporary screen lease', async () => {
+  await fixture();
+  present();
+  await controller.fitDisplay(500, 1000);
+  await controller.resolution('640');
+  expect(snapshot.controlling).toBe(true);
+  expect(snapshot.displayId).toBe('viewer');
+  expect(runtime.receive).toHaveBeenCalledWith({
+    type: 'videoSettings',
+    width: 640,
+    height: 1242,
+    audio: false,
+  });
+  expect(runtime.receive.mock.calls.filter(([m]) => m.type === 'init')).toHaveLength(1);
+});
 
 it('orders quick copy/paste shortcuts and reports transfer failure without reconnecting', async () => {
   const current = await fixture();
