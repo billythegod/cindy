@@ -5765,7 +5765,7 @@ function RunningStatusBar({
   // A pinned panel keeps its anchor mounted through idle and subsequent turns.
   // 空闲后真正收起,不再给输入框上方留下固定空行。overlay 的 ResizeObserver 会在
   // DOM 尺寸变化后补齐 MessageStream 的 bottomPadding,因此不靠硬编码高度制造跳变。
-  if (suppressContent || (isHidden && !rightLeadingSlot && !ratePanelPinned)) return null;
+  if (!rightLeadingSlot && (suppressContent || (isHidden && !ratePanelPinned))) return null;
 
   // 两段式布局:左(运行状态) / 右(elapsed·tokens)。
   // - 左段 min-w-0(可收缩):status 并非短枚举 —— turn-start 文案带用户名(可含中文长句)、
