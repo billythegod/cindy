@@ -309,6 +309,21 @@ describe('applyInputProjection 自愈进行中提示', () => {
     expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
   });
 
+  it('does not mark a paused or restored auto-resume queue as running', () => {
+    const pendingQueue = [{ clientId: 'retry', autoResume: true }];
+    inputProjectionCb!(projection({ pendingQueue, queuePaused: true }));
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
+    expect(makerChatStore.getRunningSnapshot().get(SID)?.isRunning ?? false).toBe(false);
+    inputProjectionCb!(projection({ pendingQueue }));
+    expect(makerChatStore.getRunningSnapshot().get(SID)?.isRunning).toBe(true);
+    inputProjectionCb!(projection({ pendingQueue, queuePaused: true }));
+    expect(makerChatStore.hasSessionRecoveryPending(SID)).toBe(false);
+    expect(makerChatStore.getRunningSnapshot().get(SID)?.isRunning ?? false).toBe(false);
+    // Pausing the remaining queue does not cancel an already-drained retry.
+    inputProjectionCb!(projection({ queuePaused: true, autoResumePending: PENDING_INFO }));
+    expect(makerChatStore.getRunningSnapshot().get(SID)?.isRunning).toBe(true);
+  });
+
   it('进度更新时同一张卡的 systemCardData 必须跟着变(1/5 → 2/5)', () => {
     inputProjectionCb!(projection({ autoResumePending: { ...PENDING_INFO, attempt: 1 } }));
     const first = makerChatStore

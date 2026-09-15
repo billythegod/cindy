@@ -9633,7 +9633,7 @@ function hasSessionRecoveryPending(sessionId: string): boolean {
       message.clientId === AUTO_RESUME_PENDING_CLIENT_ID ||
       message.clientId === CODEX_RECONNECT_PENDING_CLIENT_ID,
     ) ||
-    state.pendingQueue.some((item) => item.autoResume === true)
+    (!state.queuePaused && state.pendingQueue.some((item) => item.autoResume === true))
   );
 }
 
