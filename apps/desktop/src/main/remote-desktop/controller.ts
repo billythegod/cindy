@@ -82,6 +82,7 @@ export class RemoteDesktopController {
     | null = null;
   private starting = false;
   private viewerDisplay: ViewerDisplayHandle | null = null;
+  private displayRestoring: Promise<void> | null = null;
   private displayChanging = false;
   private viewerGeometryManaged = false;
   private locking = false;
@@ -164,9 +165,28 @@ export class RemoteDesktopController {
     this.deps.stopInput();
     this.deps.stopVideo();
     this.viewerDisplay?.dispose();
-    this.viewerDisplay = null;
+    // Retain the handle until restoration completes (or can be retried after failure).
+    // EOF releases it asynchronously; a new lease must not bind stale geometry.
+    if (!this.viewerDisplay?.restore) this.viewerDisplay = null;
+    if (this.viewerDisplay) void this.restoreStoppedDisplay().catch(() => {});
     this.viewerGeometryManaged = false;
     this.deps.changed();
+  }
+  private restoreStoppedDisplay(): Promise<void> {
+    if (this.displayRestoring) return this.displayRestoring;
+    if (this.active || !this.viewerDisplay) return Promise.resolve();
+    const handle = this.viewerDisplay;
+    const pending = (async () => {
+      await handle.restore?.(() => !this.active && this.viewerDisplay === handle);
+      if (this.viewerDisplay === handle) this.viewerDisplay = null;
+    })();
+    this.displayRestoring = pending;
+    void pending
+      .finally(() => {
+        if (this.displayRestoring === pending) this.displayRestoring = null;
+      })
+      .catch(() => {});
+    return pending;
   }
   /**
    * Input injection failed while the lease is still valid. Input belongs to the
@@ -264,10 +284,11 @@ export class RemoteDesktopController {
       this.startingPeer = peer;
       const generation = this.controlGeneration;
       try {
+        if (!this.active && this.viewerDisplay) await this.restoreStoppedDisplay();
         const caps = await this.deps.capabilities();
         if (!this.authenticationCurrent(peer, authenticationSession))
           throw new Error('DESKTOP_AUTHENTICATION_REQUIRED');
-        const display = caps.displays.find((d) => d.id === request.displayId);
+        let display = caps.displays.find((d) => d.id === request.displayId);
         if (!display) throw new Error('DESKTOP_DISPLAY_MISSING');
         if (
           this.startingPeer !== peer ||
@@ -282,6 +303,20 @@ export class RemoteDesktopController {
         // A lost start reply can leave our own lease alive. Rotate it using the
         // existing cleanup so the new viewer can restart its input sequence at 0.
         else if (resumesActive) this.stop(peer);
+        if (this.viewerDisplay) {
+          const restorationGeneration = this.controlGeneration;
+          await this.restoreStoppedDisplay();
+          const restored = await this.deps.capabilities();
+          if (
+            this.startingPeer !== peer ||
+            restorationGeneration !== this.controlGeneration ||
+            !this.deps.authorized(peer) ||
+            !this.authenticationCurrent(peer, authenticationSession)
+          )
+            throw new Error('DESKTOP_LEASE_EXPIRED');
+          display = restored.displays.find((d) => d.id === request.displayId);
+          if (!display) throw new Error('DESKTOP_DISPLAY_MISSING');
+        }
         if (!request.resume) this.userStopped.delete(peer);
         const lease: RemoteDesktopLease = { lease: randomUUID(), display, controlling: false };
         this.active = {

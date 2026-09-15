@@ -344,8 +344,10 @@ export class DesktopViewerController {
       const mode = (await this.displayModes()).find((item) => item.id === modeId);
       if (this.session.lease !== lease) return;
       if (!mode) throw new Error('DESKTOP_DISPLAY_MODE_MISSING');
-      await this.fitDisplay(mode.width, mode.height, true);
-      return;
+      if ([mode.width, mode.height].every((size) => size >= 320 && size <= 2560)) {
+        await this.fitDisplay(mode.width, mode.height, true);
+        return;
+      }
     }
     await this.request({ op: 'resolution', lease: lease.lease, modeId });
     this.cancel(true);

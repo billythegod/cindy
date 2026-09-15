@@ -40,6 +40,86 @@ function fixture() {
 }
 
 describe('viewer-sized desktop ownership', () => {
+  it.each([false, true])(
+    'waits for restored geometry before starting a new lease (takeover=%s)',
+    async (takeover) => {
+      const f = fixture(),
+        lease = await f.start();
+      await f.host.request('phone', {
+        op: 'viewerDisplay',
+        lease: lease.lease,
+        width: 900,
+        height: 1600,
+      });
+      let finish!: () => void;
+      let restored = false;
+      f.deps.capabilities = async () => ({
+        version: 1,
+        enabled: true,
+        canControl: true,
+        platform: 'darwin',
+        displays: [
+          { id: '1', name: 'Main', width: restored ? 1920 : 900, height: restored ? 1080 : 1600 },
+        ],
+      });
+      f.handle.restore = vi.fn(
+        () =>
+          new Promise<RemoteDesktopLease['display']>((resolve) => {
+            finish = () => {
+              restored = true;
+              resolve({ id: '1', name: 'Main', width: 1920, height: 1080 });
+            };
+          }),
+      );
+      if (!takeover) f.host.stop('phone');
+      const pending = f.host.request('other', { op: 'start', displayId: '1', takeover });
+      await Promise.resolve();
+      expect(f.host.state).toBeNull();
+      expect(f.handle.restore).toHaveBeenCalledOnce();
+      await expect(f.host.request('third', { op: 'start', displayId: '1' })).rejects.toThrow(
+        'DESKTOP_BUSY',
+      );
+      finish();
+      const next = (await pending) as RemoteDesktopLease;
+      expect(next.display).toMatchObject({ id: '1', width: 1920, height: 1080 });
+      expect(f.host.hasLease(next.lease)).toBe(true);
+    },
+  );
+
+  it('retains failed restoration for retry and does not accept a stale display', async () => {
+    const f = fixture(),
+      lease = await f.start();
+    await f.host.request('phone', {
+      op: 'viewerDisplay',
+      lease: lease.lease,
+      width: 900,
+      height: 1600,
+    });
+    vi.mocked(f.handle.restore!).mockRejectedValueOnce(new Error('DISPLAY_NOT_RESTORED'));
+    f.host.stop();
+    await expect(f.start()).rejects.toThrow('DISPLAY_NOT_RESTORED');
+    expect(f.host.state).toBeNull();
+    await f.start();
+    expect(f.handle.restore).toHaveBeenCalledTimes(2);
+  });
+  it('finishes restoration on exit without waiting for another connection', async () => {
+    const f = fixture(),
+      lease = await f.start();
+    await f.host.request('phone', {
+      op: 'viewerDisplay',
+      lease: lease.lease,
+      width: 900,
+      height: 1600,
+    });
+    f.host.stop();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(f.handle.restore).toHaveBeenCalledOnce();
+    // Later local display changes must not trigger restoration of an already retired handle.
+    vi.mocked(f.handle.restore!).mockRejectedValue(new Error('LOCAL_MODE_CHANGED'));
+    await f.start();
+    expect(f.handle.restore).toHaveBeenCalledOnce();
+  });
   it('waits for held inputs to release and cancels before creating a display after disconnect', async () => {
     const f = fixture(),
       lease = await f.start();

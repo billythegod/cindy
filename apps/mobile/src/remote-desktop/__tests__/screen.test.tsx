@@ -604,6 +604,41 @@ describe("remote desktop controls", () => {
     act(() => button()?.click());
     expect(onFitDisplay).toHaveBeenCalledOnce();
   });
+  it("keeps 4K system resolution selectable on viewer-display hosts", async () => {
+    const original = fixture.invoke.getMockImplementation()!;
+    fixture.invoke.mockImplementation(async (...args) => {
+      const request = args[2][0];
+      if (request.op === "capabilities")
+        return {
+          ...(await original(...args)),
+          viewerDisplay: true,
+          viewerDisplayRestore: true,
+          videoSettings: true,
+          displayModes: true,
+        };
+      if (request.op === "displayModes")
+        return [{ id: "4k", width: 3840, height: 2160, current: false }];
+      return original(...args);
+    });
+    await connect();
+    act(() => button("operations").click());
+    await act(async () => button("displaySettings").click());
+    act(() => button("resolution").click());
+    const mode = Array.from(
+      host.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((item) => item.textContent === "3840 × 2160")!;
+    expect(mode).toBeDefined();
+    await act(async () => mode.click());
+    expect(requests()).toContainEqual({
+      op: "resolution",
+      lease: "lease",
+      modeId: "4k",
+    });
+    expect(requests().some((request) => request.op === "viewerDisplay")).toBe(
+      false,
+    );
+  });
+
   it("changes portrait resolution without stopping the temporary display and stops it on exit", async () => {
     const original = fixture.invoke.getMockImplementation()!;
     fixture.invoke.mockImplementation(async (...args) => {

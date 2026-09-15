@@ -34,6 +34,7 @@ async function fixture(firstControl?: Promise<{ controlling: boolean }>) {
   if (firstControl) control.mockImplementationOnce(() => firstControl);
   const heartbeat = vi.fn(async () => ({ controlling: true }));
   const clipboard = vi.fn(async () => {});
+  const resolution = vi.fn(async (_modeId: string) => ({}));
   const api = {
     state: async () => ({
       generation: 1,
@@ -74,7 +75,12 @@ async function fixture(firstControl?: Promise<{ controlling: boolean }>) {
         case 'heartbeat':
           return heartbeat();
         case 'displayModes':
-          return [{ id: '640', width: 640, height: 1242, current: false }];
+          return [
+            { id: '640', width: 640, height: 1242, current: false },
+            { id: '4k', width: 3840, height: 2160, current: false },
+          ];
+        case 'resolution':
+          return resolution(request.modeId);
         case 'viewerDisplay':
           return {
             lease: 'lease',
@@ -92,12 +98,20 @@ async function fixture(firstControl?: Promise<{ controlling: boolean }>) {
     snapshot = state;
   });
   await vi.advanceTimersByTimeAsync(0);
-  return { control, heartbeat, clipboard };
+  return { control, heartbeat, clipboard, resolution };
 }
 const present = () => runtime.post?.({ type: 'streaming', epoch: 'lease' });
 const inputEnabled = () =>
   runtime.receive.mock.calls.filter(([message]) => message.type === 'control').at(-1)?.[0]
     .enabled ?? false;
+
+it('preserves high-resolution system modes through the legacy mode-ID path', async () => {
+  const f = await fixture();
+  present();
+  await controller.resolution('4k');
+  expect(f.resolution).toHaveBeenCalledWith('4k');
+  expect(runtime.receive.mock.calls.some(([m]) => m.type === 'videoSettings')).toBe(false);
+});
 
 it('matches the viewer ratio without replacing the lease or resetting input sequence', async () => {
   const f = await fixture();

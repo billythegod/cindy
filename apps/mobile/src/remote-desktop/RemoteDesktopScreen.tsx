@@ -1490,12 +1490,17 @@ export default function RemoteDesktopScreen() {
         if (active.current !== current) return;
         const mode = modes.find((item) => item.id === modeId);
         if (!mode) throw new Error("DESKTOP_DISPLAY_MODE_MISSING");
-        await fitViewerDisplay(mode.width, mode.height, true);
+        if (
+          [mode.width, mode.height].every((size) => size >= 320 && size <= 2560)
+        ) {
+          await fitViewerDisplay(mode.width, mode.height, true);
+          return;
+        }
       } catch {
         if (active.current === current)
           setSettingNotice(t("remoteDesktop.settingFailed"));
+        return;
       }
-      return;
     }
     settingInFlight.current = true;
     setSettingBusy(true);

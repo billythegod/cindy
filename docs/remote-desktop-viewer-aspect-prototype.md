@@ -27,6 +27,9 @@ continue to offer matching only.
 - The helper retains the virtual display only for the lease. Explicit exit,
   expiry, revocation and helper failure dispose it. EOF/SIGTERM restore the source
   display mode. Original window positions are not snapshotted or restored.
+  A new lease waits for the prior temporary display's restoration before reading
+  its geometry, including takeover. A failed restoration can be retried by the
+  next start; it never creates a lease from unconfirmed geometry.
 - Resizing preserves the lease and input sequence; old video/input are stopped,
   queued old-geometry input is discarded, and the viewer negotiates video and
   reacquires control on the confirmed new display. Shared Device Link connections
@@ -34,8 +37,10 @@ continue to offer matching only.
 - Failure ends only this remote-desktop lease and restores its temporary display.
   The viewer's existing recovery remains responsible for reconnecting.
 - On hosts advertising both viewer-display capabilities, the resolution dropdown
-  resizes the temporary display without ending the lease. Exiting then restores
-  the original monitor mode. The list still includes all macOS-reported modes,
+  resizes the temporary display without ending the lease for dimensions within
+  320–2560 per edge. Larger system modes (such as 4K) retain the legacy mode-ID
+  path and its existing reconnect/persistent-mode behavior. Exiting a temporary
+  display restores the original monitor mode. The list still includes all macOS-reported modes,
   including different aspect ratios such as 800 × 600; filtering the list to the
   matched ratio is not implemented in this prototype.
 
