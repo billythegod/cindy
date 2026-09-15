@@ -381,15 +381,9 @@ export class DesktopViewerController {
         // Keep the physical source as the reconnect target; the temporary
         // display is only the current capture/input surface.
         displayId: sourceDisplayId,
-        caps: caps
-          ? {
-              ...caps,
-              displays: [
-                ...caps.displays.filter((display) => display.id !== next.display.id),
-                next.display,
-              ],
-            }
-          : caps,
+        // The temporary capture surface is lease state, never a reconnectable
+        // display choice in the selector.
+        caps,
       });
       this.streaming = false;
       this.runtime.receive({

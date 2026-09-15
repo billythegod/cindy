@@ -375,6 +375,13 @@ export class RemoteDesktopController {
             request.op === 'restoreViewerDisplay'
               ? await this.viewerDisplay.restore!(current)
               : await this.viewerDisplay.resize(request.width, request.height, current);
+          if (
+            request.op === 'restoreViewerDisplay' &&
+            !(await this.deps.capabilities()).displays.some(
+              (item) => item.id === active.sourceDisplayId,
+            )
+          )
+            throw new Error('DESKTOP_DISPLAY_MISSING');
           if (request.op === 'restoreViewerDisplay') this.viewerDisplay = null;
           if (!current()) throw new Error('DESKTOP_LEASE_EXPIRED');
           this.viewerGeometryManaged = true;
