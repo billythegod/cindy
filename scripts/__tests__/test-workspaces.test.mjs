@@ -540,12 +540,15 @@ test("Desktop native barrier runs outside the unit pool and remains a required W
 	assert.deepEqual(selectFilesForTier(desktop, desktop.tiers.unit, [unitFile, nativeFile]), [unitFile]);
 	assert.deepEqual(selectFilesForTier(desktop, tier, [unitFile, nativeFile]), [nativeFile]);
 	assert.deepEqual(tier.command.args, ["run", "--pool=forks", "--maxWorkers=1"]);
-	const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
-	const job = workflow.match(/\n  windows-unit-shards:\n([\s\S]*?)(?=\n  [a-z][a-z-]*:)/)?.[1];
-	assert.ok(job);
-	const command = "run: pnpm run test:workspaces --tier integration --workspace desktop";
-	assert.ok(job.indexOf(command) > job.indexOf("run: pnpm run test:workspaces --tier unit"));
-	assert.match(job, /- name: Run Windows native integration tests\r?\n        if: matrix\.shard == 1\r?\n        run: pnpm run test:workspaces --tier integration --workspace desktop/);
+	const source = fs.readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8").replace(/\r\n/g, "\n");
+	for (const newline of ["\n", "\r\n"]) {
+		const workflow = source.replace(/\n/g, newline);
+		const job = workflow.match(/\r?\n  windows-unit-shards:\r?\n([\s\S]*?)(?=\r?\n  [a-z][a-z-]*:)/)?.[1];
+		assert.ok(job);
+		const command = "run: pnpm run test:workspaces --tier integration --workspace desktop";
+		assert.ok(job.indexOf(command) > job.indexOf("run: pnpm run test:workspaces --tier unit"));
+		assert.match(job, /- name: Run Windows native integration tests\r?\n        if: matrix\.shard == 1\r?\n        run: pnpm run test:workspaces --tier integration --workspace desktop/);
+	}
 });
 
 test("desktop real-Git coverage is an explicit coordinated tier outside default unit", () => {
