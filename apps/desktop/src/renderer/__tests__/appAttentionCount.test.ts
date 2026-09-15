@@ -16,7 +16,6 @@ function input(overrides: Partial<AppAttentionCountInput> = {}): AppAttentionCou
     attentionKinds: new Map(),
     runningSessionIds: new Set(),
     localActivities: new Map(),
-    localSchedules: new Map(),
     ...overrides,
   };
 }
@@ -31,20 +30,6 @@ describe('app attention total', () => {
     expect(countAppAttention(input({ attentionKinds }))).toBe(3);
     attentionKinds.delete('a');
     expect(countAppAttention(input({ attentionKinds }))).toBe(2);
-  });
-
-  it('excludes local scheduled unread results from the system badge', () => {
-    const unread = { hasUnreadRun: true, hasUnreadFailedRun: false };
-    expect(
-      countAppAttention(
-        input({
-          localSchedules: new Map([
-            ['a', unread],
-            ['b', unread],
-          ]),
-        }),
-      ),
-    ).toBe(0);
   });
 
   it('excludes remote and automated sessions from the system badge', () => {
@@ -63,13 +48,30 @@ describe('app attention total', () => {
             ['scheduler', 'error'],
             ['learn', 'awaiting'],
           ]),
-          localSchedules: new Map([
-            ['remote', { hasUnreadRun: true, hasUnreadFailedRun: true }],
-            ['scheduler', { hasUnreadRun: true, hasUnreadFailedRun: true }],
-          ]),
         }),
       ),
     ).toBe(1);
+  });
+
+  it('still counts user-driven attention on ordinary tasks bound by a heartbeat schedule', () => {
+    expect(
+      countAppAttention(
+        input({
+          sessions: [
+            session('bound-read'),
+            session('bound-unread'),
+            session('bound-paused'),
+            session('scheduler', { source: 'scheduler' }),
+          ],
+          attentionKinds: new Map([
+            ['bound-read', 'done'],
+            ['bound-unread', 'awaiting'],
+            ['bound-paused', 'error'],
+            ['scheduler', 'done'],
+          ]),
+        }),
+      ),
+    ).toBe(3);
   });
 
   it('deduplicates the same local task across activity and notifications', () => {

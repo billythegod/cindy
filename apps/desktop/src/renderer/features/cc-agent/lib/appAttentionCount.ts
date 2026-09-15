@@ -7,14 +7,11 @@ import {
   type SidebarRightStatusInput,
 } from '../sidebar/sidebarRightStatus';
 
-type ScheduleAttention = { hasUnreadRun: boolean; hasUnreadFailedRun: boolean };
-
 export interface AppAttentionCountInput {
   sessions: readonly Session[];
   attentionKinds: ReadonlyMap<string, AttentionKind>;
   runningSessionIds: ReadonlySet<string>;
   localActivities: ReadonlyMap<string, SidebarRightStatusInput['liveActivity']>;
-  localSchedules: ReadonlyMap<string, ScheduleAttention>;
 }
 
 /** 与任务行的红/蓝/绿点同源，不随搜索、折叠或当前机器筛选改变。 */
@@ -26,8 +23,7 @@ export function countAppAttention(input: AppAttentionCountInput): number {
       isOrcaWorkerSession(session) ||
       session.deviceLinkDeviceId !== undefined ||
       session.source === 'scheduler' ||
-      session.source === 'learn' ||
-      input.localSchedules.has(session.id)
+      session.source === 'learn'
     )
       continue;
     const activity = projectSidebarSessionActivity({

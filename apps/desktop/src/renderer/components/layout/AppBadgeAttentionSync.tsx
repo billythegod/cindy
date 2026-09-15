@@ -3,7 +3,6 @@ import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { makerChatStore } from '@/lib/makerChatStore';
 import { useCCSessions } from '@/hooks/useCCSessions';
 import { useRemoteProjectSessions } from '@/features/device-link/remoteProjectsStore';
-import { usePublishedAutomationScheduleSessionIndex } from '@/features/cc-agent/hooks/useAutomationScheduleSessionIndex';
 import { useSessionAttentionKinds } from '@/lib/sessionAttentionStore';
 import { useAgentIslandActivityMap } from '@/state/agentIslandActivity';
 import { createLogger } from '@/lib/logger';
@@ -27,7 +26,6 @@ export function AppBadgeAttentionSync() {
     () => [...new Set([...allSessions, ...history.sessions].map((session) => session.id))],
     [allSessions, history.sessions],
   );
-  const localSchedules = usePublishedAutomationScheduleSessionIndex();
   const attentionKinds = useSessionAttentionKinds();
   const localActivities = useAgentIslandActivityMap();
   const running = useSyncExternalStore(
@@ -45,7 +43,6 @@ export function AppBadgeAttentionSync() {
   );
   const count = countAppAttention({
     sessions: allSessions,
-    localSchedules,
     attentionKinds,
     localActivities,
     runningSessionIds: displayRunningSessionIds,
