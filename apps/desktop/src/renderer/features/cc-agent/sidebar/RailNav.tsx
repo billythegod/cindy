@@ -286,7 +286,9 @@ export function RailNav({
         const isActive = session.id === activeSessionId;
         // 置顶瓷砖与聚合灯同口径:远程会话的 running/未读并入远程活动镜像。
         const remoteLamp = remoteLampOf(session.id, session.deviceLinkDeviceId);
-        const isRunning = runningSessionIds.has(session.id) || remoteLamp?.running === true;
+        const isRunning =
+          (session.deviceLinkDeviceId == null && runningSessionIds.has(session.id)) ||
+          remoteLamp?.running === true;
         const hasUnread = notifications.has(session.id) || remoteLamp?.tone != null;
         // 瓷砖短标签、aria-label、悬浮预览卡都用同一个显示标题:置顶一条刚建的会话时
         // 原始标题是内部哨兵,原样用会让 rail 上出现 "New Maker"(短标签甚至会截成 "New")。

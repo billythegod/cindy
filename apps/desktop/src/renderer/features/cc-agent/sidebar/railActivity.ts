@@ -54,7 +54,7 @@ export function aggregateRailActivity(
     if (tone && (!best || TONE_RANK[tone] > TONE_RANK[best])) best = tone;
   };
   for (const { id, deviceLinkDeviceId } of rows) {
-    if (runningSessionIds.has(id)) running = true;
+    if (!deviceLinkDeviceId && runningSessionIds.has(id)) running = true;
     consider(dotToneOf(id, notifications, attentionKinds, urgentSessionIds));
     const remote = remoteLampOf(id, deviceLinkDeviceId);
     if (remote) {

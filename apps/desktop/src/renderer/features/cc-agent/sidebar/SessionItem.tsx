@@ -411,7 +411,7 @@ export const SessionItem = memo(function SessionItem({
     liveActivity: session.deviceLinkDeviceId ? remoteActivity : islandActivity,
     attentionKind,
     isUrgentFromContext: isUrgentFromContext || remoteSchedule?.hasUnreadFailedRun === true,
-    isRunning,
+    isRunning: session.deviceLinkDeviceId ? remoteActivity?.phase === 'running' : isRunning,
     hasAttentionNotification: hasAttentionNotification || remoteSchedule?.hasUnreadRun === true,
   });
   const leftIconRunning = sessionActivity.currentTurnActive === true;
