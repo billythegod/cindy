@@ -1735,11 +1735,19 @@ export class MakerScheduleRunner implements ScheduleRunner {
       // scheduler does not emit a spurious failure notification.  Consume a
       // handoff first when the turn was accepted, so an aborted accepted send
       // cannot replay the same handoff on the next fire.
-      throwIfFireAborted(ctx.signal, 'agent turn dispatch');
       const outcome = toDesktopSessionDispatchOutcome(sendResult, {
         source: 'scheduler-runner',
         context: sendContext,
       });
+      // Normalize the returned cancellation into the same rollback path as a
+      // preparation guard. Do this before the abort check: Stop must not leave
+      // an accepted heartbeat row behind. Unknown delivery still throws through
+      // its original failure path and is never rewound here.
+      if ((isHeartbeat || schedule.source === 'bot') && acceptedMessageClientId
+        && !outcome.dispatched && outcome.reason === 'cancelled-before-dispatch') {
+        throw new RoutineDispatchDeferredError('Heartbeat cancelled before vendor dispatch');
+      }
+      throwIfFireAborted(ctx.signal, 'agent turn dispatch');
       if (!outcome.dispatched) {
         if (baselineStarted) {
           this.deps.onUndispatchedUserTurn?.(session.id);

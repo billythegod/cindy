@@ -373,6 +373,50 @@ describe('MakerScheduleRunner background subagent task tracking', () => {
   );
 
 
+  it.each(['user', 'bot'].flatMap(source => ['cancelled', 'stop-during-history', 'rollback-failed', 'uncertain'].map(path => ({ source: source as 'user' | 'bot', path }))))(
+    'settles accepted direct $source cancellation safely: $path', async ({ source, path }) => {
+      const controller = new AbortController();
+      const vendor = vi.fn();
+      const h = createSessionHarness(async (_message, opts) => {
+        await opts?.onAccepted?.();
+        await opts?.resolveAutoReviewUserIntent?.();
+        if (path === 'uncertain') {
+          vendor();
+          throw Object.assign(new Error('delivery uncertain'), { code: 'TURN_DISPATCH_UNCONFIRMED' });
+        }
+        return { accepted: false, reason: 'cancelled-before-dispatch' };
+      });
+      Object.assign(h.session, { stablePermissionModeState: { mode: 'ask', generation: 0 } });
+      const { runner, maker, notifier } = createRunnerHarness(h.session, {
+        readAutoReviewHistory: async () => {
+          if (path === 'stop-during-history') controller.abort();
+          return [];
+        },
+      });
+      vi.mocked(maker.getSessionMeta).mockResolvedValue({ id: 'scheduler-session', agentKind: 'claude-code', model: 'claude-sonnet-4-6', workDir: '/repo/project' } as never);
+      mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active', permissionMode: 'ask', planModeEnabled: true });
+      mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: 'ask', planModeEnabled: true });
+      if (path === 'rollback-failed') mocks.rewindPersistedUserMessageAfterClear.mockRejectedValueOnce(new Error('rollback unavailable'));
+      const fire = runner.fire(baseSchedule({ source, targetSessionId: 'scheduler-session' }), {
+        ...createFireContext(), signal: controller.signal, deferToCaller: true,
+      });
+      if (path === 'rollback-failed') await expect(fire).rejects.toThrow('rollback unavailable');
+      else if (path === 'stop-during-history' || path === 'uncertain') await expect(fire).rejects.toThrow();
+      else expect(await fire).toMatchObject({ deferred: true });
+      expect(mocks.createMessage).toHaveBeenCalledOnce();
+      if (path === 'uncertain') {
+        expect(mocks.rewindPersistedUserMessageAfterClear).not.toHaveBeenCalled();
+        expect(vendor).toHaveBeenCalledOnce();
+      } else {
+        expect(mocks.rewindPersistedUserMessageAfterClear).toHaveBeenCalledExactlyOnceWith(
+          h.session.id, mocks.createMessage.mock.calls[0][1].clientId,
+        );
+        expect(vendor).not.toHaveBeenCalled();
+        expect(notifier.notify).not.toHaveBeenCalled();
+      }
+    },
+  );
+
   it.each(['user', 'bot'] as const)('refreshes owner authorization for direct %s dispatch', async (source) => {
     const vendor = vi.fn();
     const h = createSessionHarness(async (_message, opts) => {
