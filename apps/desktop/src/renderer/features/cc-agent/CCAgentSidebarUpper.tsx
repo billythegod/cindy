@@ -4271,7 +4271,7 @@ function RailPanels({
         if (tone && (!best || rank[tone] > rank[best])) best = tone;
       };
       for (const s of list) {
-        if (runningSessionIds.has(s.id)) running = true;
+        if (!s.deviceLinkDeviceId && runningSessionIds.has(s.id)) running = true;
         // 远程会话灯语与 rail 段灯同源(remoteLampOf):本地 running/attention
         // 对被控端后台会话是盲区,不并入会出现「段灯亮、项目行不亮」(codex review)。
         const remote = remoteLampOf(s.id, s.deviceLinkDeviceId);

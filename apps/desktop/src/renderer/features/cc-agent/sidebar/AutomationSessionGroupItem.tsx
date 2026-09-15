@@ -238,7 +238,9 @@ export const AutomationSessionGroupItem = memo(function AutomationSessionGroupIt
   const hasVisibleChildren = visibleSessions.length > 0;
   // running / loading 也只看最新那条:组头 vendor mark 呼吸 + Timer chip 呼吸 + 右侧
   // spinner 都据此,与最新 session 子行一致(需求:「loading 状态和最新的 session 保持一致」)。
-  const isRunning = latestSessionId != null && runningSessionIds.has(latestSessionId);
+  const isRunning = latestSessionId != null && latestSession?.deviceLinkDeviceId
+    ? latestRemoteActivity?.phase === 'running'
+    : latestSessionId != null && runningSessionIds.has(latestSessionId);
   const primaryActivityIso = latestSession?.updatedAt;
   const hasActiveHidden =
     activeSessionId != null &&
