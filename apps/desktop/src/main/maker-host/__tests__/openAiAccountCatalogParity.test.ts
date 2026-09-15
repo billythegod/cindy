@@ -159,7 +159,7 @@ describe('OpenAI account catalog identity', () => {
     const second = providers.find(p => p.id === accountId)!;
     for (const agent of ['codex', 'claude-code', 'pi'] as const) {
       const ids = second.models[agent]!.map(m => m.id);
-      expect(ids).toEqual(expect.arrayContaining(original.models[agent]!.map(m => m.id)));
+      expect([...ids].sort()).toEqual(original.models[agent]!.map(m => m.id).sort());
       expect(new Set(ids).size).toBe(ids.length);
     }
     expect(entry(accountId, 'pi', remotePi.id)).toMatchObject(remotePi);

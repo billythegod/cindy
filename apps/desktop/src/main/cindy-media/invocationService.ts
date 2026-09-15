@@ -96,11 +96,13 @@ function currentAuthScope(downloadContext?: MediaDownloadContext): MediaAuthScop
   const state = authManager.getAuthState();
   const userId = state.user?.id ?? null;
   const dbOwnerId = state.dataOwnerId;
-  if (!userId || !dbOwnerId) {
+  if (!dbOwnerId || (state.mode !== 'local' && !userId) || state.mode === 'signed-out') {
     throw new MediaInvocationError('CONNECTION_UNAVAILABLE', '当前没有可用的 Cindy 登录态');
   }
   return {
-    owner: `${authManager.getActiveAuthRealm()}:${userId}`,
+    owner: state.mode === 'local'
+      ? `local:${dbOwnerId}`
+      : `${authManager.getActiveAuthRealm()}:${userId}`,
     dbOwnerId,
     generation: state.ownerGeneration,
     downloadContext,
@@ -1156,6 +1158,9 @@ async function prepareInvocation(
     }
     preparedGuide = providerImageGuide(providerModel, capability);
   } else {
+    if (!getAppCapabilities().canUseCindyGateway) {
+      return failure('CONNECTION_UNAVAILABLE', '当前账号不能使用 Cindy AI 网关');
+    }
     let resolvedGuide: ResolvedMediaInvocationGuide;
     try {
       resolvedGuide = await fetchMediaInvocationGuide(resolvedModelId);
@@ -1779,7 +1784,7 @@ export async function callCindyMedia(
       };
     }
     if (request.action === 'prepare') {
-      return prepareInvocation(
+      return await prepareInvocation(
         request.providerId,
         request.modelId,
         request.capability as MediaCapability,
