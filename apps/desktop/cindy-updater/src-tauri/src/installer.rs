@@ -135,6 +135,9 @@ impl InstallerFailure {
         }
     }
 
+    /// Leave Electron's staged ZIP in place. Used when this updater must stop
+    /// without taking ownership — UAC cancel, or another updater already holds
+    /// `.updating` and may still need the same archive.
     fn keep_archive(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -391,21 +394,100 @@ fn process_is_elevated() -> bool {
     false
 }
 
+#[cfg(windows)]
+const CROSS_DEVICE_ERRNO: i32 = 17; // ERROR_NOT_SAME_DEVICE
+#[cfg(unix)]
+const CROSS_DEVICE_ERRNO: i32 = 18; // EXDEV
+#[cfg(not(any(windows, unix)))]
+const CROSS_DEVICE_ERRNO: i32 = 18;
+
+fn is_cross_device(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(CROSS_DEVICE_ERRNO)
+}
+
 fn prepare_retry_archive(args: &CliArgs) -> bool {
     let target = retry_archive(args);
     if args.zip == target || !args.zip.exists() {
         return retry_available(&target);
     }
-    if target.exists() {
+    isolate_archive_with(
+        &args.zip,
+        &target,
+        args.zip_sha256.as_deref(),
+        |src, dst| fs::rename(src, dst),
+    )
+}
+
+fn isolate_archive_with<F>(
+    src: &Path,
+    dst: &Path,
+    expected_sha256: Option<&str>,
+    rename: F,
+) -> bool
+where
+    F: FnOnce(&Path, &Path) -> io::Result<()>,
+{
+    if dst.exists() {
         return false;
     }
-    match fs::rename(&args.zip, &target) {
-        Ok(()) => retry_available(&target),
+    match rename(src, dst) {
+        Ok(()) => retry_available(dst),
+        Err(error) if is_cross_device(&error) => copy_verified_archive(src, dst, expected_sha256),
         Err(error) => {
             logger::warn(format!("[retry] could not isolate archive: {error}"));
             false
         }
     }
+}
+
+fn copy_verified_archive(src: &Path, dst: &Path, expected_sha256: Option<&str>) -> bool {
+    let Some(expected) = expected_sha256.filter(|digest| !digest.is_empty()) else {
+        logger::warn("[retry] refusing cross-device copy without a trusted digest");
+        return false;
+    };
+    let mut source = match open_regular_file(src) {
+        Ok(file) => file,
+        Err(error) => {
+            logger::warn(format!("[retry] could not open archive for copy: {error}"));
+            return false;
+        }
+    };
+    let digest = match sha256_hex(&mut source) {
+        Ok(digest) => digest,
+        Err(error) => {
+            logger::warn(format!("[retry] could not hash archive before copy: {error}"));
+            return false;
+        }
+    };
+    if !digest.eq_ignore_ascii_case(expected) {
+        logger::warn("[retry] archive digest changed before cross-device copy");
+        return false;
+    }
+    let copied = (|| -> io::Result<()> {
+        let mut dest = File::create(dst)?;
+        io::copy(&mut source, &mut dest)?;
+        dest.sync_all()?;
+        Ok(())
+    })();
+    if let Err(error) = copied {
+        logger::warn(format!("[retry] cross-device copy failed: {error}"));
+        let _ = fs::remove_file(dst);
+        return false;
+    }
+    if !archive_matches_digest(dst, expected) {
+        logger::warn("[retry] isolated copy did not match the trusted digest");
+        let _ = fs::remove_file(dst);
+        return false;
+    }
+    if let Err(error) = fs::remove_file(src) {
+        logger::warn(format!(
+            "[retry] isolated copy but could not remove source {}: {error}",
+            src.display()
+        ));
+        let _ = fs::remove_file(dst);
+        return false;
+    }
+    retry_available(dst)
 }
 
 /// Retryable failures isolate the archive away from Electron's auto-apply path.
@@ -656,9 +738,8 @@ fn run_inner<F: FnMut(InstallerEvent)>(
     let lock = match held_lock {
         Some(lock) => lock,
         None => acquire_update_lock(&args.lock).map_err(|_| {
-            InstallerFailure::new(
+            InstallerFailure::keep_archive(
                 "另一项更新正在进行，请关闭此窗口后重新检查更新",
-                false,
             )
         })?,
     };
@@ -1632,6 +1713,81 @@ mod tests {
         let reopened = super::reopen_held_update_lock(&lock).expect("retry reopens retained lock");
         release_update_lock(reopened);
         assert!(!lock.exists());
+    }
+
+    #[test]
+    fn busy_lock_does_not_delete_the_active_updater_archive() {
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.app_dir = temp.0.join("app");
+        args.workdir = temp.0.join("cindy-update-ts");
+        args.lock = temp.0.join(".updating");
+        args.log = temp.0.join("update.log");
+        args.pid = 0;
+        args.elevated = true;
+        fs::create_dir(&args.app_dir).unwrap();
+        fs::create_dir(&args.workdir).unwrap();
+        args.zip = temp.0.join("update.zip");
+        fs::write(&args.zip, b"active-archive").unwrap();
+        args.zip_sha256 = Some(format!("{:x}", sha2::Sha256::digest(b"active-archive")));
+        let held = acquire_update_lock(&args.lock).expect("first updater holds the lock");
+
+        let mut events = Vec::new();
+        run(args.clone(), |event| events.push(event));
+
+        assert!(
+            args.zip.exists(),
+            "the rejected updater must not delete the ZIP still owned by the lock holder"
+        );
+        assert_eq!(fs::read(&args.zip).unwrap(), b"active-archive");
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, super::InstallerEvent::Failed(_, false))),
+            "lock contention stays non-retryable so this window does not offer Retry"
+        );
+        release_update_lock(held);
+    }
+
+    #[test]
+    fn retry_isolation_falls_back_to_copy_when_rename_crosses_devices() {
+        let temp = TestDir::new();
+        let src = temp.0.join("updates").join("update.zip");
+        fs::create_dir_all(src.parent().unwrap()).unwrap();
+        let dst = temp.0.join("workdir").join("retry.zip");
+        fs::create_dir(dst.parent().unwrap()).unwrap();
+        fs::write(&src, b"archive").unwrap();
+        let digest = format!("{:x}", sha2::Sha256::digest(b"archive"));
+
+        assert!(super::isolate_archive_with(
+            &src,
+            &dst,
+            Some(&digest),
+            |_, _| Err(std::io::Error::from_raw_os_error(super::CROSS_DEVICE_ERRNO)),
+        ));
+        assert!(
+            !src.exists(),
+            "source must be removed only after the isolated copy matches the trusted digest"
+        );
+        assert_eq!(fs::read(&dst).unwrap(), b"archive");
+        assert!(archive_matches_digest(&dst, &digest));
+    }
+
+    #[test]
+    fn retry_isolation_copy_fallback_keeps_source_when_digest_mismatches() {
+        let temp = TestDir::new();
+        let src = temp.0.join("update.zip");
+        let dst = temp.0.join("retry.zip");
+        fs::write(&src, b"tampered").unwrap();
+
+        assert!(!super::isolate_archive_with(
+            &src,
+            &dst,
+            Some(&format!("{:x}", sha2::Sha256::digest(b"trusted"))),
+            |_, _| Err(std::io::Error::from_raw_os_error(super::CROSS_DEVICE_ERRNO)),
+        ));
+        assert!(src.exists(), "untrusted source must stay for diagnosis");
+        assert!(!dst.exists(), "failed isolation must not leave a retry.zip");
     }
 
     #[test]

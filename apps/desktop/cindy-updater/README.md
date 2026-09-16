@@ -90,7 +90,11 @@ The failure window offers Retry only if the installation was not modified, or
 rollback succeeded, and the update zip can be isolated as `retry.zip` in this
 attempt's temporary workdir. Moving it out of Electron's staged-patch location
 prevents the restored app from automatically applying the same failed archive.
-If the move fails, Retry is unavailable.
+Same-volume isolation uses rename; a cross-volume `EXDEV` / `ERROR_NOT_SAME_DEVICE`
+falls back to a digest-checked copy of the still-open source, then deletes the
+staged file only after the copy matches. If isolation fails, Retry is unavailable.
+A second updater that loses the exclusive `.updating` lock leaves the staged ZIP
+in place for the holder; it does not delete the active installation's archive.
 
 Retry is never automatic: Rust rechecks the failure state and readable archive,
 then re-runs the installer in the already-loaded process using trusted Rust-owned
