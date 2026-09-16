@@ -565,7 +565,9 @@ fall back to clipboard content, but protected/failed/stale selection reads do no
 
 Clipboard JSON is transferred sequentially in 64 Ki-character chunks, at most
 32 Mi-characters total (native iOS additionally bounds UTF-8 bytes). Images are
-limited to 64 million pixels on iOS; Android uses the smaller limits below.
+limited to 4 million pixels on iOS before PNG encoding or incoming PNG decoding,
+with an 8 MiB encoded PNG limit. Oversized images are rejected, not downsampled.
+Android uses the limits described below.
 Each transfer is peer/lease/control-generation
 bound, lives only in memory, expires after 60 seconds, and is discarded on
 control changes or disconnect. Commit consumes its transfer before pasting and

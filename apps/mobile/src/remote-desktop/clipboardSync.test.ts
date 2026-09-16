@@ -79,6 +79,29 @@ function harness() {
   };
 }
 describe("automatic clipboard synchronization", () => {
+  it("skips an unsupported computer snapshot until its counter changes", async () => {
+    const h = harness();
+    await h.engine.tick();
+    h.remote("2");
+    const original = h.request.getMockImplementation()!;
+    h.request.mockImplementation(async (message) => {
+      if (message.op === "clipboardContent" && message.action === "copy")
+        throw new Error("CLIPBOARD_UNSUPPORTED");
+      return original(message);
+    });
+    await expect(h.engine.tick()).resolves.toBeUndefined();
+    await expect(h.engine.tick()).resolves.toBeUndefined();
+    expect(
+      h.request.mock.calls.filter(
+        ([r]) => r.op === "clipboardContent" && r.action === "copy",
+      ),
+    ).toHaveLength(1);
+    expect(h.write).not.toHaveBeenCalled();
+    h.request.mockImplementation(original);
+    h.remote("4");
+    await h.engine.tick();
+    expect(h.write).toHaveBeenCalledTimes(1);
+  });
   it.each(["CLIPBOARD_UNSUPPORTED", "CLIPBOARD_TOO_LONG"])(
     "skips %s once, then transfers the next copy",
     async (code) => {
@@ -266,13 +289,17 @@ describe("automatic clipboard synchronization", () => {
     await h.engine.tick();
     await h.engine.tick();
     expect(h.write).toHaveBeenCalledTimes(1);
-    expect(h.request.mock.calls.every(([r]) => r.op === "clipboardVersion")).toBe(true);
+    expect(
+      h.request.mock.calls.every(([r]) => r.op === "clipboardVersion"),
+    ).toBe(true);
     // A later real copy still propagates after that counter-only notification.
     h.local("5");
     await h.engine.tick();
-    expect(h.request.mock.calls.filter(
-      ([r]) => r.op === "clipboardContent" && r.action === "commit",
-    )).toHaveLength(1);
+    expect(
+      h.request.mock.calls.filter(
+        ([r]) => r.op === "clipboardContent" && r.action === "commit",
+      ),
+    ).toHaveLength(1);
   });
   it("preserves concurrent local and remote copies", async () => {
     const h = harness();

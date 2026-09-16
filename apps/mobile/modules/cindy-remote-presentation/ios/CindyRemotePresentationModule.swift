@@ -116,11 +116,17 @@ enum RemoteClipboard {
     }
     if let image = image {
       guard (image.images?.count ?? 1) <= 1 else { throw failure("CLIPBOARD_UNSUPPORTED") }
-      guard image.size.width * image.scale * image.size.height * image.scale <= 64_000_000 else {
+      guard RemoteClipboardSize.acceptsImage(
+        width: Double(image.size.width * image.scale), height: Double(image.size.height * image.scale)
+      ) else {
+        throw failure("CLIPBOARD_TOO_LONG")
+      }
+      if let bitmap = image.cgImage,
+        !RemoteClipboardSize.acceptsImage(width: Double(bitmap.width), height: Double(bitmap.height)) {
         throw failure("CLIPBOARD_TOO_LONG")
       }
       guard let png = image.pngData() else { throw failure("CLIPBOARD_UNSUPPORTED") }
-      guard png.count <= limit * 3 / 4 else { throw failure("CLIPBOARD_TOO_LONG") }
+      guard png.count <= RemoteClipboardSize.imageBytes else { throw failure("CLIPBOARD_TOO_LONG") }
       result["png"] = png.base64EncodedString()
     }
     guard !result.isEmpty else { throw failure("CLIPBOARD_UNSUPPORTED") }
@@ -151,12 +157,18 @@ enum RemoteClipboard {
       item["public.url"] = url
     }
     if let encoded = content["png"] {
+      guard encoded.utf8.count <= ((RemoteClipboardSize.imageBytes + 2) / 3) * 4 else {
+        throw failure("CLIPBOARD_TOO_LONG")
+      }
       guard let png = Data(base64Encoded: encoded), png.count >= 24,
         Array(png.prefix(8)) == [137, 80, 78, 71, 13, 10, 26, 10] else { throw failure("CLIPBOARD_UNSUPPORTED") }
+      guard png.count <= RemoteClipboardSize.imageBytes else { throw failure("CLIPBOARD_TOO_LONG") }
       let width = png[16..<20].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
       let height = png[20..<24].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
-      guard width > 0, height > 0, width * height <= 64_000_000,
-        UIImage(data: png) != nil else { throw failure("CLIPBOARD_UNSUPPORTED") }
+      guard RemoteClipboardSize.acceptsImage(width: Double(width), height: Double(height)) else {
+        throw failure("CLIPBOARD_TOO_LONG")
+      }
+      guard UIImage(data: png) != nil else { throw failure("CLIPBOARD_UNSUPPORTED") }
       item["public.png"] = png
     }
     try foreground()
