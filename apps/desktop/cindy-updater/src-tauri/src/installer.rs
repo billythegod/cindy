@@ -66,7 +66,14 @@ pub fn run<F: FnMut(InstallerEvent)>(mut args: CliArgs, mut emit: F) {
     match run_inner(&args, &mut emit) {
         Ok(()) => emit(InstallerEvent::Done),
         Err(failure) => {
-            let can_retry = finalize_retry_state(&args, failure.can_retry);
+            let can_retry = if failure.can_retry {
+                finalize_retry_state(&args, true)
+            } else {
+                if failure.discard_archive {
+                    discard_staged_archives(&args);
+                }
+                false
+            };
             logger::error(format!("[installer] FAILED: {}", failure.message));
             let _ = fs::remove_file(&args.lock);
             emit(InstallerEvent::Failed(failure.message, can_retry));
@@ -78,6 +85,10 @@ pub fn run<F: FnMut(InstallerEvent)>(mut args: CliArgs, mut emit: F) {
 struct InstallerFailure {
     message: String,
     can_retry: bool,
+    /// Terminal archive errors must delete Electron's staged ZIP. UAC cancel
+    /// leaves a still-valid package in place so the next Cindy launch can
+    /// apply it without a TEMP `runas` from this updater.
+    discard_archive: bool,
 }
 
 impl InstallerFailure {
@@ -85,6 +96,15 @@ impl InstallerFailure {
         Self {
             message: message.into(),
             can_retry,
+            discard_archive: !can_retry,
+        }
+    }
+
+    fn keep_archive(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            can_retry: elevation_prompt_can_retry(),
+            discard_archive: false,
         }
     }
 }
@@ -380,6 +400,11 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                 Phase::RequestingElevation,
                 "需要管理员权限，请在弹出的 UAC 提示中点击「是」…".into(),
             ));
+            if !may_self_elevate(is_retry) {
+                return Err(InstallerFailure::keep_archive(
+                    "需要管理员权限，但无法从当前更新器再次请求授权。请关闭此窗口后重新检查更新",
+                ));
+            }
             match self_elevate(args) {
                 Ok(()) => {
                     logger::info("[elevate] elevated child spawned, exiting original updater");
@@ -390,16 +415,15 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                     std::process::exit(0);
                 }
                 Err(ElevateError::UserCancelled) => {
-                    return Err(InstallerFailure::new(
+                    return Err(InstallerFailure::keep_archive(
                         "用户取消了管理员授权，更新已取消",
-                        true,
                     ));
                 }
                 Err(ElevateError::Other(e)) => {
-                    return Err(InstallerFailure::new(
-                        format!("请求管理员权限失败：{}", e),
-                        true,
-                    ));
+                    return Err(InstallerFailure::keep_archive(format!(
+                        "请求管理员权限失败：{}",
+                        e
+                    )));
                 }
             }
         }
@@ -459,7 +483,11 @@ fn run_inner<F: FnMut(InstallerEvent)>(
     })
     .map_err(|error| {
         let can_retry = extract_error_can_retry(&error);
-        InstallerFailure::new(error.to_string(), can_retry)
+        InstallerFailure {
+            message: error.to_string(),
+            can_retry,
+            discard_archive: !can_retry,
+        }
     })?;
 
     // 3.5. Selective backup: copy *only* the files in app_dir that the new
@@ -1042,8 +1070,9 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 mod tests {
     use super::{
         archive_matches_digest, bind_zip_sha256, extract_error_can_retry, finalize_retry_state,
-        path_is_within, prepare_retry_archive, remove_staging_dir, retry_allowed, retry_args,
-        retry_available, retry_cli_args, retry_request_allowed, rollback, staging_dirs, Phase,
+        may_self_elevate, path_is_within, prepare_retry_archive, remove_staging_dir, retry_allowed,
+        retry_args, retry_available, retry_cli_args, retry_request_allowed, rollback, staging_dirs,
+        Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use sha2::Digest;
@@ -1296,6 +1325,23 @@ mod tests {
 
         source.elevated = false;
         assert!(!retry_args(&source).elevated);
+    }
+
+    #[test]
+    fn retry_must_not_rerequest_uac_from_the_temp_updater() {
+        assert!(
+            may_self_elevate(false),
+            "the first attempt may still ShellExecute the TEMP updater once"
+        );
+        assert!(
+            !may_self_elevate(true),
+            "Retry must not runas current_exe from the Electron-created TEMP workdir"
+        );
+    }
+
+    #[test]
+    fn cancelled_or_failed_uac_prompt_is_not_retryable() {
+        assert!(!super::elevation_prompt_can_retry());
     }
 
     #[test]
@@ -1570,6 +1616,20 @@ impl std::fmt::Display for ElevateError {
             ElevateError::Other(s) => f.write_str(s),
         }
     }
+}
+
+/// The first unelevated attempt may `runas` this TEMP-copied updater once.
+/// A later Retry must not: the failure window waits long enough for a
+/// same-login process to plant `vcruntime140*.dll` beside the executable.
+pub(crate) fn may_self_elevate(is_retry: bool) -> bool {
+    !is_retry
+}
+
+/// Cancelling or failing the UAC prompt leaves a still-valid archive. Offering
+/// Retry would `runas` the same TEMP updater; close the window and check for
+/// updates again instead.
+pub(crate) fn elevation_prompt_can_retry() -> bool {
+    false
 }
 
 /// Relaunch THIS updater binary with the same args plus `--elevated`, via

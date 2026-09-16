@@ -112,7 +112,10 @@ install directory instead of the unelevated `%TEMP%` workdir, so a same-login
 medium-integrity process cannot replace extracted files before they are copied.
 The retry command checks for processes running from the install directory and
 asks the user to close them; manual retry never force-terminates those processes.
-UAC elevation follows the existing flow again when needed.
+The first attempt may still request UAC by relaunching this TEMP-copied updater.
+Cancelling that prompt, or a Retry that would need a second `runas`, does not
+offer Retry and does not relaunch the TEMP executable; close the window and
+check for updates again. An already-elevated Retry continues in-process.
 
 A successful rollback retains the isolated zip for retry and still attempts to
 relaunch the restored app; close that app before retrying. A successful update
