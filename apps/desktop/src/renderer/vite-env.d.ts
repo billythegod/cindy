@@ -4149,6 +4149,10 @@ interface ElectronAPI {
     rebindTeam: (
       teamId: string,
     ) => Promise<{ hook: import('../shared/hookControlIpc').SlackHookView }>;
+    setSlackCommunications: (
+      teamId: string,
+      enabled: boolean,
+    ) => Promise<{ hook: import('../shared/hookControlIpc').SlackHookView }>;
     revokeTeam: (
       teamId: string,
     ) => Promise<{ hook: import('../shared/hookControlIpc').SlackHookView }>;

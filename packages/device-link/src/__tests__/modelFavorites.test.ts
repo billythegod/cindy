@@ -5,7 +5,7 @@ import {
   MODEL_FAVORITES_GET,
   MODEL_FAVORITES_APPLY,
   MODEL_FAVORITES_CHANGED,
-} from "../modelFavorites";
+} from "../index";
 import { REMOTE_INVOKE_ALLOWLIST, PUSH_FORWARD_ALLOWLIST } from "../allowlist";
 import { topicForPush } from "../topics";
 const item = {
