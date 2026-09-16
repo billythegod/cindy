@@ -55,6 +55,8 @@ const LAUNCH_VERIFY_POLL: Duration = Duration::from_millis(100);
 pub fn run<F: FnMut(InstallerEvent)>(mut args: CliArgs, mut emit: F) {
     if let Err(error) = bind_zip_sha256(&mut args) {
         logger::error(format!("[installer] FAILED: archive unavailable ({error})"));
+        let (extract_dir, backup_dir) = staging_dirs(&args);
+        remove_pre_install_staging(&extract_dir, &backup_dir);
         discard_staged_archives(&args);
         let _ = fs::remove_file(&args.lock);
         emit(InstallerEvent::Failed(
@@ -66,6 +68,10 @@ pub fn run<F: FnMut(InstallerEvent)>(mut args: CliArgs, mut emit: F) {
     match run_inner(&args, &mut emit) {
         Ok(()) => emit(InstallerEvent::Done),
         Err(failure) => {
+            let (extract_dir, backup_dir) = staging_dirs(&args);
+            if !failure.keep_backup {
+                remove_pre_install_staging(&extract_dir, &backup_dir);
+            }
             let can_retry = if failure.can_retry {
                 finalize_retry_state(&args, true)
             } else {
@@ -89,6 +95,10 @@ struct InstallerFailure {
     /// leaves a still-valid package in place so the next Cindy launch can
     /// apply it without a TEMP `runas` from this updater.
     discard_archive: bool,
+    /// Keep the rollback directory only after a real rollback failure. Extract
+    /// and snapshot errors happen before app_dir is rewritten, so their
+    /// elevated staging under app_dir must be deleted.
+    keep_backup: bool,
 }
 
 impl InstallerFailure {
@@ -97,6 +107,7 @@ impl InstallerFailure {
             message: message.into(),
             can_retry,
             discard_archive: !can_retry,
+            keep_backup: false,
         }
     }
 
@@ -105,6 +116,7 @@ impl InstallerFailure {
             message: message.into(),
             can_retry: elevation_prompt_can_retry(),
             discard_archive: false,
+            keep_backup: false,
         }
     }
 }
@@ -254,6 +266,33 @@ pub(crate) fn finalize_retry_state(args: &CliArgs, can_retry: bool) -> bool {
     } else {
         discard_staged_archives(args);
         false
+    }
+}
+
+fn remove_pre_install_staging(extract_dir: &Path, backup_dir: &Path) {
+    if extract_dir.exists() {
+        match fs::remove_dir_all(extract_dir) {
+            Ok(()) => logger::info(format!(
+                "[installer] removed pre-install extract staging {}",
+                extract_dir.display()
+            )),
+            Err(error) => logger::warn(format!(
+                "[installer] could not remove extract staging {}: {error}",
+                extract_dir.display()
+            )),
+        }
+    }
+    if backup_dir.exists() {
+        match fs::remove_dir_all(backup_dir) {
+            Ok(()) => logger::info(format!(
+                "[installer] removed pre-install backup staging {}",
+                backup_dir.display()
+            )),
+            Err(error) => logger::warn(format!(
+                "[installer] could not remove backup staging {}: {error}",
+                backup_dir.display()
+            )),
+        }
     }
 }
 
@@ -487,6 +526,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
             message: error.to_string(),
             can_retry,
             discard_archive: !can_retry,
+            keep_backup: false,
         }
     })?;
 
@@ -629,15 +669,17 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                     // restore. Staging is still cleaned (it's never useful
                     // for recovery, only the backup is).
                     cleanup_staging(true);
-                    return Err(InstallerFailure::new(
-                        format!(
+                    return Err(InstallerFailure {
+                        message: format!(
                             "{} (回滚也失败：{}；备份保留在 {} 供手动恢复)",
                             install_err,
                             rb_err,
                             backup_dir.display()
                         ),
-                        false,
-                    ));
+                        can_retry: false,
+                        discard_archive: true,
+                        keep_backup: true,
+                    });
                 }
             }
         }
@@ -1071,8 +1113,8 @@ mod tests {
     use super::{
         archive_matches_digest, bind_zip_sha256, extract_error_can_retry, finalize_retry_state,
         may_self_elevate, path_is_within, prepare_retry_archive, remove_staging_dir, retry_allowed,
-        retry_args, retry_available, retry_cli_args, retry_request_allowed, rollback, staging_dirs,
-        Phase,
+        retry_args, retry_available, retry_cli_args, retry_request_allowed, rollback, run,
+        staging_dirs, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use sha2::Digest;
@@ -1342,6 +1384,46 @@ mod tests {
     #[test]
     fn cancelled_or_failed_uac_prompt_is_not_retryable() {
         assert!(!super::elevation_prompt_can_retry());
+    }
+
+    #[test]
+    fn pre_install_failures_remove_protected_staging_dirs() {
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.app_dir = temp.0.join("app");
+        args.workdir = temp.0.join("cindy-update-ts");
+        args.lock = temp.0.join("update.lock");
+        args.log = temp.0.join("update.log");
+        args.pid = 0;
+        args.elevated = true;
+        fs::create_dir(&args.app_dir).unwrap();
+        fs::create_dir(&args.workdir).unwrap();
+        args.zip = super::retry_archive(&args);
+        fs::write(&args.zip, b"not-a-zip").unwrap();
+        args.zip_sha256 = Some(format!("{:x}", sha2::Sha256::digest(b"not-a-zip")));
+        let (extract_dir, backup_dir) = staging_dirs(&args);
+        fs::create_dir_all(extract_dir.join("partial")).unwrap();
+        fs::write(extract_dir.join("partial").join("Cindy.exe"), b"partial").unwrap();
+        fs::create_dir_all(&backup_dir).unwrap();
+        fs::write(backup_dir.join("Cindy.exe"), b"old").unwrap();
+
+        let mut events = Vec::new();
+        run(args.clone(), |event| events.push(event));
+
+        assert!(
+            !extract_dir.exists(),
+            "extract staging under app_dir must not survive a pre-install failure"
+        );
+        assert!(
+            !backup_dir.exists(),
+            "backup staging under app_dir must not survive a pre-install failure"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, super::InstallerEvent::Failed(_, false))),
+            "terminal ZIP errors stay non-retryable"
+        );
     }
 
     #[test]

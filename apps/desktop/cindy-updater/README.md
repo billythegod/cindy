@@ -110,6 +110,8 @@ potentially stale PID. The WebView cannot supply paths or commands.
 When the updater is already elevated, extract and backup staging live under the
 install directory instead of the unelevated `%TEMP%` workdir, so a same-login
 medium-integrity process cannot replace extracted files before they are copied.
+Failures before replacement delete those staging directories; only a rollback
+that itself failed keeps the backup for manual recovery.
 The retry command checks for processes running from the install directory and
 asks the user to close them; manual retry never force-terminates those processes.
 The first attempt may still request UAC by relaunching this TEMP-copied updater.

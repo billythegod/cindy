@@ -743,14 +743,11 @@ describe('app update forward-only policy', () => {
     try {
       const handler = ipcHandlers.get('update-check-startup');
       await expect(handler?.()).resolves.toMatchObject({
-        hasUpdate: true,
-        action: 'relaunch',
-        version: '0.0.65',
+        hasUpdate: false,
+        action: 'none',
+        error: 'manifest_failed',
       });
-
-      ipcListeners.get('update-relaunch')?.({}, 'dark');
-
-      await vi.waitFor(() => { expect(service.getUpdateStatus()).toBe('error'); });
+      expect(service.getUpdateStatus()).toBe('idle');
       expect(spawnProcess).not.toHaveBeenCalled();
       expect(fs.existsSync(patchPath)).toBe(true);
       expect(fs.existsSync(patchInfoPath)).toBe(true);
@@ -782,7 +779,11 @@ describe('app update forward-only policy', () => {
     service.initUpdateService();
     try {
       const startupHandler = ipcHandlers.get('update-check-startup');
-      await expect(startupHandler?.()).resolves.toMatchObject({ action: 'relaunch' });
+      await expect(startupHandler?.()).resolves.toMatchObject({
+        hasUpdate: false,
+        action: 'none',
+        error: 'manifest_failed',
+      });
 
       const checkNowHandler = ipcHandlers.get('update-check-now');
       await expect(checkNowHandler?.()).resolves.toEqual({ result: 'ready' });

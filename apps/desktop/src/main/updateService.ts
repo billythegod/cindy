@@ -1189,6 +1189,26 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
     return 'ready';
   }
 
+  // Cold-started Windows patches stay off the relaunch path until a current
+  // manifest restores the trust anchor. Reuse that staged file instead of
+  // downloading it again.
+  if (!wasReady && process.platform === 'win32') {
+    const patchResult = checkExistingPatch();
+    if (patchResult.action === 'relaunch' && patchResult.version === latestVersion) {
+      const sameFile = path.basename(asset.file) === path.basename(readyFilePath ?? '');
+      const trustedSha256 = sameFile ? normalizeWindowsZipSha256(asset.sha256) : undefined;
+      if (!trustedSha256) {
+        log.info('Windows: current manifest cannot re-anchor the staged patch — discarding it');
+        discardStagedPatchFiles();
+        return 'idle';
+      }
+      readyZipSha256 = trustedSha256;
+      log.info('Staged patch v%s matches latest — skipping re-download', latestVersion);
+      setStatus('ready', { version: latestVersion });
+      return 'ready';
+    }
+  }
+
   log.info('Update available: %s → %s (wasReady=%s)', currentVersion, latestVersion, wasReady);
 
   const downloadUrl = `${getBaseUrl()}/${asset.file}`;
@@ -2244,9 +2264,21 @@ export function initUpdateService(): void {
         // Network unavailable — fall back to local patch.
         log.info('Manifest fetch failed, falling back to local patch');
         const patchResult = checkExistingPatch();
-        if (patchResult.action === 'relaunch' && process.platform !== 'linux') {
+        if (patchResult.action === 'relaunch' && process.platform === 'darwin') {
           currentStatus = 'ready';
           return await buildStartupReadyReply(patchResult.version);
+        }
+        if (patchResult.action === 'relaunch' && process.platform === 'win32') {
+          // Windows 安装的信任锚是当前进程里的 manifest SHA-256。冷启动
+          // checkExistingPatch 不会信任用户可写的 patch-info.sha256，断网时
+          // 没有可信摘要就不能 relaunch；保留暂存包等下次在线对账。
+          log.info(
+            'Windows: manifest unavailable — keeping local patch without relaunch until a trusted digest is restored',
+          );
+          readyVersion = undefined;
+          readyFilePath = undefined;
+          readyZipSha256 = undefined;
+          readyChannelEpoch = undefined;
         }
         if (patchResult.action === 'relaunch' && process.platform === 'linux') {
           // Linux 安装的信任锚是 manifest 里的 installer 摘要;断网拿不到
