@@ -633,9 +633,12 @@ clipboard image reads and incoming PNGs to 4 million pixels, with 8 MiB limits o
 and encoded PNG. Incoming Base64 length is checked before decoding, and its PNG
 header and dimensions before publication. Oversized images are rejected before unbounded encoding or
 Base64 copies; images are not downsampled. Android clipboard images
-use grant-scoped cache files. A later successful image write removes files older
-than one hour, preserving every URI still referenced by the current clipboard;
-failed preparation/publication never removes an earlier image.
+use grant-scoped cache files. Every successful image, text or URL replacement
+reclaims unreferenced published images, retaining at most three previous images
+(24 MiB) for up to one hour as a read grace period. Current clipboard URIs are
+always preserved. Preparation uses unpublished temporary files; failed or cancelled
+preparation/publication removes only its own file. Cleanup is best effort when
+the clipboard cannot be inspected or the filesystem rejects deletion.
 
 Desktop manual copy, automatic reads and write verification share a 4 million
 pixel check before native PNG encoding. PNG buffers over 8 MiB are rejected before

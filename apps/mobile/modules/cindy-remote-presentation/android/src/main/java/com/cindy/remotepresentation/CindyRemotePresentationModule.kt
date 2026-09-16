@@ -159,7 +159,6 @@ class CindyRemotePresentationModule : Module() {
     val uri = content.optString("url", null)?.let { Uri.parse(it) }
     val png = content.optString("png", null)
     var imageFile: File? = null
-    var expiredImages = emptyMap<File, Uri>()
     var committed = false
     try {
       val clip = when {
@@ -167,15 +166,11 @@ class CindyRemotePresentationModule : Module() {
           val bytes = decodeClipboardPng(png)
           val context = appContext.reactContext!!
           val directory = File(context.cacheDir, "remote-clipboard").apply { mkdirs() }
-          // Enumerate on IO, but do not unlink anything before publication.
-          expiredImages = directory.listFiles()?.filter {
-            System.currentTimeMillis() - it.lastModified() > 3_600_000
-          }?.associateWith {
-            FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", it)
-          } ?: emptyMap()
-          imageFile = File(directory, "${UUID.randomUUID()}.png")
+          // Other writes must not reclaim an image that is still being prepared.
+          imageFile = File(directory, "${UUID.randomUUID()}.png.pending")
           imageFile!!.writeBytes(bytes)
-          val imageUri = FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", imageFile!!)
+          val publishedFile = File(directory, imageFile!!.name.removeSuffix(".pending"))
+          val imageUri = FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", publishedFile)
           ClipData("Cindy", arrayOf("image/png"), ClipData.Item(text, html, null, imageUri))
         }
         text != null && html != null -> ClipData.newHtmlText("Cindy", text, html)
@@ -186,17 +181,35 @@ class CindyRemotePresentationModule : Module() {
       withContext(Dispatchers.Main.immediate) {
         foreground()
         if (expectedVersion != null && clipboardVersion() != expectedVersion) throw Exception("CLIPBOARD_CHANGED")
+        imageFile?.let { pending ->
+          val published = File(pending.parentFile, pending.name.removeSuffix(".pending"))
+          if (!pending.renameTo(published)) throw Exception("CLIPBOARD_UNAVAILABLE")
+          imageFile = published
+        }
         clipboard.setPrimaryClip(clip)
         committed = true
         // Change the token before returning even if the notification is delayed.
         clipboardGeneration.incrementAndGet()
-        // No suspension between the current-URI check and metadata-only unlink:
-        // another module write cannot publish a candidate while it is deleted.
+        // Every replacement (including text/URL) reclaims published images.
+        // Inspect metadata in this non-suspending publication block so concurrent
+        // writes cannot escape the cap or lose their pending file. No image IO.
         // Failure to inspect the current clipboard means retaining every file.
         runCatching {
           val current = clipboard.primaryClip ?: return@runCatching
           val retained = (0 until current.itemCount).mapNotNull { current.getItemAt(it).uri }.toSet()
-          expiredImages.forEach { (file, uri) -> if (uri !in retained) file.delete() }
+          val context = appContext.reactContext!!
+          val images = File(context.cacheDir, "remote-clipboard").listFiles()
+            ?.filter { it.extension == "png" }
+            ?.sortedByDescending { it.lastModified() } ?: emptyList()
+          var graceFiles = 0
+          for (file in images) {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", file)
+            if (uri in retained) continue
+            // At most three previous images (24 MiB) get a read grace period.
+            if (System.currentTimeMillis() - file.lastModified() <= 3_600_000 && graceFiles < 3) {
+              graceFiles++
+            } else file.delete()
+          }
         }
         clipboardVersion()
       }
