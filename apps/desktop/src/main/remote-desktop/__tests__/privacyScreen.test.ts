@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ windows: [] as any[], confirm: vi.fn() }));
+const state = vi.hoisted(() => ({ windows: [] as any[], displays: [] as any[], confirm: vi.fn() }));
 vi.mock('../../i18n', () => ({ t: (key: string) => key }));
 vi.mock('../../logger', () => ({ createLogger: () => ({ debug: vi.fn(), warn: vi.fn() }) }));
 vi.mock('electron', () => ({
@@ -56,10 +56,10 @@ vi.mock('electron', () => ({
       this.emit('closed');
     }
   },
-  screen: {
-    getAllDisplays: () => [{ bounds: { x: 0, y: 0, width: 1440, height: 900 } }],
+  screen: Object.assign(new EventEmitter(), {
+    getAllDisplays: () => state.displays,
     getDisplayMatching: () => ({ bounds: { x: 0, y: 0, width: 1440, height: 900 } }),
-  },
+  }),
   globalShortcut: { register: vi.fn(() => true), unregister: vi.fn() },
   session: {
     fromPartition: () => ({
@@ -71,9 +71,35 @@ vi.mock('electron', () => ({
 }));
 
 import { PrivacyScreen } from '../privacyScreen';
+import { screen } from 'electron';
 beforeEach(() => {
+  screen.removeAllListeners();
+  state.displays = [{ id: 1, bounds: { x: 0, y: 0, width: 1440, height: 900 } }];
   state.windows.length = 0;
   state.confirm.mockReset().mockResolvedValue({ response: 1 });
+});
+
+it('relayouts the non-captured display and releases its listeners on stop', async () => {
+  state.displays.push({ id: 2, bounds: { x: 1440, y: 0, width: 900, height: 1200 } });
+  const h = fixture();
+  await h.masks.set(true, () => true);
+  const second = state.windows[1];
+  const bounds = { x: -2000, y: -100, width: 2000, height: 1400 };
+  screen.emit('display-metrics-changed', {}, { id: 2, bounds }, [
+    'bounds',
+    'rotation',
+    'scaleFactor',
+  ]);
+  expect(second.getBounds()).toEqual(bounds);
+  expect(state.windows[0].getBounds()).toEqual(state.displays[0].bounds);
+  expect(h.stopped).not.toHaveBeenCalled();
+  h.stopped.mockReturnValue(new Promise(() => {}));
+  h.failed();
+  const lockingBounds = { ...bounds, x: 2000 };
+  screen.emit('display-metrics-changed', {}, { id: 2, bounds: lockingBounds }, ['bounds']);
+  expect(second.getBounds()).toEqual(lockingBounds);
+  h.masks.stop();
+  expect(screen.listenerCount('display-metrics-changed')).toBe(0);
 });
 
 function fixture() {

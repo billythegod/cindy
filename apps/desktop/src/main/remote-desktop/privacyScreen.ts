@@ -112,8 +112,9 @@ export class PrivacyScreen {
       );
       this.partitionConfigured = true;
     }
+    const displays = screen.getAllDisplays();
     try {
-      for (const display of screen.getAllDisplays()) {
+      for (const display of displays) {
         const window = new BrowserWindow({
           ...display.bounds,
           show: false,
@@ -151,6 +152,20 @@ export class PrivacyScreen {
         });
         created.push(window);
         if (generation === this.generation) this.windows.push(window);
+        // Each mask follows its physical display, including non-captured screens.
+        const relayout = (_event: unknown, changed: Electron.Display) => {
+          if (window.isDestroyed() || changed.id !== display.id) return;
+          try {
+            window.setBounds(changed.bounds, false);
+          } catch {
+            void this.disconnect(generation);
+          }
+        };
+        screen.on('display-metrics-changed', relayout);
+        window.on('closed', () => {
+          screen.removeListener('display-metrics-changed', relayout);
+          void this.disconnect(generation);
+        });
         window.setMenuBarVisibility(false);
         await window.loadURL(
           `data:text/html;charset=utf-8,${encodeURIComponent(privacyScreenHtml(t('privacyExit.status'), t('privacyExit.hint')))}`,
@@ -163,9 +178,6 @@ export class PrivacyScreen {
         window.setIgnoreMouseEvents(true);
         window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
         window.setAlwaysOnTop(true, 'screen-saver', 1);
-        window.on('closed', () => {
-          void this.disconnect(generation);
-        });
         window.webContents.on('render-process-gone', () => {
           void this.disconnect(generation);
         });
@@ -188,8 +200,11 @@ export class PrivacyScreen {
         throw new Error('DESKTOP_LEASE_EXPIRED');
       }
       this.monitor = monitor;
-      for (const window of this.windows) {
-        const target = screen.getDisplayMatching(window.getBounds()).bounds;
+      for (const [index, window] of this.windows.entries()) {
+        const target = screen
+          .getAllDisplays()
+          .find((display) => display.id === displays[index].id)?.bounds;
+        if (!target) throw new Error('DESKTOP_PRIVACY_UNAVAILABLE');
         window.showInactive();
         window.setBounds(target, false);
         log.debug('mask shown', {

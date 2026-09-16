@@ -44,7 +44,8 @@ export function useRemoteDesktopSafety(
     "host-mute",
     false,
   );
-  const [notice, setNotice] = useState<string | null>(null);
+  const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
+  const [hostMuteNotice, setHostMuteNotice] = useState<string | null>(null);
   const [clipboardNotice, setClipboardNotice] = useState<string | null>(null);
   const [syncAttempt, setSyncAttempt] = useState(0);
   const [privacyActive, setPrivacyActive] = useState(false);
@@ -99,6 +100,7 @@ export function useRemoteDesktopSafety(
   ]);
   useEffect(() => {
     setPrivacyActive(false);
+    setPrivacyNotice(null);
     if (
       !lease?.controlling ||
       !connected ||
@@ -107,7 +109,6 @@ export function useRemoteDesktopSafety(
     )
       return;
     let current = true;
-    setNotice(null);
     const check = () => {
       if (!current) throw new Error("DESKTOP_LEASE_EXPIRED");
     };
@@ -119,7 +120,7 @@ export function useRemoteDesktopSafety(
         if (current) setPrivacyActive(result.enabled);
       })
       .catch(() => {
-        if (current) setNotice("privacyFailed");
+        if (current) setPrivacyNotice("privacyFailed");
       });
     return () => {
       current = false;
@@ -135,6 +136,7 @@ export function useRemoteDesktopSafety(
     request,
   ]);
   useEffect(() => {
+    setHostMuteNotice(null);
     if (
       !lease?.controlling ||
       !connected ||
@@ -147,9 +149,13 @@ export function useRemoteDesktopSafety(
       op: "hostMute",
       lease: lease.lease,
       enabled: hostMute,
-    }).catch(() => {
-      if (current) setNotice("hostMuteFailed");
-    });
+    })
+      .then(() => {
+        if (current) setHostMuteNotice(null);
+      })
+      .catch(() => {
+        if (current) setHostMuteNotice("hostMuteFailed");
+      });
     return () => {
       current = false;
     };
@@ -312,6 +318,6 @@ export function useRemoteDesktopSafety(
     hostMute,
     hostMuteAvailable: hostMuteLoaded && caps?.hostMute === true,
     onHostMute: setHostMute,
-    safetyNotice: clipboardNotice ?? notice,
+    safetyNotice: clipboardNotice ?? privacyNotice ?? hostMuteNotice,
   };
 }

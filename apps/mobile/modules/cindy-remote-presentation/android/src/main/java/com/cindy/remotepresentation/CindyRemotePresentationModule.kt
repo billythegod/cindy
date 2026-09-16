@@ -24,6 +24,21 @@ import java.util.UUID
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 
+// Bound encoded buffers before Bitmap/JSON/Base64 can multiply their footprint.
+private const val IMAGE_BYTES = 8 * 1024 * 1024
+private const val IMAGE_PIXELS = 4_000_000L
+private class ClipboardImageOutput : ByteArrayOutputStream(8192) {
+  override fun write(value: Int) {
+    if (count >= IMAGE_BYTES) throw Exception("CLIPBOARD_TOO_LONG")
+    super.write(value)
+  }
+  override fun write(bytes: ByteArray, offset: Int, length: Int) {
+    if (length > IMAGE_BYTES - count) throw Exception("CLIPBOARD_TOO_LONG")
+    super.write(bytes, offset, length)
+  }
+  fun base64(): String = Base64.encodeToString(buf, 0, count, Base64.NO_WRAP)
+}
+
 class CindyRemotePresentationModule : Module() {
   private val clipboard: ClipboardManager
     get() = appContext.reactContext!!.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -91,25 +106,25 @@ class CindyRemotePresentationModule : Module() {
       val resolver = appContext.reactContext!!.contentResolver
       if (resolver.getType(uri)?.startsWith("image/") == true) {
         val bytes = resolver.openInputStream(uri)?.use { input ->
-          val output = ByteArrayOutputStream()
+          val output = ClipboardImageOutput()
           val buffer = ByteArray(8192)
           while (true) {
             val count = input.read(buffer)
             if (count < 0) break
-            if (output.size() + count > 24 * 1024 * 1024) throw Exception("CLIPBOARD_TOO_LONG")
             output.write(buffer, 0, count)
           }
           output.toByteArray()
         } ?: throw Exception("CLIPBOARD_UNSUPPORTED")
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outWidth.toLong() * bounds.outHeight > 16_000_000)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outWidth.toLong() * bounds.outHeight > IMAGE_PIXELS)
           throw Exception("CLIPBOARD_TOO_LONG")
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: throw Exception("CLIPBOARD_UNSUPPORTED")
         try {
-          val output = ByteArrayOutputStream()
-          bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
-          result.put("png", Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP))
+          val output = ClipboardImageOutput()
+          if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) throw Exception("CLIPBOARD_TOO_LONG")
+          bitmap.recycle()
+          result.put("png", output.base64())
         } finally { bitmap.recycle() }
       }
     }

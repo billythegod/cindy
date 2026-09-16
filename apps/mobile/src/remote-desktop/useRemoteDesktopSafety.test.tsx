@@ -6,6 +6,8 @@ const h = vi.hoisted(() => ({
   update: vi.fn(),
   tick: vi.fn(),
   request: vi.fn(),
+  privacy: false,
+  hostMute: false,
 }));
 vi.mock("react-native", () => ({
   AppState: {
@@ -15,7 +17,11 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("./useLockOnExitPreference", () => ({
   useRemoteDesktopPreference: (_device: string, feature: string) => [
-    feature === "clipboard-sync",
+    feature === "clipboard-sync"
+      ? true
+      : feature === "privacy-screen"
+        ? h.privacy
+        : h.hostMute,
     h.update,
     true,
   ],
@@ -47,6 +53,8 @@ const caps = {
   platform: "darwin",
   displays: [],
   clipboardSync: true,
+  privacyScreen: false,
+  hostMute: false,
 };
 function Probe({ focused = true }: { focused?: boolean }) {
   latest = useRemoteDesktopSafety(
@@ -60,12 +68,45 @@ function Probe({ focused = true }: { focused?: boolean }) {
   return null;
 }
 beforeEach(() => {
+  h.privacy = false;
+  h.hostMute = false;
+  caps.privacyScreen = false;
+  caps.hostMute = false;
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   h.update.mockReset();
   h.tick.mockReset().mockResolvedValue(undefined);
   h.request.mockReset().mockResolvedValue({ enabled: true });
   root = createRoot(document.createElement("div"));
+});
+
+it("privacy requests cannot clear a mute failure, and mute success clears its own failure", async () => {
+  caps.privacyScreen = caps.hostMute = true;
+  h.request.mockImplementation(async (message) => {
+    if (message.op === "hostMute" && !message.enabled)
+      throw new Error("MUTE_FAILED");
+    return { enabled: message.enabled };
+  });
+  await act(async () => root.render(createElement(Probe)));
+  expect(latest.safetyNotice).toBe("hostMuteFailed");
+  h.privacy = true;
+  await act(async () => root.render(createElement(Probe)));
+  expect(latest.safetyNotice).toBe("hostMuteFailed");
+  h.hostMute = true;
+  await act(async () => root.render(createElement(Probe)));
+  expect(latest.safetyNotice).toBeNull();
+});
+
+it("mute success cannot clear a privacy failure", async () => {
+  caps.privacyScreen = caps.hostMute = true;
+  h.request.mockImplementation(async (message) => {
+    if (message.op === "privacyScreen") throw new Error("PRIVACY_FAILED");
+    return { enabled: message.enabled };
+  });
+  await act(async () => root.render(createElement(Probe)));
+  h.hostMute = true;
+  await act(async () => root.render(createElement(Probe)));
+  expect(latest.safetyNotice).toBe("privacyFailed");
 });
 afterEach(async () => {
   await act(async () => root.unmount());
