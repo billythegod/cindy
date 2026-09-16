@@ -21,6 +21,9 @@ export function createLoginItemSettings({ app, platform, execPath }: LoginItemDe
   const windows = platform === 'win32';
   const name = path.win32.basename(execPath, '.exe');
   const target = windows ? { path: execPath, args: [] as string[] } : {};
+  // Electron 41 parses the lookup path as a command line. Quote only the
+  // query; setLoginItemSettings already quotes the executable when writing.
+  const query = windows ? { path: `"${execPath}"`, args: [] as string[] } : {};
 
   function read(): LoginItemState {
     const unavailableReason =
@@ -33,13 +36,17 @@ export function createLoginItemSettings({ app, platform, execPath }: LoginItemDe
       return { available: false, unavailableReason, enabled: false, requiresApproval: false };
     }
     try {
-      const settings = app.getLoginItemSettings(target);
-      // openAtLogin alone ignores Windows StartupApproved. The aggregate
-      // executableWillLaunchAtLogin can refer to a different entry/arguments.
+      const settings = app.getLoginItemSettings(query);
+      // Windows openAtLogin reads the AppUserModelID entry, not our explicit
+      // name. launchItems includes StartupApproved and all entries for this
+      // executable, so match our own user entry and arguments here.
       const enabled = windows
-        ? settings.openAtLogin &&
-          settings.launchItems.some(
-            (item) => item.name === name && item.scope === 'user' && item.enabled,
+        ? settings.launchItems.some(
+            (item) =>
+              item.name === name &&
+              item.scope === 'user' &&
+              item.args.length === 0 &&
+              item.enabled,
           )
         : settings.openAtLogin;
       return {
