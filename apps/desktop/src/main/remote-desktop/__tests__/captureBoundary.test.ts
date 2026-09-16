@@ -3,6 +3,7 @@ import { DESKTOP_LOCAL } from '../../../shared/remoteDesktop';
 
 const h = vi.hoisted(() => ({
   handlers: new Map<string, any>(),
+  displayHandlers: new Map<string, any>(),
   windows: [] as any[],
   deps: null as any,
   permissionDeps: null as any,
@@ -29,7 +30,7 @@ vi.mock('electron', () => ({
   powerMonitor: { on: vi.fn() },
   shell: {},
   nativeImage: {},
-  screen: { on: vi.fn(), getAllDisplays: () => [{ id: 1 }] },
+  screen: { on: (key: string, handler: any) => h.displayHandlers.set(key, handler), getAllDisplays: () => [{ id: 1 }] },
   systemPreferences: { getMediaAccessStatus: () => 'granted' },
   desktopCapturer: {
     getSources: () => h.source ?? Promise.resolve([{ id: 'screen:1', display_id: '1' }]),
@@ -153,6 +154,7 @@ vi.mock('../../utils/ipcValidate', () => ({
   },
 }));
 import { registerRemoteDesktopIpc } from '../index';
+import { PrivacyScreen } from '../privacyScreen';
 const event = (owner = h.owner) => ({ sender: owner, senderFrame: owner.mainFrame });
 const flush = async () => {
   for (let i = 0; i < 12; i++) await Promise.resolve();
@@ -179,10 +181,17 @@ beforeEach(() => {
   registerRemoteDesktopIpc();
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   h.deps.stopVideo();
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it.each([false, true])('only stops on added displays with privacy masks active=%s', (active) => {
+  vi.spyOn(PrivacyScreen.prototype, 'active', 'get').mockReturnValue(active);
+  h.displayHandlers.get('display-added')({}, { id: 2 });
+  expect(h.stop).toHaveBeenCalledTimes(active ? 1 : 0);
 });
 
 it('bounds a stalled screen permission probe so the guide can finish its request', async () => {

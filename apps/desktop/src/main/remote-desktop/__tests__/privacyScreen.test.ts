@@ -136,7 +136,11 @@ const settle = async () => {
 
 it('keeps the full-display mask passive so injected input reaches underlying apps', async () => {
   const f = fixture();
-  await f.masks.set(true, () => true);
+  expect(f.masks.active).toBe(false);
+  const preparing = f.masks.set(true, () => true);
+  expect(f.masks.active).toBe(true);
+  await preparing;
+  expect(f.masks.active).toBe(true);
   const window = state.windows[0];
   expect(window.options).toMatchObject({
     enableLargerThanScreen: true,
@@ -150,6 +154,7 @@ it('keeps the full-display mask passive so injected input reaches underlying app
   window.webContents.emit('before-input-event', {}, { type: 'keyDown' });
   expect(state.confirm).not.toHaveBeenCalled();
   f.masks.stop();
+  expect(f.masks.active).toBe(false);
   expect(f.monitor.stop).toHaveBeenCalledOnce();
 });
 

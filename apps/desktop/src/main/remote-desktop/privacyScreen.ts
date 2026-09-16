@@ -16,6 +16,9 @@ export class PrivacyScreen {
   private partitionConfigured = false;
   private confirming = false;
   private monitor: PrivacyInputMonitor | null = null;
+  get active(): boolean {
+    return this.windows.length > 0;
+  }
   constructor(
     private readonly excluded: (ids: number[]) => void,
     private readonly stopped: () => void | Promise<void>,

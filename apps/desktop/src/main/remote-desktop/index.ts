@@ -521,7 +521,9 @@ export function registerRemoteDesktopIpc(
     if (String(display.id) === remoteDesktop.displayId) remoteDesktop.stop();
   });
   screen.on('display-added', () => {
-    if (!remoteDesktop.changingDisplay) remoteDesktop.stop();
+    // A new screen invalidates mask coverage, not the selected capture geometry.
+    // Include masks still being prepared, before the controller reports enabled.
+    if (privacyScreen.active && !remoteDesktop.changingDisplay) remoteDesktop.stop();
   });
   screen.on('display-metrics-changed', (_event, display, metrics) => {
     if (remoteDesktop.changingDisplay) return;
