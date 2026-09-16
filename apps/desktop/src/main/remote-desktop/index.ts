@@ -398,7 +398,11 @@ export const remoteDesktop = new RemoteDesktopController({
   clipboardContent: (action, content, isCurrent) =>
     transferDesktopClipboardContent(action, content, isCurrent, (events) => input.input(events)),
   displayModes: readDesktopDisplayModes,
+  displayPresent: (displayId) =>
+    screen.getAllDisplays().some((display) => String(display.id) === displayId),
   resolution: setDesktopDisplayMode,
+  restoreResolution: (displayId, modeId, beforeChange) =>
+    setDesktopDisplayMode(displayId, modeId, beforeChange, true),
   createViewerDisplay,
   startInput: (displayId) => input.start(displayId),
   input: (events) => {
