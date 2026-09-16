@@ -331,9 +331,21 @@ pub(crate) fn retry_request_allowed(
 /// unelevated `%TEMP%` workdir would let a medium-integrity process replace
 /// extracted files before `copy_tree`. Keep extract/backup next to the app
 /// instead; unelevated installs stay in the temp workdir.
+///
+/// Electron's normal spawn omits `--elevated`. The updater is `asInvoker`, so a
+/// Cindy that is already running elevated hands this process a high token with
+/// `args.elevated == false`. Staging must follow the real token, not the flag.
 pub(crate) fn staging_dirs(args: &CliArgs) -> (PathBuf, PathBuf) {
+    staging_dirs_for(args, process_is_elevated())
+}
+
+pub(crate) fn uses_protected_staging(cli_elevated: bool, process_elevated: bool) -> bool {
+    cli_elevated || process_elevated
+}
+
+pub(crate) fn staging_dirs_for(args: &CliArgs, process_elevated: bool) -> (PathBuf, PathBuf) {
     let ts = workdir_ts(&args.workdir);
-    let root = if args.elevated {
+    let root = if uses_protected_staging(args.elevated, process_elevated) {
         &args.app_dir
     } else {
         &args.workdir
@@ -342,6 +354,41 @@ pub(crate) fn staging_dirs(args: &CliArgs) -> (PathBuf, PathBuf) {
         root.join(format!("cindy-update-extract-{ts}")),
         root.join(format!("cindy-update-rollback-{ts}")),
     )
+}
+
+/// True when this process already holds an elevated Windows token.
+/// `--elevated` is only set by our own `runas` child; inherited elevation from
+/// an elevated Cindy spawn does not set that flag.
+#[cfg(target_os = "windows")]
+fn process_is_elevated() -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+        let mut returned = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            (&mut elevation as *mut TOKEN_ELEVATION).cast(),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        );
+        let _ = CloseHandle(token);
+        ok != 0 && elevation.TokenIsElevated != 0
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn process_is_elevated() -> bool {
+    false
 }
 
 fn prepare_retry_archive(args: &CliArgs) -> bool {
@@ -508,7 +555,8 @@ fn run_inner<F: FnMut(InstallerEvent)>(
     let is_retry = args.zip == retry_archive(args);
     let exited = is_retry || pid_wait::wait_for_exit(args.pid, PID_WAIT_TIMEOUT);
     let needs_uac = matches!(needs_elevation(&args.app_dir), Ok(true));
-    let pre_elevation_retry = pre_elevation_failure_can_retry(needs_uac, args.elevated);
+    let process_elevated = args.elevated || process_is_elevated();
+    let pre_elevation_retry = pre_elevation_failure_can_retry(needs_uac, process_elevated);
     if !exited {
         return Err(InstallerFailure::new(
             "主程序在 60 秒内没有退出，更新中止",
@@ -541,7 +589,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
     //      (%LOCALAPPDATA%\xdt-maker) probes successfully → no UAC, no change
     //      from prior behavior.
     match needs_elevation(&args.app_dir) {
-        Ok(true) if !args.elevated => {
+        Ok(true) if !process_elevated => {
             logger::info(format!(
                 "[elevate] app_dir {} not user-writable, requesting UAC elevation",
                 args.app_dir.display()
@@ -1237,7 +1285,8 @@ mod tests {
         finalize_retry_state, may_self_elevate, path_is_within, pre_elevation_failure_can_retry,
         prepare_retry_archive, release_abandoned_update_lock, release_update_lock, remove_staging_dir,
         retain_update_lock_file, retry_allowed, retry_args, retry_available, retry_cli_args,
-        retry_request_allowed, rollback, run, should_relaunch_after_rollback, staging_dirs, Phase,
+        retry_request_allowed, rollback, run, should_relaunch_after_rollback, staging_dirs,
+        staging_dirs_for, uses_protected_staging, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use sha2::Digest;
@@ -1704,7 +1753,7 @@ mod tests {
         args.workdir = temp.0.join("workdir");
         fs::create_dir(&args.app_dir).unwrap();
         fs::create_dir(&args.workdir).unwrap();
-        let (extract_dir, backup_dir) = staging_dirs(&args);
+        let (extract_dir, backup_dir) = staging_dirs_for(&args, false);
         assert!(extract_dir.starts_with(&args.app_dir));
         assert!(backup_dir.starts_with(&args.app_dir));
         assert!(!extract_dir.starts_with(&args.workdir));
@@ -1719,9 +1768,41 @@ mod tests {
         args.workdir = temp.0.join("workdir");
         fs::create_dir(&args.app_dir).unwrap();
         fs::create_dir(&args.workdir).unwrap();
-        let (extract_dir, backup_dir) = staging_dirs(&args);
+        let (extract_dir, backup_dir) = staging_dirs_for(&args, false);
         assert!(extract_dir.starts_with(&args.workdir));
         assert!(backup_dir.starts_with(&args.workdir));
+    }
+
+    #[test]
+    fn inherited_elevation_without_cli_flag_uses_protected_staging() {
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.elevated = false;
+        args.app_dir = temp.0.join("Cindy");
+        args.workdir = temp.0.join("workdir");
+        fs::create_dir(&args.app_dir).unwrap();
+        fs::create_dir(&args.workdir).unwrap();
+        assert!(
+            uses_protected_staging(false, true),
+            "a high-integrity updater spawned without --elevated must not stage in TEMP"
+        );
+        let (extract_dir, backup_dir) = staging_dirs_for(&args, true);
+        assert!(extract_dir.starts_with(&args.app_dir));
+        assert!(backup_dir.starts_with(&args.app_dir));
+        assert!(!extract_dir.starts_with(&args.workdir));
+
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("pub(crate) fn staging_dirs(args: &CliArgs)")
+            .expect("staging_dirs");
+        let helper = source[start..]
+            .find("pub(crate) fn uses_protected_staging")
+            .expect("uses_protected_staging");
+        let body = &source[start..start + helper];
+        assert!(
+            body.contains("process_is_elevated()"),
+            "staging_dirs must read the process token; --elevated is omitted on inherited elevation"
+        );
     }
 
     #[test]

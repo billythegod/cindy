@@ -107,9 +107,11 @@ and the staged archive is deleted so the next Cindy launch downloads a fresh
 copy; transient archive I/O failures remain eligible. Only the archive path and
 PID change: the retry uses the isolated zip and does not wait on the original,
 potentially stale PID. The WebView cannot supply paths or commands.
-When the updater is already elevated, extract and backup staging live under the
-install directory instead of the unelevated `%TEMP%` workdir, so a same-login
-medium-integrity process cannot replace extracted files before they are copied.
+When the updater is already elevated — either via `--elevated` after UAC, or
+because it inherited a high token from an elevated Cindy spawn that omitted
+that flag — extract and backup staging live under the install directory
+instead of the unelevated `%TEMP%` workdir, so a same-login medium-integrity
+process cannot replace extracted files before they are copied.
 Failures before replacement delete those staging directories; only a rollback
 that itself failed keeps the backup for manual recovery.
 The retry command checks for processes running from the install directory and
