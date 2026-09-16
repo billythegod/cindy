@@ -192,8 +192,13 @@ func apply(_ event: [String: Any]) {
 struct PrivacyInputGate {
   var phase = 0
   var swallowed = Set<Int64>()
-  mutating func consume(physical: Bool, press: Int64?, down: Bool, trigger: Bool) -> (Bool, Bool) {
+  mutating func consume(physical: Bool, press: Int64?, down: Bool, trigger: Bool, scroll: Bool = false) -> (Bool, Bool) {
     if !physical { return (phase == 2, false) }
+    if scroll {
+      let notify = phase == 0
+      if notify { phase = 1 }
+      return (true, notify)
+    }
     if let press = press, swallowed.contains(press) {
       if !down { swallowed.remove(press) }
       return (true, false)
@@ -272,7 +277,7 @@ if CommandLine.arguments == [CommandLine.arguments[0], "--privacy-input"] {
       let press: Int64? = key ? event.getIntegerValueField(.keyboardEventKeycode)
         : (mouseDown || mouseUp ? 100000 + event.getIntegerValueField(.mouseEventButtonNumber) : nil)
       let (consume, notify) = state.pointee.consume(physical: physical, press: press,
-        down: type == .keyDown || mouseDown, trigger: type == .keyDown || mouseDown || type == .flagsChanged)
+        down: type == .keyDown || mouseDown, trigger: type == .keyDown || mouseDown || type == .flagsChanged, scroll: type == .scrollWheel)
       if notify { print("local-input"); fflush(stdout) }
       return consume ? nil : Unmanaged.passUnretained(event)
     }, userInfo: context), let runSource = CFMachPortCreateRunLoopSource(nil, tap, 0) else {

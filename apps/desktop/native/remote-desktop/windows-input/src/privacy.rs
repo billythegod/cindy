@@ -17,9 +17,22 @@ struct Gate {
     swallowed: HashSet<u32>,
 }
 impl Gate {
-    fn consume(&mut self, physical: bool, press: Option<u32>, down: bool) -> (bool, bool) {
+    fn consume(
+        &mut self,
+        physical: bool,
+        press: Option<u32>,
+        down: bool,
+        scroll: bool,
+    ) -> (bool, bool) {
         if !physical {
             return (self.phase == 2, false);
+        }
+        if scroll {
+            let notify = self.phase == 0;
+            if notify {
+                self.phase = 1;
+            }
+            return (true, notify);
         }
         if let Some(press) = press {
             if self.swallowed.contains(&press) {
@@ -48,8 +61,9 @@ impl Gate {
     }
 }
 thread_local! { static GATE: RefCell<Gate> = RefCell::new(Gate::default()); }
-fn consume(physical: bool, press: Option<u32>, down: bool) -> bool {
-    let (consume, notify) = GATE.with(|gate| gate.borrow_mut().consume(physical, press, down));
+fn consume(physical: bool, press: Option<u32>, down: bool, scroll: bool) -> bool {
+    let (consume, notify) =
+        GATE.with(|gate| gate.borrow_mut().consume(physical, press, down, scroll));
     if notify {
         println!("local-input");
         io::stdout().flush().ok();
@@ -60,7 +74,12 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code >= 0 {
         let event = &*(l as *const KBDLLHOOKSTRUCT);
         let down = w as u32 == WM_KEYDOWN || w as u32 == WM_SYSKEYDOWN;
-        if consume(event.flags & LLKHF_INJECTED == 0, Some(event.vkCode), down) {
+        if consume(
+            event.flags & LLKHF_INJECTED == 0,
+            Some(event.vkCode),
+            down,
+            false,
+        ) {
             return 1;
         }
     }
@@ -80,7 +99,12 @@ unsafe extern "system" fn mouse(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
             WM_XBUTTONUP => (Some(0x10003 + (event.mouseData >> 16)), false),
             _ => (None, false),
         };
-        if consume(event.flags & LLMHF_INJECTED == 0, press, down) {
+        if consume(
+            event.flags & LLMHF_INJECTED == 0,
+            press,
+            down,
+            matches!(w as u32, WM_MOUSEWHEEL | WM_MOUSEHWHEEL),
+        ) {
             return 1;
         }
     }
@@ -163,15 +187,34 @@ mod tests {
     #[test]
     fn injected_input_passes_until_dialog_and_held_local_key_cannot_confirm() {
         let mut gate = Gate::default();
-        assert_eq!(gate.consume(false, Some(13), true), (false, false));
-        assert_eq!(gate.consume(true, Some(13), true), (true, true));
-        assert_eq!(gate.consume(false, Some(13), false), (false, false)); // drain releases
+        assert_eq!(gate.consume(false, Some(13), true, false), (false, false));
+        assert_eq!(gate.consume(true, Some(13), true, false), (true, true));
+        assert_eq!(gate.consume(false, Some(13), false, false), (false, false)); // drain releases
         gate.phase = 2;
-        assert_eq!(gate.consume(false, Some(13), true), (true, false));
-        assert_eq!(gate.consume(true, Some(13), true), (true, false)); // held Enter
-        assert_eq!(gate.consume(true, Some(13), false), (true, false));
-        assert_eq!(gate.consume(true, Some(13), true), (false, false)); // fresh local press
+        assert_eq!(gate.consume(false, Some(13), true, false), (true, false));
+        assert_eq!(gate.consume(true, Some(13), true, false), (true, false)); // held Enter
+        assert_eq!(gate.consume(true, Some(13), false, false), (true, false));
+        assert_eq!(gate.consume(true, Some(13), true, false), (false, false)); // fresh local press
         gate.phase = 0;
-        assert_eq!(gate.consume(false, Some(13), true), (false, false));
+        assert_eq!(gate.consume(false, Some(13), true, false), (false, false));
+    }
+}
+
+#[cfg(test)]
+mod wheel_tests {
+    use super::Gate;
+    #[test]
+    fn physical_wheel_triggers_once_and_never_reaches_the_covered_application() {
+        let mut gate = Gate::default();
+        assert_eq!(gate.consume(false, None, false, true), (false, false));
+        assert_eq!(gate.consume(true, None, false, true), (true, true));
+        assert_eq!(gate.consume(true, None, false, true), (true, false));
+        assert_eq!(gate.consume(false, None, false, true), (false, false));
+        gate.phase = 2;
+        assert_eq!(gate.consume(true, None, false, true), (true, false));
+        assert_eq!(gate.consume(false, None, false, true), (true, false));
+        gate.phase = 0;
+        assert_eq!(gate.consume(true, None, false, true), (true, true));
+        assert!(gate.swallowed.is_empty());
     }
 }

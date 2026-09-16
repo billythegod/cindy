@@ -41,3 +41,11 @@ for press: Int64 in [36, 100000] {
   gate.phase = 0
   precondition(gate.consume(physical: false, press: press, down: true, trigger: true) == (false, false))
 }
+
+var wheelGate = PrivacyInputGate()
+for phase in [0, 1, 2, 0] {
+  wheelGate.phase = phase
+  precondition(wheelGate.consume(physical: false, press: nil, down: false, trigger: false, scroll: true) == (phase == 2, false))
+  precondition(wheelGate.consume(physical: true, press: nil, down: false, trigger: false, scroll: true) == (true, phase == 0))
+  precondition(wheelGate.swallowed.isEmpty)
+}

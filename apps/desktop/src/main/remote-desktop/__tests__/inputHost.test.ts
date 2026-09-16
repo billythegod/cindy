@@ -251,6 +251,7 @@ describe('native input lifecycle', () => {
       await resuming;
       if (outcome === 'ready') {
         host.input(events);
+        await flush();
         expect(replacement.child.stdin.write).toHaveBeenCalledOnce();
       } else {
         expect(() => host.input(events)).toThrow('DESKTOP_INPUT_UNAVAILABLE');
@@ -289,6 +290,7 @@ describe('native input lifecycle', () => {
       expect(spawn).toHaveBeenCalledTimes(disconnected ? 1 : 2);
       if (!disconnected) {
         host.input([{ kind: 'key', code: 'Enter', down: true }]);
+        await flush();
         expect(children[1].child.stdin.write).toHaveBeenCalled();
       }
       host.stop();
