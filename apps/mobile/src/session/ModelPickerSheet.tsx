@@ -122,7 +122,7 @@ export interface ModelPickerSheetProps {
 }
 
 export function ModelPickerSheet(props: ModelPickerSheetProps) {
-  if (props.unified && !props.providersUnsupported) return <UnifiedModelPickerSheet {...props} {...props.unified.currentSelection} unified={props.unified} />;
+  if (props.unified && !props.providersUnsupported) return <UnifiedModelPickerSheet {...props} unified={props.unified} />;
   return <LegacyModelPickerSheet {...props} />;
 }
 function LegacyModelPickerSheet({

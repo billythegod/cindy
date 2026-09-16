@@ -184,13 +184,30 @@ export function UnifiedModelPickerSheet(
     existingSessionRoute: p.existingSessionRoute,
     visibilityOverrides: p.modelVisibilityOverrides,
   }).activeSourceId;
-  const live: MobileModelConfiguration = {
+  const selection: MobileModelConfiguration = {
     providerId: sourceId ?? "",
     modelId: p.activeModelId,
     agent: p.agentKind,
     effort: p.selectedEffort,
     fast: p.selectedFastMode,
   };
+  // The visible selection may be a pending next-message engine switch. Keep
+  // runtime truth separate, including its provider resolution and capabilities.
+  const current = p.unified.currentSelection;
+  const live: MobileModelConfiguration = current ? {
+    providerId: buildMobileModelSections({
+      providers: p.providers,
+      agentKind: current.agentKind,
+      selectedModelId: current.activeModelId,
+      selectedProviderId: current.selectedProviderId,
+      existingSessionRoute: p.existingSessionRoute,
+      visibilityOverrides: p.modelVisibilityOverrides,
+    }).activeSourceId ?? "",
+    modelId: current.activeModelId,
+    agent: current.agentKind,
+    effort: current.selectedEffort,
+    fast: current.selectedFastMode,
+  } : selection;
   const fastCapable = (agent: AgentKind) => caps[agent]?.hasFastMode === true;
   const describe = (
     entry: UnifiedModelEntry,
@@ -219,7 +236,7 @@ export function UnifiedModelPickerSheet(
       entry.providerId === sourceId && matchesEntry(entry, p.activeModelId);
     const config = resolveMobileModelConfig(entry, {
       favorite,
-      live: !favorite && selected ? live : undefined,
+      live: !favorite && selected ? selection : undefined,
       pinned: p.existingSessionRoute ? p.agentKind : undefined,
       override: prefs.value.engines[modelKey(entry.providerId, entry.modelId)],
       memory: p.modelMemory,
@@ -417,7 +434,7 @@ export function UnifiedModelPickerSheet(
             );
         }
       } catch (error) {
-        if (appliesLive) await p.unified.onSelect(live);
+        if (appliesLive) await p.unified.onSelect(row.selected ? selection : live);
         throw error;
       }
     });

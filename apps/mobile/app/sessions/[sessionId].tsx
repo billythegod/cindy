@@ -9856,7 +9856,13 @@ function SessionHeaderBar({
         />
       )}
 
-      {nativeHeader ? <SessionHeaderNativeTitle title={title} /> : (
+      {nativeHeader ? <SessionHeaderNativeTitle
+        title={title}
+        pinned={!messageOnly && !!currentSession?.pinnedAt}
+        syncing={syncing}
+        syncingImmediately={syncingImmediately}
+        notice={notice}
+      /> : (
       <View style={styles.sessionHeaderTextBlock}>
         <View style={styles.sessionHeaderTitleRow}>
           {!messageOnly && currentSession?.pinnedAt ? (

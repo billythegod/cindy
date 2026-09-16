@@ -7,9 +7,10 @@ import {
   RNHostView,
   VStack,
 } from "@expo/ui/swift-ui";
-import { Folder, Monitor, type LucideIcon } from "lucide-react-native";
+import { Folder, Monitor, Pin, type LucideIcon } from "lucide-react-native";
 import { View } from "react-native";
 import { Text } from "@/components/AppText";
+import { QuietSyncIndicator } from "@/components/QuietSyncIndicator";
 import {
   accessibilityHint,
   accessibilityElement,
@@ -40,6 +41,7 @@ import { BlurBackdrop } from "./BlurBackdrop";
 import type {
   SessionHeaderNativeActionsProps,
   SessionHeaderNativeBackProps,
+  SessionHeaderNativeTitleProps,
 } from "./SessionHeaderNativeControls";
 
 /** A stationary, feathered backdrop: scrolling content passes beneath it. */
@@ -84,7 +86,7 @@ export function SessionHeaderNativeBlur({ height, edge = 'top', inset = 0 }: { h
   );
 }
 
-export function SessionHeaderNativeTitle({ title }: { title: string }) {
+export function SessionHeaderNativeTitle({ title, pinned, syncing, syncingImmediately, notice }: SessionHeaderNativeTitleProps) {
   const { colors } = useTheme();
   const style = {
     borderRadius: radius.pill,
@@ -102,6 +104,8 @@ export function SessionHeaderNativeTitle({ title }: { title: string }) {
         fontSize: typeScale.body,
         fontWeight: fontWeight.semibold,
         textAlign: "center",
+        flexShrink: 1,
+        minWidth: 0,
       }}
       testID="session.title"
     >
@@ -112,7 +116,17 @@ export function SessionHeaderNativeTitle({ title }: { title: string }) {
     <View style={{ flex: 1, minWidth: 0 }}>
       <View style={style}>
         <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} />
-        {label}
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs }}>
+          {pinned ? <Pin color={colors.textTertiary} size={iconSize.sm} strokeWidth={iconStroke.regular} /> : null}
+          {label}
+          <QuietSyncIndicator active={syncing} immediate={syncingImmediately} />
+        </View>
+        {notice ? (
+          <Text numberOfLines={1} testID="session.headerNotice"
+            style={{ color: colors.textSecondary, fontSize: typeScale.micro, textAlign: "center" }}>
+            {notice}
+          </Text>
+        ) : null}
       </View>
     </View>
   );

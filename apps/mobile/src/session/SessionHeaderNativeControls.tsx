@@ -5,7 +5,15 @@ export interface SessionHeaderNativeBackProps {
   onPress(): void;
 }
 
-export function SessionHeaderNativeTitle(_props: { title: string }) {
+export interface SessionHeaderNativeTitleProps {
+  title: string;
+  pinned: boolean;
+  syncing: boolean;
+  syncingImmediately: boolean;
+  notice: string | null;
+}
+
+export function SessionHeaderNativeTitle(_props: SessionHeaderNativeTitleProps) {
   return null;
 }
 

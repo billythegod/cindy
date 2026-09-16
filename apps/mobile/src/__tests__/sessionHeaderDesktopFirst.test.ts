@@ -7,6 +7,22 @@ const readTextLf = (...args: Parameters<typeof readFileSync>): string =>
   String(readFileSync(...args)).replace(/\r\n/g, '\n');
 
 describe('mobile session header desktop-first surface', () => {
+  it('preserves title status in the iOS branch, not only in the legacy header', () => {
+    const source = readTextLf(resolve(process.cwd(), 'app/sessions/[sessionId].tsx'), 'utf8');
+    const start = source.indexOf('{nativeHeader ? <SessionHeaderNativeTitle');
+    const nativeBranch = source.slice(start, source.indexOf('/> : (', start));
+    expect(start).toBeGreaterThan(-1);
+    for (const prop of ['syncing={syncing}', 'syncingImmediately={syncingImmediately}',
+      'pinned={!messageOnly && !!currentSession?.pinnedAt}', 'notice={notice}']) {
+      expect(nativeBranch).toContain(prop);
+    }
+    const native = readTextLf(resolve(process.cwd(), 'src/session/SessionHeaderNativeControls.ios.tsx'), 'utf8');
+    expect(native).toContain('<QuietSyncIndicator active={syncing} immediate={syncingImmediately} />');
+    expect(native).toContain('{pinned ? <Pin');
+    expect(native).toContain('testID="session.headerNotice"');
+    expect(native).toContain('flexShrink: 1');
+  });
+
   it('releases the new-session handoff heavy topic when the session screen unmounts', () => {
     const source = readTextLf(resolve(process.cwd(), 'app/sessions/[sessionId].tsx'), 'utf8');
 
