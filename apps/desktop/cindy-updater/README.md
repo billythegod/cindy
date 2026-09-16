@@ -93,23 +93,26 @@ prevents the restored app from automatically applying the same failed archive.
 If the move fails, Retry is unavailable.
 
 Retry is never automatic: Rust rechecks the failure state and readable archive,
-then starts a new updater using trusted Rust-owned arguments. Electron supplies
-the SHA-256 from the verified update manifest; Rust verifies it before the first
-attempt and passes it through elevation and retry. Extraction hashes and consumes
-the same protected file handle only after the digest still matches. A TEMP
-replacement after failure cannot be installed. If the isolated archive is later
-missing, unreadable, or no longer matches, Retry stays hidden and the failure
-window only keeps the check-for-updates guidance. Deterministically malformed or
-unsupported ZIP formats also do not offer Retry; transient archive I/O failures
-remain eligible. Only the archive path and PID change: the retry uses the isolated
-zip and does not wait on the original, potentially stale PID. The WebView cannot
-supply paths or commands.
+then re-runs the installer in the already-loaded process using trusted Rust-owned
+arguments. It does not spawn a new updater executable from the `%TEMP%` workdir,
+so Windows cannot load a planted `vcruntime140*.dll` beside that path into an
+elevated retry. Electron supplies the SHA-256 from the verified update manifest;
+Rust verifies it before the first attempt and passes it through elevation and
+retry. Extraction hashes and consumes the same protected file handle only after
+the digest still matches. A TEMP replacement after failure cannot be installed.
+If the isolated archive is later missing, unreadable, or no longer matches, Retry
+stays hidden and the failure window only keeps the check-for-updates guidance.
+Deterministically malformed or unsupported ZIP formats also do not offer Retry
+and the staged archive is deleted so the next Cindy launch downloads a fresh
+copy; transient archive I/O failures remain eligible. Only the archive path and
+PID change: the retry uses the isolated zip and does not wait on the original,
+potentially stale PID. The WebView cannot supply paths or commands.
 When the updater is already elevated, extract and backup staging live under the
 install directory instead of the unelevated `%TEMP%` workdir, so a same-login
 medium-integrity process cannot replace extracted files before they are copied.
-Both the retry command and child check for processes running from the install
-directory and ask the user to close them; manual retry never force-terminates
-those processes. UAC elevation follows the existing flow again when needed.
+The retry command checks for processes running from the install directory and
+asks the user to close them; manual retry never force-terminates those processes.
+UAC elevation follows the existing flow again when needed.
 
 A successful rollback retains the isolated zip for retry and still attempts to
 relaunch the restored app; close that app before retrying. A successful update

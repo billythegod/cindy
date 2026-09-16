@@ -74,9 +74,13 @@ function applyStatus(payload) {
   // Close button only appears in terminal states — there's nothing to abort
   // mid-update without leaving the install dir half-rewritten.
   els.btnQuit.hidden = phase !== "done" && phase !== "failed";
+  // In-process retry keeps this flag set between the click and the next
+  // installer event. Any later status, including another Failed, belongs to
+  // the new attempt.
+  retrying = false;
   canRetry = phase === "failed" && payload.can_retry === true;
-  els.btnRetry.hidden = !canRetry || retrying;
-  els.btnRetry.disabled = retrying;
+  els.btnRetry.hidden = !canRetry;
+  els.btnRetry.disabled = false;
 }
 
 els.btnRetry.addEventListener("click", async () => {

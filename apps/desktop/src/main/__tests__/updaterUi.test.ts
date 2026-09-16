@@ -24,6 +24,7 @@ function createUi() {
   >();
   let statusListener: (event: { payload: Record<string, unknown> }) => void = () => {};
   let rejectRetry: (error: Error) => void = () => {};
+  let resolveRetry: () => void = () => {};
   let retryCalls = 0;
   const context = vm.createContext({
     console,
@@ -53,7 +54,8 @@ function createUi() {
             if (command === 'get_status') return Promise.resolve({ phase: 'waiting' });
             if (command === 'retry_update') {
               retryCalls++;
-              return new Promise<void>((_resolve, reject) => {
+              return new Promise<void>((resolve, reject) => {
+                resolveRetry = () => resolve();
                 rejectRetry = reject;
               });
             }
@@ -79,6 +81,7 @@ function createUi() {
     elements,
     status: (payload: Record<string, unknown>) => statusListener({ payload }),
     retryCalls: () => retryCalls,
+    resolveRetry: () => resolveRetry(),
     rejectRetry: (message = 'spawn failed') => rejectRetry(new Error(message)),
   };
 }
@@ -123,6 +126,25 @@ describe('updater failure retry UI', () => {
     expect(ui.retryCalls()).toBe(0);
     ui.status({ phase: 'failed', can_retry: true });
     expect(button.hidden).toBe(false);
+  });
+
+  it('keeps retry hidden after the command is accepted until a later failed status', async () => {
+    const ui = createUi();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    ui.status({ phase: 'failed', can_retry: true });
+    const button = ui.elements.get('btn-retry')!;
+    const pending = button.click!();
+    ui.resolveRetry();
+    await pending;
+    expect(button.hidden).toBe(true);
+    expect(button.disabled).toBe(true);
+    await button.click!();
+    expect(ui.retryCalls()).toBe(1);
+    ui.status({ phase: 'waiting', can_retry: false });
+    expect(button.hidden).toBe(true);
+    ui.status({ phase: 'failed', can_retry: true });
+    expect(button.hidden).toBe(false);
+    expect(button.disabled).toBe(false);
   });
 
   it('submits one retry despite repeated clicks and restores the button on spawn failure', async () => {

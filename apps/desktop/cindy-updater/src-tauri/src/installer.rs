@@ -55,6 +55,7 @@ const LAUNCH_VERIFY_POLL: Duration = Duration::from_millis(100);
 pub fn run<F: FnMut(InstallerEvent)>(mut args: CliArgs, mut emit: F) {
     if let Err(error) = bind_zip_sha256(&mut args) {
         logger::error(format!("[installer] FAILED: archive unavailable ({error})"));
+        discard_staged_archives(&args);
         let _ = fs::remove_file(&args.lock);
         emit(InstallerEvent::Failed(
             "更新文件已不存在或无法读取，请重新检查更新".into(),
@@ -65,9 +66,7 @@ pub fn run<F: FnMut(InstallerEvent)>(mut args: CliArgs, mut emit: F) {
     match run_inner(&args, &mut emit) {
         Ok(()) => emit(InstallerEvent::Done),
         Err(failure) => {
-            let can_retry = failure.can_retry
-                && prepare_retry_archive(&args)
-                && retry_allowed(true, &retry_archive(&args), args.zip_sha256.as_deref());
+            let can_retry = finalize_retry_state(&args, failure.can_retry);
             logger::error(format!("[installer] FAILED: {}", failure.message));
             let _ = fs::remove_file(&args.lock);
             emit(InstallerEvent::Failed(failure.message, can_retry));
@@ -222,6 +221,40 @@ fn prepare_retry_archive(args: &CliArgs) -> bool {
     }
 }
 
+/// Retryable failures isolate the archive away from Electron's auto-apply path.
+/// Terminal archive failures must delete that staged ZIP (and any isolated copy)
+/// so the next Cindy launch downloads a fresh file instead of relaunching the
+/// same deterministic extract error until applyAttempts is exhausted.
+pub(crate) fn finalize_retry_state(args: &CliArgs, can_retry: bool) -> bool {
+    if can_retry
+        && prepare_retry_archive(args)
+        && retry_allowed(true, &retry_archive(args), args.zip_sha256.as_deref())
+    {
+        true
+    } else {
+        discard_staged_archives(args);
+        false
+    }
+}
+
+fn discard_staged_archives(args: &CliArgs) {
+    let retry = retry_archive(args);
+    if args.zip != retry {
+        if fs::remove_file(&args.zip).is_ok() {
+            logger::info(format!(
+                "[retry] removed terminal archive from staged path {}",
+                args.zip.display()
+            ));
+        }
+    }
+    if fs::remove_file(&retry).is_ok() {
+        logger::info(format!(
+            "[retry] removed terminal archive from {}",
+            retry.display()
+        ));
+    }
+}
+
 pub(crate) fn ensure_retry_processes_closed(args: &CliArgs) -> Result<(), String> {
     let mut sys = System::new();
     if collect_appdir_processes(&mut sys, &args.app_dir, std::process::id()).is_empty() {
@@ -234,32 +267,54 @@ pub(crate) fn ensure_retry_processes_closed(args: &CliArgs) -> Result<(), String
 /// Recreate the original updater arguments from trusted Rust state for a user-initiated retry.
 /// An elevated updater keeps its internal marker so a retry does not accidentally start an
 /// elevated process as if it were unelevated; the original process omits it and follows UAC again.
+/// Retry continues in the already-loaded process so Windows does not search `%TEMP%`
+/// for `vcruntime140*.dll` beside a freshly spawned updater executable.
+pub(crate) fn retry_args(args: &CliArgs) -> CliArgs {
+    CliArgs {
+        zip: retry_archive(args),
+        app_dir: args.app_dir.clone(),
+        exe_name: args.exe_name.clone(),
+        pid: 0,
+        log: args.log.clone(),
+        lock: args.lock.clone(),
+        workdir: args.workdir.clone(),
+        theme: args.theme,
+        elevated: args.elevated,
+        zip_sha256: args.zip_sha256.clone(),
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn retry_cli_args(args: &CliArgs) -> Vec<std::ffi::OsString> {
-    let theme = match args.theme {
+    let retry = retry_args(args);
+    let theme = match retry.theme {
         ThemeArg::Light => "light",
         ThemeArg::Dark => "dark",
         ThemeArg::Auto => "auto",
     };
-    let zip = retry_archive(args);
     let values = [
-        ("--zip", zip.as_os_str()),
-        ("--app-dir", args.app_dir.as_os_str()),
-        ("--exe-name", std::ffi::OsStr::new(&args.exe_name)),
+        ("--zip", retry.zip.as_os_str()),
+        ("--app-dir", retry.app_dir.as_os_str()),
+        ("--exe-name", std::ffi::OsStr::new(&retry.exe_name)),
         ("--pid", std::ffi::OsStr::new("0")),
-        ("--log", args.log.as_os_str()),
-        ("--lock", args.lock.as_os_str()),
-        ("--workdir", args.workdir.as_os_str()),
+        ("--log", retry.log.as_os_str()),
+        ("--lock", retry.lock.as_os_str()),
+        ("--workdir", retry.workdir.as_os_str()),
         ("--theme", std::ffi::OsStr::new(theme)),
     ];
     let mut result = values
         .into_iter()
         .flat_map(|(key, value)| [std::ffi::OsString::from(key), value.to_os_string()])
         .collect::<Vec<_>>();
-    if let Some(digest) = args.zip_sha256.as_deref().filter(|digest| !digest.is_empty()) {
+    if let Some(digest) = retry
+        .zip_sha256
+        .as_deref()
+        .filter(|digest| !digest.is_empty())
+    {
         result.push(std::ffi::OsString::from("--zip-sha256"));
         result.push(std::ffi::OsString::from(digest));
     }
-    if args.elevated {
+    if retry.elevated {
         result.push(std::ffi::OsString::from("--elevated"));
     }
     result
@@ -986,9 +1041,9 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        archive_matches_digest, bind_zip_sha256, extract_error_can_retry, path_is_within,
-        prepare_retry_archive, remove_staging_dir, retry_allowed, retry_available, retry_cli_args,
-        retry_request_allowed, rollback, staging_dirs, Phase,
+        archive_matches_digest, bind_zip_sha256, extract_error_can_retry, finalize_retry_state,
+        path_is_within, prepare_retry_archive, remove_staging_dir, retry_allowed, retry_args,
+        retry_available, retry_cli_args, retry_request_allowed, rollback, staging_dirs, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use sha2::Digest;
@@ -1182,6 +1237,65 @@ mod tests {
 
         assert!(!extract_error_can_retry(&invalid));
         assert!(!extract_error_can_retry(&unsupported));
+    }
+
+    #[test]
+    fn terminal_archive_errors_delete_the_electron_staged_zip() {
+        let invalid = anyhow::Error::new(zip::result::ZipError::InvalidArchive(
+            "invalid central directory",
+        ));
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.workdir = temp.0.join("workdir");
+        fs::create_dir(&args.workdir).unwrap();
+        args.zip = temp.0.join("update.zip");
+        fs::write(&args.zip, b"not-a-zip").unwrap();
+        fs::write(super::retry_archive(&args), b"isolated-copy").unwrap();
+
+        assert!(!extract_error_can_retry(&invalid));
+        assert!(!finalize_retry_state(
+            &args,
+            extract_error_can_retry(&invalid)
+        ));
+        assert!(
+            !args.zip.exists(),
+            "terminal ZIP must leave Electron's staged path so the next launch downloads a fresh copy"
+        );
+        assert!(
+            !super::retry_archive(&args).exists(),
+            "an isolated retry copy must not keep the same terminal archive around"
+        );
+    }
+
+    #[test]
+    fn retryable_failure_still_isolates_the_archive_for_manual_retry() {
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.workdir = temp.0.join("workdir");
+        fs::create_dir(&args.workdir).unwrap();
+        args.zip = temp.0.join("update.zip");
+        fs::write(&args.zip, b"archive").unwrap();
+        args.zip_sha256 = Some(format!("{:x}", sha2::Sha256::digest(b"archive")));
+
+        assert!(finalize_retry_state(&args, true));
+        assert!(!args.zip.exists());
+        assert_eq!(fs::read(super::retry_archive(&args)).unwrap(), b"archive");
+    }
+
+    #[test]
+    fn retry_args_reuse_trusted_state_without_respawning() {
+        let mut source = test_args();
+        source.zip_sha256 = Some("abc123".into());
+        let retry = retry_args(&source);
+        assert_eq!(retry.zip, source.workdir.join("retry.zip"));
+        assert_eq!(retry.pid, 0);
+        assert_eq!(retry.app_dir, source.app_dir);
+        assert_eq!(retry.workdir, source.workdir);
+        assert_eq!(retry.zip_sha256.as_deref(), Some("abc123"));
+        assert!(retry.elevated);
+
+        source.elevated = false;
+        assert!(!retry_args(&source).elevated);
     }
 
     #[test]

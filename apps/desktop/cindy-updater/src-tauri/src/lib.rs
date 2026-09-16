@@ -59,7 +59,7 @@ fn quit_now(app: AppHandle) {
 }
 
 #[tauri::command]
-fn retry_update(state: State<'_, AppState>) -> Result<(), String> {
+fn retry_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     {
         let mut started = state.retry_started.lock().unwrap();
         if *started {
@@ -74,30 +74,29 @@ fn retry_update(state: State<'_, AppState>) -> Result<(), String> {
         *started = true;
     }
 
-    let args = state.args.clone();
-    let updater = std::env::current_exe().map_err(|error| {
-        *state.retry_started.lock().unwrap() = false;
-        error.to_string()
-    })?;
-    let mut command = std::process::Command::new(&updater);
-    command
-        .args(installer::retry_cli_args(&args))
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const FLAGS: u32 = 0x00000008 | 0x00000200;
-        command.creation_flags(FLAGS);
-    }
-    let child = command.spawn().map_err(|error| {
-        *state.retry_started.lock().unwrap() = false;
-        logger::error(format!("[command] retry_update spawn failed: {error}"));
-        error.to_string()
-    })?;
-    logger::info(format!("[command] retry_update spawned pid={}", child.id()));
-    std::process::exit(0);
+    // Continue in this already-loaded process. A fresh spawn from the
+    // Electron-created `%TEMP%` workdir would search that directory for
+    // `vcruntime140*.dll` before System32; fallback-safe staging leaves those
+    // DLLs absent, so a medium-integrity plant would load into an elevated retry.
+    let args = installer::retry_args(&state.args);
+    let last_status = state.last_status.clone();
+    let retry_started = state.retry_started.clone();
+    let handle = app.clone();
+    logger::info("[command] retry_update continuing in-process");
+    std::thread::spawn(move || {
+        installer::run(args, |event| {
+            let payload = event_to_payload(event, &handle);
+            *last_status.lock().unwrap() = payload.clone();
+            let _ = handle.emit("update-status", payload);
+        });
+        let final_phase = last_status.lock().unwrap().phase;
+        if final_phase == Phase::Done {
+            handle.exit(0);
+        } else {
+            *retry_started.lock().unwrap() = false;
+        }
+    });
+    Ok(())
 }
 
 pub fn run() {
@@ -197,6 +196,31 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("tauri failed to launch");
+}
+
+#[cfg(test)]
+mod retry_update_contract {
+    #[test]
+    fn retry_update_reruns_the_installer_in_process() {
+        let source = include_str!("lib.rs");
+        let start = source
+            .find("fn retry_update")
+            .expect("retry_update command");
+        let end = source[start..]
+            .find("\npub fn run")
+            .expect("run follows retry_update");
+        let body = &source[start..start + end];
+        assert!(
+            body.contains("installer::run") && body.contains("retry_args"),
+            "Retry must continue in this already-loaded process:\n{body}"
+        );
+        assert!(
+            !body.contains("current_exe")
+                && !body.contains("Command::new")
+                && !body.contains("process::exit"),
+            "Retry must not respawn the updater from %TEMP%:\n{body}"
+        );
+    }
 }
 
 fn event_to_payload(event: InstallerEvent, handle: &AppHandle) -> StatusPayload {
