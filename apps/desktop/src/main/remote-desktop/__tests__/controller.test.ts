@@ -40,6 +40,48 @@ function harness() {
   };
 }
 describe('remote desktop authority and lifecycle', () => {
+  it('does not publish selected geometry or resume control before it is observed', async () => {
+    const h = harness();
+    h.deps.displayModes = async () => [
+      { id: '1', width: 1920, height: 1080, current: true },
+      { id: '2', width: 3840, height: 2160, current: false },
+    ];
+    let projected!: () => void;
+    h.deps.resolution = vi.fn(async (_display, _mode, beforeChange, expected) => {
+      beforeChange();
+      expect(expected).toMatchObject({ width: 3840, height: 2160 });
+      await new Promise<void>((resolve) => {
+        projected = resolve;
+      });
+      beforeChange();
+    });
+    const { lease } = await h.start();
+    await h.controller.request('phone', { op: 'control', lease, enabled: true });
+    const settled = vi.fn();
+    const changing = h.controller
+      .request('phone', {
+        op: 'resolution',
+        lease,
+        modeId: '2',
+        temporary: true,
+      })
+      .then(settled);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(projected).toBeTypeOf('function');
+    expect(settled).not.toHaveBeenCalled();
+    await expect(
+      h.controller.request('phone', { op: 'control', lease, enabled: true }),
+    ).rejects.toThrow();
+    projected();
+    await changing;
+    expect(settled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        controlling: false,
+        display: expect.objectContaining({ width: 3840, height: 2160 }),
+      }),
+    );
+  });
+
   it('keeps shutdown pending until resolution restoration finishes', async () => {
     const h = harness();
     h.deps.displayModes = async () => [

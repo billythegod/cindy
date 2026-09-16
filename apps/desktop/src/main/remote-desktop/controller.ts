@@ -51,7 +51,12 @@ export interface DesktopControllerDeps {
   displayModes?(displayId: string): Promise<RemoteDesktopDisplayMode[]>;
   /** Local hardware presence; must not hide displays when remote access is revoked. */
   displayPresent?(displayId: string): boolean;
-  resolution?(displayId: string, modeId: string, beforeChange: () => void): Promise<void>;
+  resolution?(
+    displayId: string,
+    modeId: string,
+    beforeChange: () => void,
+    expected?: { width: number; height: number },
+  ): Promise<void>;
   restoreResolution?(
     displayId: string,
     modeId: string,
@@ -231,7 +236,12 @@ export class RemoteDesktopController {
         width: original.width,
         height: original.height,
       };
-      this.resolutionWrite = this.deps.resolution(active.sourceDisplayId, modeId, requireCurrent);
+      this.resolutionWrite = this.deps.resolution(
+        active.sourceDisplayId,
+        modeId,
+        requireCurrent,
+        selected,
+      );
       await this.resolutionWrite;
       requireCurrent();
       active.display = {

@@ -404,7 +404,15 @@ export const remoteDesktop = new RemoteDesktopController({
   displayModes: readDesktopDisplayModes,
   displayPresent: (displayId) =>
     screen.getAllDisplays().some((display) => String(display.id) === displayId),
-  resolution: setDesktopDisplayMode,
+  resolution: async (displayId, modeId, beforeChange, expected) => {
+    await setDesktopDisplayMode(displayId, modeId, beforeChange);
+    if (expected)
+      await waitForDisplayRestore(displayId, expected, beforeChange, (displays) =>
+        // Restoration may retire an unplugged monitor; selection must not
+        // publish usable geometry for a monitor that no longer exists.
+        displays.some((display) => String(display.id) === displayId),
+      );
+  },
   restoreResolution: async (displayId, modeId, beforeChange, expected) => {
     await setDesktopDisplayMode(displayId, modeId, beforeChange, true);
     await waitForDisplayRestore(displayId, expected, beforeChange);

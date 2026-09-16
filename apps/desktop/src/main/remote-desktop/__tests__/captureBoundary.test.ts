@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   dispose: vi.fn(),
   stop: vi.fn(),
   stopAndRestore: vi.fn(async () => {}),
+  waitForGeometry: vi.fn(async (..._args: any[]) => {}),
   quit: new Map<string, { fn: () => unknown; phase: string }>(),
   releaseControl: vi.fn(),
   inputFailure: null as null | (() => void),
@@ -29,6 +30,11 @@ vi.mock('../../lifecycle', () => ({
   onQuit: (name: string, fn: () => unknown, phase = 'sync') => h.quit.set(name, { fn, phase }),
 }));
 vi.mock('../iceConfig', () => ({ loadDesktopIceServers: h.iceConfig }));
+vi.mock('../viewerDisplay', () => ({
+  viewerDisplaySupported: vi.fn(async () => false),
+  createViewerDisplay: vi.fn(),
+  waitForDisplayRestore: h.waitForGeometry,
+}));
 vi.mock('electron', () => ({
   app: { on: vi.fn() },
   powerMonitor: { on: vi.fn() },
@@ -192,6 +198,47 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
+
+it.each(['resolution', 'restoreResolution'])(
+  'waits for native completion and projection on %s',
+  async (method) => {
+    const { setDesktopDisplayMode } = await import('../inputHost');
+    let nativeDone!: () => void;
+    let projected!: () => void;
+    vi.mocked(setDesktopDisplayMode).mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        nativeDone = resolve;
+      });
+    });
+    h.waitForGeometry.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        projected = resolve;
+      });
+    });
+    const beforeChange = vi.fn();
+    const settled = vi.fn();
+    const expected = { width: 1920, height: 1080 };
+    const pending = h.deps[method]('1', '1', beforeChange, expected).then(settled);
+    expect(projected).toBeUndefined();
+    nativeDone();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    if (method === 'resolution') {
+      expect(h.waitForGeometry).toHaveBeenLastCalledWith(
+        '1',
+        expected,
+        beforeChange,
+        expect.any(Function),
+      );
+      const present = h.waitForGeometry.mock.lastCall![3];
+      expect(present([])).toBe(false);
+      expect(present([{ id: 1 }])).toBe(true);
+    } else expect(h.waitForGeometry).toHaveBeenLastCalledWith('1', expected, beforeChange);
+    expect(settled).not.toHaveBeenCalled();
+    projected();
+    await pending;
+    expect(settled).toHaveBeenCalledOnce();
+  },
+);
 
 it('joins resolution restoration through the shared asynchronous quit phase', async () => {
   const cleanup = h.quit.get('remote-desktop-restore')!;
