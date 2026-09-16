@@ -113,7 +113,18 @@ fn sha256_hex(file: &mut File) -> io::Result<String> {
 }
 
 fn open_regular_file(zip: &Path) -> io::Result<File> {
-    let file = File::open(zip)?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Rust's default Windows share mode permits concurrent writers and
+        // deleters. Digest verification and ZipArchive must hold one handle
+        // that denies both for the entire verify-and-extract transaction.
+        const FILE_SHARE_READ: u32 = 0x00000001;
+        options.share_mode(FILE_SHARE_READ);
+    }
+    let file = options.open(zip)?;
     if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -1119,6 +1130,25 @@ mod tests {
             "incomplete backup walk must fail rollback so retry stays disabled: {result:?}"
         );
         assert_eq!(fs::read(app_dir.join("restored.txt")).unwrap(), b"new");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn archive_handle_denies_concurrent_writes_and_deletes() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let temp = TestDir::new();
+        let zip = temp.0.join("update.zip");
+        fs::write(&zip, b"trusted-archive").unwrap();
+        let _reader = super::open_regular_file(&zip).expect("open protected archive handle");
+
+        assert!(fs::OpenOptions::new().write(true).open(&zip).is_err());
+        assert!(fs::OpenOptions::new()
+            .write(true)
+            .share_mode(0x00000001 | 0x00000002 | 0x00000004)
+            .open(&zip)
+            .is_err());
+        assert!(fs::remove_file(&zip).is_err());
     }
 
     #[test]
