@@ -757,6 +757,19 @@ describe('app update forward-only policy', () => {
     }
   });
 
+  it('hashes staged Windows zips as a stream instead of one main-thread buffer', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, '..', 'updateService.ts'),
+      'utf8',
+    );
+    const start = source.indexOf('function windowsZipFileMatchesDigest');
+    expect(start).toBeGreaterThan(-1);
+    const body = source.slice(start, start + 900);
+    expect(body).toContain('createReadStream');
+    expect(body).not.toMatch(/readFileSync\s*\(/);
+    expect(body).not.toMatch(/readFile\s*\(/);
+  });
+
   it('lets a later online check re-anchor an offline-ready Windows patch', async () => {
     vi.useFakeTimers();
     readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });

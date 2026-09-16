@@ -1213,7 +1213,7 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
         discardStagedPatchFiles();
         return 'idle';
       }
-      if (windowsZipFileMatchesDigest(readyFilePath, trustedSha256)) {
+      if (await windowsZipFileMatchesDigest(readyFilePath, trustedSha256)) {
         readyZipSha256 = trustedSha256;
         log.info('Staged patch v%s matches latest — skipping re-download', latestVersion);
         setStatus('ready', { version: latestVersion });
@@ -1478,14 +1478,29 @@ function windowsZipDigestsEqual(left: string | undefined, right: string | undefi
   return Boolean(a && b && a === b);
 }
 
-function windowsZipFileMatchesDigest(filePath: string | undefined, expected: string): boolean {
+async function windowsZipFileMatchesDigest(
+  filePath: string | undefined,
+  expected: string,
+): Promise<boolean> {
   if (!filePath) return false;
   try {
-    const actual = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    const actual = await hashFileSha256(filePath);
     return windowsZipDigestsEqual(actual, expected);
   } catch {
     return false;
   }
+}
+
+function hashFileSha256(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', reject);
+    stream.on('data', (chunk: Buffer | string) => {
+      hash.update(chunk);
+    });
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
 }
 
 function handleMissingWindowsArchiveDigest(): void {
@@ -2370,7 +2385,7 @@ export function initUpdateService(): void {
             discardStagedPatchFiles();
             return { hasUpdate: false, action: 'none' as const };
           }
-          if (!windowsZipFileMatchesDigest(readyFilePath, trustedSha256)) {
+          if (!(await windowsZipFileMatchesDigest(readyFilePath, trustedSha256))) {
             log.info('Windows: local patch bytes do not match current digest — will re-download');
             readyVersion = undefined;
             readyFilePath = undefined;

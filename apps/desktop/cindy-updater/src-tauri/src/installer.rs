@@ -537,9 +537,13 @@ pub(crate) fn elevated_private_staging_root(args: &CliArgs) -> PathBuf {
 }
 
 fn protected_staging_base() -> PathBuf {
+    trusted_staging_ancestor()
+}
+
+fn trusted_staging_ancestor() -> PathBuf {
     #[cfg(windows)]
     {
-        program_data_dir().join("Cindy").join("update-staging")
+        program_data_dir()
     }
     #[cfg(not(windows))]
     {
@@ -1548,31 +1552,96 @@ fn ensure_staging_directory(path: &Path) -> io::Result<()> {
 }
 
 fn ensure_elevated_private_root(root: &Path) -> io::Result<()> {
-    let base = protected_staging_base();
-    if !root.starts_with(&base) {
-        return fs::create_dir_all(root);
+    create_protected_staging_tree(root, &trusted_staging_ancestor())
+}
+
+static CREATED_PROTECTED_STAGING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn record_created_protected_dir(path: &Path) {
+    let mut seen = CREATED_PROTECTED_STAGING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if !seen.iter().any(|p| p == path) {
+        seen.push(path.to_path_buf());
     }
-    fs::create_dir_all(&base)?;
-    restrict_directory_to_high_integrity(&base)?;
-    if root == base {
+}
+
+fn dir_created_by_this_process(path: &Path) -> bool {
+    CREATED_PROTECTED_STAGING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|p| p == path)
+}
+
+/// Create `path` under a verified ancestor. Existing planted directories are
+/// refused: applying a DACL after `create_dir_all` does not revoke handles a
+/// medium-integrity process already holds. Missing components are born with
+/// the High-IL descriptor.
+pub(crate) fn create_protected_staging_tree(
+    path: &Path,
+    trusted_ancestor: &Path,
+) -> io::Result<()> {
+    if !path.starts_with(trusted_ancestor) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "staging path {} is outside {}",
+                path.display(),
+                trusted_ancestor.display()
+            ),
+        ));
+    }
+    verify_trusted_ancestor(trusted_ancestor)?;
+    if path == trusted_ancestor {
         return Ok(());
     }
-    let rel = root.strip_prefix(&base).unwrap_or(root);
-    let mut cur = base;
+    let rel = path.strip_prefix(trusted_ancestor).unwrap_or(path);
+    let mut cur = trusted_ancestor.to_path_buf();
     for component in rel.components() {
         cur.push(component);
-        if cur.exists() {
-            restrict_directory_to_high_integrity(&cur)?;
-        } else {
-            create_directory_with_high_integrity(&cur)?;
+        if dir_created_by_this_process(&cur) && cur.exists() && !is_reparse_point(&cur) {
+            continue;
+        }
+        match create_directory_with_high_integrity(&cur) {
+            Ok(()) => record_created_protected_dir(&cur),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "refusing pre-created staging path {}",
+                        cur.display()
+                    ),
+                ));
+            }
+            Err(error) => return Err(error),
         }
     }
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
-fn restrict_directory_to_high_integrity(_path: &Path) -> io::Result<()> {
+fn verify_trusted_ancestor(path: &Path) -> io::Result<()> {
+    if is_reparse_point(path) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("trusted ancestor is a reparse point: {}", path.display()),
+        ));
+    }
+    let meta = fs::symlink_metadata(path)?;
+    if !meta.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("trusted ancestor is not a directory: {}", path.display()),
+        ));
+    }
     Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_reparse_point(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1625,64 +1694,49 @@ impl Drop for ProtectedSecurityDescriptor {
 }
 
 #[cfg(target_os = "windows")]
-fn restrict_directory_to_high_integrity(path: &Path) -> io::Result<()> {
+fn is_reparse_point(path: &Path) -> bool {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Security::Authorization::{
-        SetNamedSecurityInfoW, SE_FILE_OBJECT,
-    };
-    use windows_sys::Win32::Security::{
-        GetSecurityDescriptorDacl, GetSecurityDescriptorSacl, DACL_SECURITY_INFORMATION,
-        LABEL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileAttributesW, FILE_ATTRIBUTE_REPARSE_POINT, INVALID_FILE_ATTRIBUTES,
     };
 
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let attrs = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+}
+
+#[cfg(target_os = "windows")]
+fn create_directory_with_high_integrity(path: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::Storage::FileSystem::CreateDirectoryW;
+
+    if is_reparse_point(path) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("staging path is a reparse point: {}", path.display()),
+        ));
+    }
     let sd = high_integrity_security_descriptor()?;
     let wide: Vec<u16> = path
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
-    let mut dacl_present = 0;
-    let mut dacl_defaulted = 0;
-    let mut dacl = std::ptr::null_mut();
-    let mut sacl_present = 0;
-    let mut sacl_defaulted = 0;
-    let mut sacl = std::ptr::null_mut();
-    unsafe {
-        if GetSecurityDescriptorDacl(sd.0, &mut dacl_present, &mut dacl, &mut dacl_defaulted) == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        if GetSecurityDescriptorSacl(sd.0, &mut sacl_present, &mut sacl, &mut sacl_defaulted) == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        let err = SetNamedSecurityInfoW(
-            wide.as_ptr(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION
-                | LABEL_SECURITY_INFORMATION
-                | PROTECTED_DACL_SECURITY_INFORMATION,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            dacl,
-            sacl,
-        );
-        if err != 0 {
-            return Err(io::Error::from_raw_os_error(err as i32));
-        }
+    let attrs = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd.0,
+        bInheritHandle: 0,
+    };
+    let ok = unsafe { CreateDirectoryW(wide.as_ptr(), &attrs) };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
     }
     Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn create_directory_with_high_integrity(path: &Path) -> io::Result<()> {
-    match fs::create_dir(path) {
-        Ok(()) => restrict_directory_to_high_integrity(path),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            restrict_directory_to_high_integrity(path)
-        }
-        Err(error) => Err(error),
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1938,14 +1992,14 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 mod tests {
     use super::{
         acquire_update_lock, archive_matches_digest, bind_zip_sha256, extract_error_can_retry,
-        elevated_private_staging_root, finalize_retry_state, install_writable_for_staging,
-        lock_owned_by_foreign_process, may_relaunch_with_current_integrity, may_self_elevate,
-        path_is_within, pre_elevation_failure_can_retry, prepare_retry_archive,
-        release_abandoned_update_lock, release_update_lock, remove_staging_dir,
-        retain_update_lock_file, retry_allowed, retry_args, retry_available, retry_cli_args,
-        retry_request_allowed, rollback, run, should_relaunch_after_abandoning_retry,
-        should_relaunch_after_rollback, staging_dirs, staging_dirs_for,
-        uses_elevated_private_staging, uses_protected_staging, Phase,
+        create_protected_staging_tree, elevated_private_staging_root, finalize_retry_state,
+        install_writable_for_staging, lock_owned_by_foreign_process,
+        may_relaunch_with_current_integrity, may_self_elevate, path_is_within,
+        pre_elevation_failure_can_retry, prepare_retry_archive, release_abandoned_update_lock,
+        release_update_lock, remove_staging_dir, retain_update_lock_file, retry_allowed,
+        retry_args, retry_available, retry_cli_args, retry_request_allowed, rollback, run,
+        should_relaunch_after_abandoning_retry, should_relaunch_after_rollback, staging_dirs,
+        staging_dirs_for, uses_elevated_private_staging, uses_protected_staging, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use sha2::Digest;
@@ -2745,6 +2799,65 @@ mod tests {
         assert!(
             body.contains("uses_elevated_private_staging"),
             "elevated+writable must pick a medium-inaccessible staging root, not workdir:\n{body}"
+        );
+    }
+
+    #[test]
+    fn protected_staging_tree_rejects_a_precreated_directory() {
+        let temp = TestDir::new();
+        let ancestor = temp.0.join("ProgramData");
+        fs::create_dir(&ancestor).unwrap();
+        let planted = ancestor.join("cindy-update-planted");
+        fs::create_dir(&planted).unwrap();
+        let extract = planted.join("cindy-update-extract-ts");
+        let error = create_protected_staging_tree(&extract, &ancestor).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::AlreadyExists,
+            "a medium-integrity plant of the staging root must not be reused: {error}"
+        );
+        assert!(!extract.exists());
+    }
+
+    #[test]
+    fn protected_staging_tree_creates_missing_directories() {
+        let temp = TestDir::new();
+        let ancestor = temp.0.join("ProgramData");
+        fs::create_dir(&ancestor).unwrap();
+        let extract = ancestor
+            .join("cindy-update-nonce")
+            .join("cindy-update-extract-ts");
+        create_protected_staging_tree(&extract, &ancestor).unwrap();
+        assert!(extract.is_dir());
+        let backup = ancestor
+            .join("cindy-update-nonce")
+            .join("cindy-update-rollback-ts");
+        create_protected_staging_tree(&backup, &ancestor).unwrap();
+        assert!(backup.is_dir());
+    }
+
+    #[test]
+    fn protected_staging_is_created_with_the_security_descriptor() {
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("fn create_directory_with_high_integrity")
+            .expect("create_directory_with_high_integrity");
+        let windows = source[start..]
+            .find("#[cfg(target_os = \"windows\")]\nfn create_directory_with_high_integrity")
+            .map(|offset| start + offset)
+            .unwrap_or(start);
+        let body = &source[windows..windows + 900];
+        assert!(
+            body.contains("CreateDirectoryW") && body.contains("SECURITY_ATTRIBUTES"),
+            "High-IL staging must be born with the DACL, not secured after create_dir:\n{body}"
+        );
+        let ensure = source
+            .find("fn ensure_elevated_private_root")
+            .expect("ensure_elevated_private_root");
+        let ensure_body = &source[ensure..ensure + 700];
+        assert!(
+            !ensure_body.contains("create_dir_all"),
+            "create_dir_all accepts a planted tree before the DACL is applied:\n{ensure_body}"
         );
     }
 
