@@ -116,9 +116,11 @@ backup staging live under the install directory. Classification does not
 re-probe writability with that high token: after UAC, Program Files would look
 writable and send staging back to the unelevated `%TEMP%` workdir. Inherited
 elevation from an elevated Cindy spawn that omitted `--elevated` classifies
-with the linked medium-integrity token instead, so a writable per-user install
-stays in TEMP and a protected Program Files install still stages next to the
-app. Unelevated per-user installs still probe and stay in TEMP.
+with the linked medium-integrity token instead. A writable per-user install
+stages under `%ProgramData%\Cindy\update-staging` with a High integrity label
+so a same-login medium process cannot replace extracted EXE/DLL files before
+`copy_tree`; a protected Program Files install still stages next to the app.
+Unelevated per-user installs still probe and stay in TEMP.
 Failures before replacement delete those staging directories; only a rollback
 that itself failed keeps the backup for manual recovery.
 The retry command checks for processes running from the install directory and
@@ -136,11 +138,15 @@ disk for that window so a second updater cannot start from `%TEMP%`. Close, or
 any other abandoned Retry exit, deletes that file so the next Cindy launch does
 not wait 30 seconds, then relaunches the restored Cindy — the concurrency
 reason for keeping it closed no longer applies. An elevated updater does not
-relaunch a medium-writable `Cindy.exe`: Close would inherit the high token and
-a same-login process can replace that file. Protected install roots still
-relaunch. Retryable failures that never acquired `.updating` still relaunch if
-this updater already stopped Cindy. A second updater that never owned the lock
-and never stopped Cindy does not relaunch or delete it. Close then window
+`CreateProcess` a medium-writable `Cindy.exe` with the high token: Close and
+the successful install launch use the linked medium token instead, or skip
+relaunch if that token is unavailable. Protected install roots still relaunch
+at the current integrity. Retryable failures that never acquired `.updating`
+still relaunch if this updater already stopped Cindy. A present `.updating`
+owned by another process suppresses relaunch — Cindy's 30-second wait can
+delete this window's leftover and a later updater may already be replacing
+files. A second updater that never owned the lock and never stopped Cindy
+does not relaunch or delete it. Close then window
 destroy share a one-shot abandon so the restored Cindy is not launched twice.
 Clicking Retry hides Close until the worker reports a terminal state, and
 Alt+F4 / `CloseRequested` is ignored while that worker is running, so Close

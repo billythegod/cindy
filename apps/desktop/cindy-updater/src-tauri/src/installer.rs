@@ -212,6 +212,13 @@ fn lock_contents_owned_by_this_process(contents: &str) -> bool {
     contents == format!("updating {}\n", std::process::id())
 }
 
+/// True when `.updating` exists and does not name this process. Cindy's 30s
+/// startup wait can delete this window's leftover; a later updater then owns
+/// the same path. Close must not relaunch into that replace window.
+pub(crate) fn lock_owned_by_foreign_process(path: &Path) -> bool {
+    path.exists() && !lock_file_owned_by_this_process(path)
+}
+
 /// Close / abandon Retry must delete a retained `.updating` file. Cindy's
 /// startup lock loop cannot tell this leftover from a live updater and would
 /// otherwise wait the full 30s timeout. Only delete a lock this process wrote;
@@ -250,7 +257,25 @@ fn relaunch_restored_app(args: &CliArgs) {
     let Some(exe) = restored_app_relaunch_path(args) else {
         return;
     };
-    if !may_relaunch_with_current_integrity(
+    match launch_app_exe(args, &exe) {
+        Ok(AppLaunch::Started) => logger::info(format!(
+            "[installer] relaunched restored exe after abandoning Retry at {}",
+            exe.display()
+        )),
+        Ok(AppLaunch::Skipped) => {}
+        Err(error) => logger::warn(format!(
+            "[installer] relaunch of restored exe after abandoning Retry failed: {error}"
+        )),
+    }
+}
+
+enum AppLaunch {
+    Started,
+    Skipped,
+}
+
+fn launch_app_exe(args: &CliArgs, exe: &Path) -> io::Result<AppLaunch> {
+    if may_relaunch_with_current_integrity(
         args.elevated,
         process_is_elevated(),
         install_writable_for_staging(
@@ -258,20 +283,18 @@ fn relaunch_restored_app(args: &CliArgs) {
             medium_integrity_needs_elevation(&args.app_dir),
         ),
     ) {
-        logger::warn(format!(
-            "[installer] skip relaunch of writable exe {} from an elevated updater",
-            exe.display()
-        ));
-        return;
+        launch_detached(exe)?;
+        return Ok(AppLaunch::Started);
     }
-    match launch_detached(&exe) {
-        Ok(()) => logger::info(format!(
-            "[installer] relaunched restored exe after abandoning Retry at {}",
-            exe.display()
-        )),
-        Err(error) => logger::warn(format!(
-            "[installer] relaunch of restored exe after abandoning Retry failed: {error}"
-        )),
+    match launch_de_elevated(exe) {
+        Ok(()) => Ok(AppLaunch::Started),
+        Err(error) => {
+            logger::warn(format!(
+                "[installer] skip elevated CreateProcess of writable exe {}: {error}",
+                exe.display()
+            ));
+            Ok(AppLaunch::Skipped)
+        }
     }
 }
 
@@ -280,9 +303,11 @@ pub(crate) fn should_relaunch_restored_app_on_abandon(
     retry_in_progress: bool,
     owned_lock: bool,
     stopped_app: bool,
+    foreign_lock: bool,
 ) -> bool {
     should_relaunch_after_abandoning_retry(can_retry, retry_in_progress)
         && (owned_lock || stopped_app)
+        && !foreign_lock
 }
 
 static ABANDONED_RETRY_LOCKS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
@@ -313,12 +338,14 @@ pub(crate) fn abandon_retry(
         return;
     }
     let owned = lock_file_owned_by_this_process(&args.lock);
+    let foreign = lock_owned_by_foreign_process(&args.lock);
     release_abandoned_update_lock(&args.lock);
     if should_relaunch_restored_app_on_abandon(
         can_retry,
         retry_in_progress,
         owned,
         stopped_app,
+        foreign,
     ) {
         relaunch_restored_app(args);
     }
@@ -495,14 +522,50 @@ pub(crate) fn uses_protected_staging(
     (cli_elevated || process_elevated) && !install_writable
 }
 
+/// Elevated + medium-writable: `app_dir` and `%TEMP%` are both plantable.
+/// Stage under a High-IL directory the same-login medium token cannot write.
+pub(crate) fn uses_elevated_private_staging(
+    cli_elevated: bool,
+    process_elevated: bool,
+    install_writable: bool,
+) -> bool {
+    (cli_elevated || process_elevated) && install_writable
+}
+
+pub(crate) fn elevated_private_staging_root(args: &CliArgs) -> PathBuf {
+    protected_staging_base().join(format!("cindy-update-{}", workdir_ts(&args.workdir)))
+}
+
+fn protected_staging_base() -> PathBuf {
+    #[cfg(windows)]
+    {
+        program_data_dir().join("Cindy").join("update-staging")
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::temp_dir().join("cindy-update-elevated")
+    }
+}
+
+#[cfg(windows)]
+fn program_data_dir() -> PathBuf {
+    std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+}
+
 pub(crate) fn staging_dirs_for(
     args: &CliArgs,
     process_elevated: bool,
     install_writable: bool,
 ) -> (PathBuf, PathBuf) {
     let ts = workdir_ts(&args.workdir);
+    let private_root;
     let root = if uses_protected_staging(args.elevated, process_elevated, install_writable) {
         &args.app_dir
+    } else if uses_elevated_private_staging(args.elevated, process_elevated, install_writable) {
+        private_root = elevated_private_staging_root(args);
+        &private_root
     } else {
         &args.workdir
     };
@@ -987,7 +1050,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
             .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
         remove_staging_dir(&backup_dir)
             .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
-        fs::create_dir_all(&extract_dir)
+        ensure_staging_directory(&extract_dir)
             .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
         logger::info(format!("[installer] extract_dir={}", extract_dir.display()));
     extract_zip(&args.zip, &extract_dir, args.zip_sha256.as_deref(), |done, total| {
@@ -1018,7 +1081,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
         Phase::BackingUp,
         "备份当前版本…".into(),
     ));
-    fs::create_dir_all(&backup_dir)
+    ensure_staging_directory(&backup_dir)
         .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
     logger::info(format!("[installer] backup_dir={}", backup_dir.display()));
     snapshot_overwritten_files(&extract_dir, &args.app_dir, &backup_dir, |done, total| {
@@ -1058,13 +1121,21 @@ fn run_inner<F: FnMut(InstallerEvent)>(
             Phase::Launching,
             "启动新版本…".into(),
         ));
-        launch_detached(&exe_path)?;
-        if !poll_until_process_running(&args.exe_name, LAUNCH_VERIFY_TIMEOUT) {
-            anyhow::bail!(
-                "新进程 {} 在启动 {} 秒后未出现，可能被杀软拦截或新可执行文件损坏",
-                args.exe_name,
-                LAUNCH_VERIFY_TIMEOUT.as_secs()
-            );
+        match launch_app_exe(args, &exe_path)? {
+            AppLaunch::Started => {
+                if !poll_until_process_running(&args.exe_name, LAUNCH_VERIFY_TIMEOUT) {
+                    anyhow::bail!(
+                        "新进程 {} 在启动 {} 秒后未出现，可能被杀软拦截或新可执行文件损坏",
+                        args.exe_name,
+                        LAUNCH_VERIFY_TIMEOUT.as_secs()
+                    );
+                }
+            }
+            AppLaunch::Skipped => {
+                logger::warn(
+                    "[installer] files replaced; skipped launching a writable Cindy.exe from this elevated updater",
+                );
+            }
         }
         Ok(())
     })();
@@ -1194,17 +1265,22 @@ fn remove_staging_dir(path: &Path) -> io::Result<()> {
 /// rollbacks (which we intentionally do NOT auto-delete at end-of-run).
 /// Best-effort: any IO failure is ignored — sweeping is purely housekeeping.
 pub fn sweep_stale_temp_dirs() {
-    const MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60; // 7 days
     // Broad prefixes catch:
     //   - cindy-update-{ts}/           current workdir layout (2026-07 rebrand)
     //   - xdt-update-{ts}/             legacy workdir layout
     //   - xdt-update-extract-{ts}/     legacy (pre-workdir refactor)
     //   - xdt-update-rollback-{ts}/    legacy
     //   - xdt-updater-{ts}.exe         legacy standalone updater binary
+    //   - cindy-update-{ts}/ under ProgramData staging for elevated+writable
     let prefixes = ["cindy-update", "xdt-update"];
     let now = std::time::SystemTime::now();
-    let temp = std::env::temp_dir();
-    let entries = match fs::read_dir(&temp) {
+    sweep_stale_under(&std::env::temp_dir(), &prefixes, now);
+    sweep_stale_under(&protected_staging_base(), &prefixes, now);
+}
+
+fn sweep_stale_under(root: &Path, prefixes: &[&str], now: std::time::SystemTime) {
+    const MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60; // 7 days
+    let entries = match fs::read_dir(root) {
         Ok(it) => it,
         Err(_) => return,
     };
@@ -1447,6 +1523,268 @@ fn launch_detached(exe: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Launch Cindy with the linked medium token so a writable per-user install
+/// does not inherit this process's high integrity.
+fn launch_de_elevated(exe: &Path) -> io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        return launch_with_linked_medium_token(exe);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(io::Error::other(format!(
+            "refusing to inherit elevation when launching {}",
+            exe.display()
+        )))
+    }
+}
+
+fn ensure_staging_directory(path: &Path) -> io::Result<()> {
+    if path.starts_with(protected_staging_base()) {
+        ensure_elevated_private_root(path)
+    } else {
+        fs::create_dir_all(path)
+    }
+}
+
+fn ensure_elevated_private_root(root: &Path) -> io::Result<()> {
+    let base = protected_staging_base();
+    if !root.starts_with(&base) {
+        return fs::create_dir_all(root);
+    }
+    fs::create_dir_all(&base)?;
+    restrict_directory_to_high_integrity(&base)?;
+    if root == base {
+        return Ok(());
+    }
+    let rel = root.strip_prefix(&base).unwrap_or(root);
+    let mut cur = base;
+    for component in rel.components() {
+        cur.push(component);
+        if cur.exists() {
+            restrict_directory_to_high_integrity(&cur)?;
+        } else {
+            create_directory_with_high_integrity(&cur)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn restrict_directory_to_high_integrity(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn create_directory_with_high_integrity(path: &Path) -> io::Result<()> {
+    fs::create_dir(path)
+}
+
+#[cfg(target_os = "windows")]
+fn high_integrity_security_descriptor() -> io::Result<ProtectedSecurityDescriptor> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::PSECURITY_DESCRIPTOR;
+
+    // Admins + SYSTEM, protected DACL, High mandatory label with NO_WRITE_UP.
+    let sddl: Vec<u16> = std::ffi::OsStr::new(
+        "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)S:(ML;;NW;;;HI)",
+    )
+    .encode_wide()
+    .chain(std::iter::once(0))
+    .collect();
+    let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    let ok = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut sd,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 || sd.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(ProtectedSecurityDescriptor(sd))
+}
+
+#[cfg(target_os = "windows")]
+struct ProtectedSecurityDescriptor(windows_sys::Win32::Security::PSECURITY_DESCRIPTOR);
+
+#[cfg(target_os = "windows")]
+impl Drop for ProtectedSecurityDescriptor {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                let _ = windows_sys::Win32::Foundation::LocalFree(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn restrict_directory_to_high_integrity(path: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Security::Authorization::{
+        SetNamedSecurityInfoW, SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        GetSecurityDescriptorDacl, GetSecurityDescriptorSacl, DACL_SECURITY_INFORMATION,
+        LABEL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+    };
+
+    let sd = high_integrity_security_descriptor()?;
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut dacl_present = 0;
+    let mut dacl_defaulted = 0;
+    let mut dacl = std::ptr::null_mut();
+    let mut sacl_present = 0;
+    let mut sacl_defaulted = 0;
+    let mut sacl = std::ptr::null_mut();
+    unsafe {
+        if GetSecurityDescriptorDacl(sd.0, &mut dacl_present, &mut dacl, &mut dacl_defaulted) == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if GetSecurityDescriptorSacl(sd.0, &mut sacl_present, &mut sacl, &mut sacl_defaulted) == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let err = SetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION
+                | LABEL_SECURITY_INFORMATION
+                | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            dacl,
+            sacl,
+        );
+        if err != 0 {
+            return Err(io::Error::from_raw_os_error(err as i32));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn create_directory_with_high_integrity(path: &Path) -> io::Result<()> {
+    match fs::create_dir(path) {
+        Ok(()) => restrict_directory_to_high_integrity(path),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            restrict_directory_to_high_integrity(path)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn launch_with_linked_medium_token(exe: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::{
+        DuplicateTokenEx, GetTokenInformation, SecurityImpersonation, TokenLinkedToken,
+        TokenPrimary, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_LINKED_TOKEN, TOKEN_QUERY,
+        TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_SESSIONID,
+    };
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessWithTokenW, GetCurrentProcess, OpenProcessToken, CREATE_NEW_PROCESS_GROUP,
+        DETACHED_PROCESS, PROCESS_INFORMATION, STARTUPINFOW,
+    };
+
+    let exe_w: Vec<u16> = exe
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let dir_w: Vec<u16> = exe
+        .parent()
+        .map(|dir| {
+            dir.as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut linked = TOKEN_LINKED_TOKEN {
+            LinkedToken: std::ptr::null_mut(),
+        };
+        let mut returned = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenLinkedToken,
+            (&mut linked as *mut TOKEN_LINKED_TOKEN).cast(),
+            std::mem::size_of::<TOKEN_LINKED_TOKEN>() as u32,
+            &mut returned,
+        );
+        let _ = CloseHandle(token);
+        if ok == 0 || linked.LinkedToken.is_null() {
+            return Err(io::Error::other("no linked medium token"));
+        }
+        let mut primary: HANDLE = std::ptr::null_mut();
+        let duplicated = DuplicateTokenEx(
+            linked.LinkedToken,
+            TOKEN_ASSIGN_PRIMARY
+                | TOKEN_DUPLICATE
+                | TOKEN_QUERY
+                | TOKEN_ADJUST_DEFAULT
+                | TOKEN_ADJUST_SESSIONID,
+            std::ptr::null(),
+            SecurityImpersonation,
+            TokenPrimary,
+            &mut primary,
+        );
+        let launch_token = if duplicated != 0 && !primary.is_null() {
+            let _ = CloseHandle(linked.LinkedToken);
+            primary
+        } else {
+            linked.LinkedToken
+        };
+        let mut startup: STARTUPINFOW = std::mem::zeroed();
+        startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        let mut info: PROCESS_INFORMATION = std::mem::zeroed();
+        let created = CreateProcessWithTokenW(
+            launch_token,
+            0,
+            exe_w.as_ptr(),
+            std::ptr::null_mut(),
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            std::ptr::null(),
+            if dir_w.is_empty() {
+                std::ptr::null()
+            } else {
+                dir_w.as_ptr()
+            },
+            &startup,
+            &mut info,
+        );
+        let _ = CloseHandle(launch_token);
+        if created == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if !info.hThread.is_null() {
+            let _ = CloseHandle(info.hThread);
+        }
+        if !info.hProcess.is_null() {
+            let _ = CloseHandle(info.hProcess);
+        }
+        Ok(())
+    }
+}
+
 fn is_process_running_by_name(name: &str) -> bool {
     let mut sys = System::new_all();
     sys.refresh_all();
@@ -1600,13 +1938,14 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 mod tests {
     use super::{
         acquire_update_lock, archive_matches_digest, bind_zip_sha256, extract_error_can_retry,
-        finalize_retry_state, install_writable_for_staging, may_relaunch_with_current_integrity,
-        may_self_elevate, path_is_within, pre_elevation_failure_can_retry, prepare_retry_archive,
+        elevated_private_staging_root, finalize_retry_state, install_writable_for_staging,
+        lock_owned_by_foreign_process, may_relaunch_with_current_integrity, may_self_elevate,
+        path_is_within, pre_elevation_failure_can_retry, prepare_retry_archive,
         release_abandoned_update_lock, release_update_lock, remove_staging_dir,
         retain_update_lock_file, retry_allowed, retry_args, retry_available, retry_cli_args,
         retry_request_allowed, rollback, run, should_relaunch_after_abandoning_retry,
-        should_relaunch_after_rollback, staging_dirs, staging_dirs_for, uses_protected_staging,
-        Phase,
+        should_relaunch_after_rollback, staging_dirs, staging_dirs_for,
+        uses_elevated_private_staging, uses_protected_staging, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use sha2::Digest;
@@ -1935,8 +2274,12 @@ mod tests {
         fs::write(args.app_dir.join(&args.exe_name), b"cindy").unwrap();
         assert!(!args.lock.exists());
         assert!(super::should_relaunch_restored_app_on_abandon(
-            true, false, false, true
+            true, false, false, true, false
         ));
+        assert!(
+            !super::should_relaunch_restored_app_on_abandon(true, false, false, true, true),
+            "Cindy's 30s wait can drop this window's lock; a later updater's .updating must block relaunch"
+        );
         assert!(super::begin_abandon_retry(&args.lock));
         assert!(
             !super::begin_abandon_retry(&args.lock),
@@ -1955,6 +2298,32 @@ mod tests {
         assert!(
             !lock.exists(),
             "Close must delete .updating so Cindy startup does not wait 30s"
+        );
+    }
+
+    #[test]
+    fn abandoning_retry_does_not_relaunch_when_a_foreign_lock_exists() {
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.app_dir = temp.0.join("app");
+        args.lock = temp.0.join(".updating");
+        fs::create_dir(&args.app_dir).unwrap();
+        fs::write(args.app_dir.join(&args.exe_name), b"cindy").unwrap();
+        let other_pid = if std::process::id() == 1 { 2 } else { 1 };
+        fs::write(&args.lock, format!("updating {other_pid}\n")).unwrap();
+        assert!(lock_owned_by_foreign_process(&args.lock));
+        assert!(
+            !super::should_relaunch_restored_app_on_abandon(true, false, false, true, true),
+            "stopped_app must not relaunch Cindy into another updater's replace window"
+        );
+        super::abandon_retry(&args, true, false, true);
+        assert!(
+            args.lock.exists(),
+            "Close must not delete another updater's .updating"
+        );
+        assert_eq!(
+            fs::read_to_string(&args.lock).unwrap(),
+            format!("updating {other_pid}\n")
         );
     }
 
@@ -2336,10 +2705,12 @@ mod tests {
             !uses_protected_staging(false, true, true),
             "a writable per-user install is not a UAC-protected staging root"
         );
+        assert!(uses_elevated_private_staging(false, true, true));
         assert!(uses_protected_staging(true, true, false));
+        assert!(!uses_elevated_private_staging(true, true, false));
         assert!(
             install_writable_for_staging(false, false),
-            "inherited elevation must keep a medium-writable per-user install in TEMP"
+            "inherited elevation must treat a medium-writable per-user install as writable"
         );
         assert!(
             !install_writable_for_staging(true, false),
@@ -2350,29 +2721,44 @@ mod tests {
         let mut args = test_args();
         args.elevated = false;
         args.app_dir = temp.0.join("Cindy");
-        args.workdir = temp.0.join("workdir");
+        args.workdir = temp.0.join("cindy-update-ts");
         fs::create_dir(&args.app_dir).unwrap();
         fs::create_dir(&args.workdir).unwrap();
+        let private_root = elevated_private_staging_root(&args);
         let (extract_dir, backup_dir) = staging_dirs_for(&args, true, true);
-        assert!(extract_dir.starts_with(&args.workdir));
-        assert!(backup_dir.starts_with(&args.workdir));
+        assert!(
+            extract_dir.starts_with(&private_root),
+            "elevated writable installs must not stage in TEMP or app_dir"
+        );
+        assert!(backup_dir.starts_with(&private_root));
+        assert!(!extract_dir.starts_with(&args.workdir));
         assert!(!extract_dir.starts_with(&args.app_dir));
 
         let source = include_str!("installer.rs");
         let start = source
-            .find("pub(crate) fn staging_dirs(args: &CliArgs)")
-            .expect("staging_dirs");
+            .find("pub(crate) fn staging_dirs_for")
+            .expect("staging_dirs_for");
         let helper = source[start..]
-            .find("pub(crate) fn uses_protected_staging")
-            .expect("uses_protected_staging");
+            .find("/// True when this process already holds an elevated Windows token.")
+            .expect("process_is_elevated docs");
         let body = &source[start..start + helper];
         assert!(
-            !body.contains("args.elevated || process_elevated"),
-            "do not force app_dir staging for every high token; writable per-user installs stay in TEMP:\n{body}"
+            body.contains("uses_elevated_private_staging"),
+            "elevated+writable must pick a medium-inaccessible staging root, not workdir:\n{body}"
         );
+    }
+
+    #[test]
+    fn successful_launch_does_not_createprocess_a_writable_install_elevated() {
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("启动新版本")
+            .expect("success launch phase");
+        let body = &source[start..start + 800];
         assert!(
-            body.contains("install_writable_for_staging"),
-            "staging_dirs must classify writability independently of the elevated probe:\n{body}"
+            body.contains("may_relaunch_with_current_integrity")
+                || body.contains("launch_app_exe"),
+            "copy_tree then CreateProcess of app_dir/Cindy.exe must not inherit a high token on a writable install:\n{body}"
         );
     }
 
