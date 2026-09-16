@@ -1929,14 +1929,14 @@ export default function RemoteDesktopScreen() {
                     !lease || busy || connecting.current || !caps?.canControl
                   }
                   presentation={{
-                    canRotate: Boolean(remotePresentation),
+                    canRotate: typeof remotePresentation?.rotate === "function",
                     canPip: Boolean(
                       remotePresentation && caps?.backgroundViewing && canPip,
                     ),
                     canAudio: Boolean(caps?.systemAudio),
                     onRotate: () => {
                       void remotePresentation
-                        ?.rotate(!landscape)
+                        ?.rotate?.(!landscape)
                         .then(() => setOperations(false))
                         .catch(() =>
                           setSettingNotice(t("remoteDesktop.settingFailed")),
