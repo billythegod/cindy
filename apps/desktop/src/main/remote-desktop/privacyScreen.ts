@@ -18,10 +18,23 @@ export class PrivacyScreen {
   private monitor: PrivacyInputMonitor | null = null;
   constructor(
     private readonly excluded: (ids: number[]) => void,
-    private readonly stopped: () => void,
+    private readonly stopped: () => void | Promise<void>,
     private readonly suspendInput: () => Promise<() => Promise<void>>,
     private readonly watchInput = watchPrivacyInput,
   ) {}
+  private async disconnect(generation: number): Promise<void> {
+    if (generation !== this.generation) return;
+    // Invalidate callbacks immediately, but retain masks and capture exclusions
+    // until the controller has finished locking and ended the viewing lease.
+    const ending = ++this.generation;
+    try {
+      await this.stopped();
+    } catch {
+      log.warn('privacy disconnect failed');
+    } finally {
+      if (ending === this.generation) this.stop();
+    }
+  }
   private async confirmExit(window: BrowserWindow, generation: number): Promise<void> {
     if (this.confirming || generation !== this.generation || window.isDestroyed()) return;
     this.confirming = true;
@@ -47,14 +60,14 @@ export class PrivacyScreen {
         noLink: true,
       });
       if (response === 1 && generation === this.generation) {
-        this.stop();
-        this.stopped();
+        resumeInput = undefined;
+        await this.disconnect(generation);
       }
     } catch (error) {
       log.warn('privacy exit confirmation failed', error);
       if (generation === this.generation) {
-        this.stop();
-        this.stopped();
+        resumeInput = undefined;
+        await this.disconnect(generation);
       }
     } finally {
       if (generation === this.generation) {
@@ -71,8 +84,8 @@ export class PrivacyScreen {
           }
         } catch {
           if (generation === this.generation) {
-            this.stop();
-            this.stopped();
+            resumeInput = undefined;
+            await this.disconnect(generation);
           }
         }
       }
@@ -151,16 +164,10 @@ export class PrivacyScreen {
         window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
         window.setAlwaysOnTop(true, 'screen-saver', 1);
         window.on('closed', () => {
-          if (generation === this.generation) {
-            this.stop();
-            this.stopped();
-          }
+          void this.disconnect(generation);
         });
         window.webContents.on('render-process-gone', () => {
-          if (generation === this.generation) {
-            this.stop();
-            this.stopped();
-          }
+          void this.disconnect(generation);
         });
       }
       if (!current() || generation !== this.generation) throw new Error('DESKTOP_LEASE_EXPIRED');
@@ -173,10 +180,7 @@ export class PrivacyScreen {
           if (generation === this.generation) void this.confirmExit(this.windows[0], generation);
         },
         () => {
-          if (generation === this.generation) {
-            this.stop();
-            this.stopped();
-          }
+          void this.disconnect(generation);
         },
       );
       if (!current() || generation !== this.generation) {

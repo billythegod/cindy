@@ -102,7 +102,7 @@ const nativeCapture = new NativeDesktopCapture();
 const privacyScreen = new PrivacyScreen(
   (ids) => nativeCapture.setExcludedWindows(ids),
   () => {
-    void remoteDesktop
+    return remoteDesktop
       .stopPrivacyByUser()
       .catch((error) => console.error('[remote-desktop] privacy exit lock failed', error));
   },

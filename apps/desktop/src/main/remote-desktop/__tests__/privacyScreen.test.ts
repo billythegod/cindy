@@ -200,8 +200,62 @@ it('ends the lease instead of leaving an inescapable mask when its native watche
   const f = fixture();
   await f.masks.set(true, () => true);
   f.failed();
+  await settle();
   expect(f.stopped).toHaveBeenCalledOnce();
   expect(state.windows[0].destroyed).toBe(true);
+});
+
+it.each(['confirmed', 'watcher', 'renderer'] as const)(
+  'retains masks and capture exclusions while %s disconnect waits for locking',
+  async (reason) => {
+    const f = fixture();
+    let finish!: () => void;
+    f.stopped.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await f.masks.set(true, () => true);
+    const window = state.windows[0];
+    if (reason === 'confirmed') f.local();
+    else if (reason === 'watcher') f.failed();
+    else window.webContents.emit('render-process-gone');
+    await settle();
+    expect(f.stopped).toHaveBeenCalledOnce();
+    expect(window.destroyed).toBe(false);
+    expect(f.excluded).toHaveBeenLastCalledWith([window.id]);
+    expect(f.resume).not.toHaveBeenCalled();
+    f.failed();
+    expect(f.stopped).toHaveBeenCalledOnce();
+    finish();
+    await settle();
+    expect(window.destroyed).toBe(true);
+    expect(f.excluded).toHaveBeenLastCalledWith([]);
+    expect(f.resume).not.toHaveBeenCalled();
+  },
+);
+
+it('does not clear replacement masks when an old disconnect rejects late', async () => {
+  const f = fixture();
+  let reject!: (error: Error) => void;
+  f.stopped.mockImplementation(
+    () =>
+      new Promise<void>((_, fail) => {
+        reject = fail;
+      }),
+  );
+  await f.masks.set(true, () => true);
+  f.local();
+  await settle();
+  f.masks.stop();
+  await f.masks.set(true, () => true);
+  const replacement = state.windows[1];
+  reject(new Error('lock failed'));
+  await settle();
+  expect(replacement.destroyed).toBe(false);
+  expect(f.excluded).toHaveBeenLastCalledWith([replacement.id]);
+  f.masks.stop();
 });
 
 it('does not expose the confirmation if the native injection fence fails', async () => {
