@@ -8592,6 +8592,7 @@
       "outputTotal": "누적 출력",
       "observedPeak": "최고",
       "tokenRate": "{{rate}} tok/s",
+      "tokenRateUnit": "tok/s",
       "tokenRateDescription": "최근 생성 구간의 속도. 도구 실행과 대기는 제외합니다.",
       "tokenCount": "{{tokens}} tok"
     },

@@ -8588,6 +8588,7 @@
       "outputTotal": "累计输出",
       "observedPeak": "峰值",
       "tokenRate": "{{rate}} tok/s",
+      "tokenRateUnit": "tok/s",
       "tokenRateDescription": "最近一段生成速度，不含工具执行与等待。",
       "tokenCount": "{{tokens}} tok"
     },

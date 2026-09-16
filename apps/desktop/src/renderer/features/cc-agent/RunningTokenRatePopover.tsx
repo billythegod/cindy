@@ -94,7 +94,9 @@ export function RunningTokenRatePopover({
           </div>
           <div className="flex items-baseline gap-1.5 tabular-nums">
             <span className="text-28 font-medium leading-none">{rate ?? '—'}</span>
-            <span className="text-12 text-[var(--text-secondary)]">tok/s</span>
+            <span className="text-12 text-[var(--text-secondary)]">
+              {t('chat.runningStatus.tokenRateUnit')}
+            </span>
           </div>
         </div>
         <svg

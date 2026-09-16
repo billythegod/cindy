@@ -8597,6 +8597,7 @@
       "outputTotal": "Output",
       "observedPeak": "Peak",
       "tokenRate": "{{rate}} tok/s",
+      "tokenRateUnit": "tok/s",
       "tokenRateDescription": "Latest generation interval. Excludes tools and waits.",
       "tokenCount": "{{tokens}} tok"
     },
