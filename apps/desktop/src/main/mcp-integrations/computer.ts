@@ -23,7 +23,7 @@ import { createLogger } from '../logger.js';
 import { outboundFetch } from '../maker-host/outbound-fetch.js';
 import { resolveDesktopOutboundProxy } from '../maker-host/outbound-proxy-resolver.js';
 import { adaptComputerDriverArgs, type ComputerDriverToolSchema } from './computer-contract.js';
-import { computerResultOutcome, getComputerTool } from '@cindy/mcps/computer';
+import { computerResultOutcome, getComputerTool, isUnavailableWindowObservation } from '@cindy/mcps/computer';
 
 const logger = createLogger('mcp/cindy_computer');
 const DRIVER_COMMAND = 'cua-driver';
@@ -3398,6 +3398,7 @@ export async function callComputerDriverTool(
     const startedIdle = !isHumanDesktopInputActive();
     const result = await callComputerDriverToolImpl(name, args, context);
     if (name === 'get_window_state' && startedIdle && computerResultOutcome(name, result).ok
+      && !isUnavailableWindowObservation(result, args)
       && revision === desktopInputRevision() && !isHumanDesktopInputActive()) {
       observations?.windows.set(window, revision);
       // App-scoped actions may omit window_id; a successful observation of

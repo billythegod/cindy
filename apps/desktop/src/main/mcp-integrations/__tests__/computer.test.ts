@@ -1483,10 +1483,22 @@ describe('computer mcp integration', () => {
       if (cleanup) await cleanupComputerDriverSession(context.sessionId);
       await expect(callComputerDriverTool('click', target, context))
         .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
-      mcpCallToolMock.mockResolvedValue({ structuredContent: { ok: false, error: 'unavailable' } });
-      await callComputerDriverTool('get_window_state', target, context);
-      await expect(callComputerDriverTool('click', target, context))
-        .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
+      const failedObservations = [
+        { args: {}, result: { ok: false, error: 'unavailable' } },
+        { args: { capture_mode: 'vision' }, result: { screenshot_frame_valid: false, elements: [{}] } },
+        { args: { capture_mode: 'som' }, result: { screenshot_error: 'capture failed', tree_markdown: 'AX' } },
+        { args: { include_screenshot: true }, result: { screenshot_error: 'capture failed' } },
+        { args: { screenshot_out_file: '/tmp/test.png' }, result: { screenshot_frame_valid: false } },
+        { args: { capture_mode: 'ax' }, result: { degraded: true, elements: [], tree_markdown: '' } },
+        { args: { include_screenshot: false }, result: { degraded: true } },
+        { args: {}, result: { screenshot_error: 'capture failed', degraded: true } },
+      ];
+      for (const observation of failedObservations) {
+        mcpCallToolMock.mockResolvedValue({ structuredContent: observation.result });
+        await callComputerDriverTool('get_window_state', { ...target, ...observation.args }, context);
+        await expect(callComputerDriverTool('click', target, context))
+          .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
+      }
       mcpCallToolMock.mockResolvedValue({ structuredContent: { ok: true } });
       await callComputerDriverTool('get_window_state', target, context);
       for (const name of ['type_text', 'press_key', 'hotkey', 'click'] as const) {
