@@ -61,34 +61,23 @@ pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
     held_lock: Option<UpdateLock>,
     mut emit: F,
 ) {
-    let lock = match held_lock {
-        Some(lock) => lock,
-        None => match acquire_update_lock(&args.lock) {
-            Ok(lock) => lock,
-            Err(error) => {
-                logger::error(format!("[installer] FAILED: {error}"));
-                emit(InstallerEvent::Failed(
-                    "另一项更新正在进行，请关闭此窗口后重新检查更新".into(),
-                    false,
-                ));
-                return;
-            }
-        },
-    };
+    let lock = held_lock;
     if let Err(error) = bind_zip_sha256(&mut args) {
         logger::error(format!("[installer] FAILED: archive unavailable ({error})"));
         let (extract_dir, backup_dir) = staging_dirs(&args);
         remove_pre_install_staging(&extract_dir, &backup_dir);
         discard_staged_archives(&args);
-        release_update_lock(lock);
+        if let Some(lock) = lock {
+            release_update_lock(lock);
+        }
         emit(InstallerEvent::Failed(
             "更新文件已不存在或无法读取，请重新检查更新".into(),
             false,
         ));
         return;
     }
-    match run_inner(&args, &mut emit) {
-        Ok(()) => {
+    match run_inner(&args, lock, &mut emit) {
+        Ok(lock) => {
             release_update_lock(lock);
             emit(InstallerEvent::Done);
         }
@@ -106,20 +95,21 @@ pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
                 false
             };
             logger::error(format!("[installer] FAILED: {}", failure.message));
-            if can_retry {
-                // Keep the `.updating` file so Cindy waits at startup, but close
-                // the handle so in-process Retry can reopen it. create_new still
-                // rejects a second updater while the file exists.
-                retain_update_lock_file(lock);
-            } else {
-                release_update_lock(lock);
+            if let Some(lock) = failure.lock {
+                if can_retry {
+                    // Keep the `.updating` file so Cindy waits at startup, but close
+                    // the handle so in-process Retry can reopen it. create_new still
+                    // rejects a second updater while the file exists.
+                    retain_update_lock_file(lock);
+                } else {
+                    release_update_lock(lock);
+                }
             }
             emit(InstallerEvent::Failed(failure.message, can_retry));
         }
     }
 }
 
-#[derive(Debug)]
 struct InstallerFailure {
     message: String,
     can_retry: bool,
@@ -131,6 +121,7 @@ struct InstallerFailure {
     /// and snapshot errors happen before app_dir is rewritten, so their
     /// elevated staging under app_dir must be deleted.
     keep_backup: bool,
+    lock: Option<UpdateLock>,
 }
 
 impl InstallerFailure {
@@ -140,6 +131,7 @@ impl InstallerFailure {
             can_retry,
             discard_archive: !can_retry,
             keep_backup: false,
+            lock: None,
         }
     }
 
@@ -149,7 +141,13 @@ impl InstallerFailure {
             can_retry: elevation_prompt_can_retry(),
             discard_archive: false,
             keep_backup: false,
+            lock: None,
         }
+    }
+
+    fn with_lock(mut self, lock: UpdateLock) -> Self {
+        self.lock = Some(lock);
+        self
     }
 }
 
@@ -478,8 +476,9 @@ pub(crate) fn retry_cli_args(args: &CliArgs) -> Vec<std::ffi::OsString> {
 
 fn run_inner<F: FnMut(InstallerEvent)>(
     args: &CliArgs,
+    held_lock: Option<UpdateLock>,
     emit: &mut F,
-) -> Result<(), InstallerFailure> {
+) -> Result<UpdateLock, InstallerFailure> {
     logger::info(format!(
         "[installer] zip={} app_dir={} exe_name={} pid={}",
         args.zip.display(),
@@ -589,20 +588,27 @@ fn run_inner<F: FnMut(InstallerEvent)>(
         }
     }
 
-    // 2. Extract zip into a subdir of workdir. The exclusive lock was already
-    //    acquired by `run` so a racing Cindy start waits at `.updating`. Child dirs preserve the
-    //    parent's `{ts}` suffix so a copy-out for support still carries the
-    //    attempt timestamp regardless of whether the parent context survives.
-    //    A user retry reuses this workdir, so discard any partial staging from
-    //    the previous attempt before rebuilding it.
-    let (extract_dir, backup_dir) = staging_dirs(args);
-    remove_staging_dir(&extract_dir)
-        .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
-    remove_staging_dir(&backup_dir)
-        .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
-    fs::create_dir_all(&extract_dir)
-        .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
-    logger::info(format!("[installer] extract_dir={}", extract_dir.display()));
+    // Acquire the exclusive lock only after any UAC handoff. The unelevated
+    // parent must not leave `.updating` behind for the elevated child.
+    let lock = match held_lock {
+        Some(lock) => lock,
+        None => acquire_update_lock(&args.lock).map_err(|_| {
+            InstallerFailure::new(
+                "另一项更新正在进行，请关闭此窗口后重新检查更新",
+                false,
+            )
+        })?,
+    };
+
+    let install = (|| -> Result<(), InstallerFailure> {
+        let (extract_dir, backup_dir) = staging_dirs(args);
+        remove_staging_dir(&extract_dir)
+            .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
+        remove_staging_dir(&backup_dir)
+            .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
+        fs::create_dir_all(&extract_dir)
+            .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
+        logger::info(format!("[installer] extract_dir={}", extract_dir.display()));
     extract_zip(&args.zip, &extract_dir, args.zip_sha256.as_deref(), |done, total| {
         let pct = if total == 0 { -1 } else { (done * 100 / total).min(100) as i32 };
         emit(InstallerEvent::Progress(
@@ -618,6 +624,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
             can_retry,
             discard_archive: !can_retry,
             keep_backup: false,
+            lock: None,
         }
     })?;
 
@@ -773,11 +780,17 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                         can_retry: false,
                         discard_archive: true,
                         keep_backup: true,
+                        lock: None,
                     });
                 }
             }
         }
     }
+        })();
+        match install {
+            Ok(()) => Ok(lock),
+            Err(failure) => Err(failure.with_lock(lock)),
+        }
 }
 
 /// Remove a staging directory before reusing its path. A missing path is
@@ -1485,6 +1498,33 @@ mod tests {
     fn retryable_rollback_does_not_relaunch_cindy() {
         assert!(!should_relaunch_after_rollback(true));
         assert!(should_relaunch_after_rollback(false));
+    }
+
+    #[test]
+    fn first_attempt_does_not_hold_the_lock_across_uac() {
+        let source = include_str!("installer.rs");
+        let wrapper = source
+            .find("pub(crate) fn run_with_lock")
+            .expect("run_with_lock");
+        let inner = source.find("fn run_inner").expect("run_inner");
+        let wrapper_body = &source[wrapper..inner];
+        let bind = wrapper_body
+            .find("bind_zip_sha256")
+            .expect("bind before inner");
+        assert!(
+            !wrapper_body[..bind].contains("acquire_update_lock"),
+            "the unelevated parent must not create_new the lock before UAC handoff"
+        );
+        let elevate = source[inner..]
+            .find("match self_elevate")
+            .expect("self_elevate");
+        let acquire = source[inner..]
+            .find("acquire_update_lock")
+            .expect("lock after elevation");
+        assert!(
+            acquire > elevate,
+            "the elevated child must acquire the lock after the UAC handoff"
+        );
     }
 
     #[test]

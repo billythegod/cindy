@@ -115,9 +115,11 @@ that itself failed keeps the backup for manual recovery.
 The retry command checks for processes running from the install directory and
 asks the user to close them; manual retry never force-terminates those processes.
 The first attempt may still request UAC by relaunching this TEMP-copied updater.
-Cancelling that prompt, or a Retry that would need a second `runas`, does not
-offer Retry and does not relaunch the TEMP executable; close the window and
-check for updates again. An already-elevated Retry continues in-process.
+The exclusive `.updating` lock is acquired only after that handoff, so the
+elevated child can install. Cancelling that prompt, or a Retry that would need a
+second `runas`, does not offer Retry and does not relaunch the TEMP executable;
+close the window and check for updates again. An already-elevated Retry continues
+in-process.
 
 A successful rollback retains the isolated zip for retry and does not relaunch
 Cindy while Retry remains available. The exclusive `.updating` lock stays held
