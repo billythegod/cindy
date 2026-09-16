@@ -54,7 +54,8 @@ fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn quit_now(app: AppHandle) {
+fn quit_now(app: AppHandle, state: State<'_, AppState>) {
+    installer::release_abandoned_update_lock(&state.args.lock);
     app.exit(0);
 }
 
@@ -164,6 +165,12 @@ pub fn run() {
             // when --theme=dark — because both the win32 surface and the
             // WebView default to white until HTML/CSS lands.
             if let Some(w) = win.as_ref() {
+                let lock_path = app.state::<AppState>().args.lock.clone();
+                w.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::Destroyed) {
+                        installer::release_abandoned_update_lock(&lock_path);
+                    }
+                });
                 let resolved = match app.state::<AppState>().args.theme {
                     ThemeArg::Light => Theme::Light,
                     ThemeArg::Dark => Theme::Dark,
@@ -221,6 +228,25 @@ mod retry_update_contract {
         assert!(
             body.contains("installer::run_with_lock") && body.contains("retry_args"),
             "Retry must continue in this already-loaded process:\n{body}"
+        );
+    }
+
+    #[test]
+    fn quit_now_releases_an_abandoned_retry_lock() {
+        let source = include_str!("lib.rs");
+        let start = source.find("fn quit_now").expect("quit_now");
+        let end = source[start..]
+            .find("\nfn retry_update")
+            .expect("retry_update follows quit_now");
+        let body = &source[start..start + end];
+        assert!(
+            body.contains("release_abandoned_update_lock"),
+            "Close must delete a retained .updating file:\n{body}"
+        );
+        assert!(
+            source.contains("WindowEvent::Destroyed")
+                && source.contains("release_abandoned_update_lock"),
+            "closing the updater window must also delete a retained .updating file"
         );
         assert!(
             !body.contains("current_exe")

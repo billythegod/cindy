@@ -195,6 +195,13 @@ pub(crate) fn retain_update_lock_file(lock: UpdateLock) {
     drop(lock._file);
 }
 
+/// Close / abandon Retry must delete a retained `.updating` file. Cindy's
+/// startup lock loop cannot tell this leftover from a live updater and would
+/// otherwise wait the full 30s timeout.
+pub(crate) fn release_abandoned_update_lock(path: &Path) {
+    let _ = fs::remove_file(path);
+}
+
 /// Re-open a lock this process already created and kept during the failure
 /// window. Missing or unreadable files mean another updater is active.
 pub(crate) fn reopen_held_update_lock(path: &Path) -> Option<UpdateLock> {
@@ -214,6 +221,12 @@ pub(crate) fn reopen_held_update_lock(path: &Path) -> Option<UpdateLock> {
 
 pub(crate) fn should_relaunch_after_rollback(can_retry: bool) -> bool {
     !can_retry
+}
+
+/// Retry cannot request UAC. Failures before the permission probe must not
+/// advertise Retry when this install still needs elevation.
+pub(crate) fn pre_elevation_failure_can_retry(needs_uac: bool, already_elevated: bool) -> bool {
+    already_elevated || !needs_uac
 }
 
 pub(crate) fn retry_available(zip: &Path) -> bool {
@@ -494,10 +507,12 @@ fn run_inner<F: FnMut(InstallerEvent)>(
     ));
     let is_retry = args.zip == retry_archive(args);
     let exited = is_retry || pid_wait::wait_for_exit(args.pid, PID_WAIT_TIMEOUT);
+    let needs_uac = matches!(needs_elevation(&args.app_dir), Ok(true));
+    let pre_elevation_retry = pre_elevation_failure_can_retry(needs_uac, args.elevated);
     if !exited {
         return Err(InstallerFailure::new(
             "主程序在 60 秒内没有退出，更新中止",
-            true,
+            pre_elevation_retry,
         ));
     }
     std::thread::sleep(FS_SETTLE_DELAY);
@@ -512,10 +527,10 @@ fn run_inner<F: FnMut(InstallerEvent)>(
     //      overwriting a running executable, so these must be gone first.
     if is_retry {
         ensure_retry_processes_closed(args)
-            .map_err(|error| InstallerFailure::new(error, true))?;
+            .map_err(|error| InstallerFailure::new(error, pre_elevation_retry))?;
     } else {
         terminate_appdir_processes(&args.app_dir, emit)
-            .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
+            .map_err(|error| InstallerFailure::new(error.to_string(), pre_elevation_retry))?;
     }
 
     // 1.5. Permission probe → optional self-elevation. Run BEFORE the lock
@@ -1219,10 +1234,10 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 mod tests {
     use super::{
         acquire_update_lock, archive_matches_digest, bind_zip_sha256, extract_error_can_retry,
-        finalize_retry_state, may_self_elevate, path_is_within, prepare_retry_archive,
-        release_update_lock, remove_staging_dir, retain_update_lock_file, retry_allowed, retry_args,
-        retry_available, retry_cli_args, retry_request_allowed, rollback, run,
-        should_relaunch_after_rollback, staging_dirs, Phase,
+        finalize_retry_state, may_self_elevate, path_is_within, pre_elevation_failure_can_retry,
+        prepare_retry_archive, release_abandoned_update_lock, release_update_lock, remove_staging_dir,
+        retain_update_lock_file, retry_allowed, retry_args, retry_available, retry_cli_args,
+        retry_request_allowed, rollback, run, should_relaunch_after_rollback, staging_dirs, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use sha2::Digest;
@@ -1498,6 +1513,27 @@ mod tests {
     fn retryable_rollback_does_not_relaunch_cindy() {
         assert!(!should_relaunch_after_rollback(true));
         assert!(should_relaunch_after_rollback(false));
+    }
+
+    #[test]
+    fn abandoning_retry_deletes_the_retained_lock_file() {
+        let temp = TestDir::new();
+        let lock = temp.0.join(".updating");
+        let held = acquire_update_lock(&lock).expect("first updater holds the lock");
+        retain_update_lock_file(held);
+        assert!(lock.exists());
+        release_abandoned_update_lock(&lock);
+        assert!(
+            !lock.exists(),
+            "Close must delete .updating so Cindy startup does not wait 30s"
+        );
+    }
+
+    #[test]
+    fn pre_elevation_failures_are_not_retryable_when_uac_is_required() {
+        assert!(!pre_elevation_failure_can_retry(true, false));
+        assert!(pre_elevation_failure_can_retry(false, false));
+        assert!(pre_elevation_failure_can_retry(true, true));
     }
 
     #[test]
