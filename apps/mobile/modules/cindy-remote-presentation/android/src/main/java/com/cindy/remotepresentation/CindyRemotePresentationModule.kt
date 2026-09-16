@@ -171,7 +171,12 @@ class CindyRemotePresentationModule : Module() {
           imageFile!!.writeBytes(bytes)
           val publishedFile = File(directory, imageFile!!.name.removeSuffix(".pending"))
           val imageUri = FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", publishedFile)
-          ClipData("Cindy", arrayOf("image/png"), ClipData.Item(text, html, null, imageUri))
+          val mimeTypes = listOfNotNull(
+            "image/png",
+            text?.let { "text/plain" },
+            html?.let { "text/html" },
+          ).toTypedArray()
+          ClipData("Cindy", mimeTypes, ClipData.Item(text, html, null, imageUri))
         }
         text != null && html != null -> ClipData.newHtmlText("Cindy", text, html)
         text != null -> ClipData.newPlainText("Cindy", text)
