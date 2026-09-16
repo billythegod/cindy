@@ -148,7 +148,7 @@ describe("automatic clipboard synchronization", () => {
     expect(h.deps.readLocal).toHaveBeenCalledTimes(2);
   });
   it.each(["local", "remote"] as const)(
-    "transfers small %s content in one payload message",
+    "transfers small %s content inline and verifies destination normalization",
     async (direction) => {
       const h = harness();
       const engine = new ClipboardSync({ ...h.deps, inline: true });
@@ -159,7 +159,9 @@ describe("automatic clipboard synchronization", () => {
       const payloads = h.request.mock.calls.filter(
         ([r]) => r.op === "clipboardContent",
       );
-      expect(payloads).toHaveLength(1);
+      expect(payloads).toHaveLength(direction === "local" ? 2 : 1);
+      if (direction === "local")
+        expect(payloads[1][0]).toMatchObject({ action: "copy", inline: true });
       expect(payloads[0][0]).toMatchObject({
         action: direction === "local" ? "paste" : "copy",
       });
@@ -428,3 +430,50 @@ it("retains a successfully read new local digest when the remote read is unsuppo
   );
   expect(baseline.remoteDigest).toBeUndefined();
 });
+
+it.each(["local", "remote"] as const)(
+  "does not echo normalized content after writing to %s",
+  async (destination) => {
+    const h = harness();
+    await h.engine.tick();
+    const source = JSON.stringify({
+      text: "rich",
+      html: "<b>rich</b>",
+      rtf: "rtf rich",
+    });
+    const normalized = JSON.stringify({ text: "rich", html: "<b>rich</b>" });
+    if (destination === "local") {
+      const write = h.write.getMockImplementation()!;
+      h.write.mockImplementation((_, version) => write(normalized, version));
+      h.remote("2", source);
+    } else {
+      const original = h.request.getMockImplementation()!;
+      h.request.mockImplementation(async (message) => {
+        const result = await original(message);
+        if (message.op === "clipboardContent" && message.action === "commit")
+          h.remote("3", normalized);
+        return result;
+      });
+      h.local("2", source);
+    }
+    await h.engine.tick();
+    h.request.mockClear();
+    h.write.mockClear();
+    h[destination]("4", normalized); // delayed native notification
+    await h.engine.tick();
+    expect(h.write).not.toHaveBeenCalled();
+    expect(
+      h.request.mock.calls.some(
+        ([r]) => r.op === "clipboardContent" && r.action === "commit",
+      ),
+    ).toBe(false);
+    h[destination]("5"); // a real subsequent copy still propagates
+    await h.engine.tick();
+    expect(
+      h.write.mock.calls.length +
+        h.request.mock.calls.filter(
+          ([r]) => r.op === "clipboardContent" && r.action === "commit",
+        ).length,
+    ).toBe(1);
+  },
+);

@@ -112,12 +112,17 @@ afterEach(async () => {
   await act(async () => root.unmount());
   vi.useRealTimers();
 });
-it.each(["enable", "transfer"])(
+it.each(["enable", "transfer", "focus"])(
   "preserves the enabled preference and recovers from %s failure",
   async (stage) => {
     if (stage === "enable")
       h.request.mockRejectedValueOnce(new Error("INVOKE_TIMEOUT"));
-    else h.tick.mockRejectedValueOnce(new Error("INVOKE_TIMEOUT"));
+    else
+      h.tick.mockRejectedValueOnce(
+        new Error(
+          stage === "focus" ? "CLIPBOARD_NOT_ALLOWED" : "INVOKE_TIMEOUT",
+        ),
+      );
     await act(async () => root.render(createElement(Probe)));
     expect(latest.clipboardSync).toBe(true);
     expect(latest.safetyNotice).toBe("clipboardSyncFailed");

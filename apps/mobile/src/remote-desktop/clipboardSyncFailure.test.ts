@@ -27,3 +27,12 @@ it.each([
   });
   expect(clipboardSyncErrorCode(error)).toBe(code);
 });
+
+it("retries Android focus loss while preserving permanent permission failures", () => {
+  const error = Object.assign(new Error("CLIPBOARD_NOT_ALLOWED"), {
+    code: "ERR_UNEXPECTED",
+  });
+  expect(clipboardSyncFailure(error, 0).delay).toBe(1500);
+  expect(clipboardSyncFailure(error, 99).delay).toBe(30000);
+  expect(clipboardSyncFailure(new Error("PASTE_DENIED"), 0).delay).toBeNull();
+});

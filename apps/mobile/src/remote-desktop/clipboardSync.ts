@@ -331,21 +331,24 @@ export class ClipboardSync {
           local,
           remote,
         );
+        // Native clipboards may normalize or drop portable representations.
+        // Record the destination's actual, version-checked content, not its input.
+        const actual = await this.readRemote(version);
         Object.assign(this.baseline, {
           local,
           remote: version,
           localDigest: localContent.digest,
-          remoteDigest: localContent.digest,
+          remoteDigest: actual.digest,
         });
         this.deps.trace?.("phone-to-computer-complete");
       } else if (remoteChanged && remoteContent) {
         const written = await this.deps.writeLocal(remoteContent.json, local);
         this.check();
-        this.rememberLocal(written, remoteContent.digest);
+        const actual = await this.readLocal(written);
         Object.assign(this.baseline, {
           local: written,
           remote,
-          localDigest: remoteContent.digest,
+          localDigest: actual.digest,
           remoteDigest: remoteContent.digest,
         });
         this.deps.trace?.("computer-to-phone-complete");

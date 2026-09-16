@@ -15,7 +15,11 @@ export function clipboardSyncErrorCode(error: unknown): string {
 }
 export function clipboardSyncFailure(error: unknown, failures: number) {
   const code = clipboardSyncErrorCode(error);
-  if (/PERMISSION|DENIED|NOT_ALLOWED/.test(code))
+  // Android uses this exact code for temporary window-focus loss.
+  if (
+    code !== "CLIPBOARD_NOT_ALLOWED" &&
+    /PERMISSION|DENIED|NOT_ALLOWED/.test(code)
+  )
     return { code, notice: "clipboardSyncPermission", delay: null };
   if (code === "CLIPBOARD_CONFLICT" || code.endsWith("_CHANGED"))
     return { code, notice: "clipboardSyncConflict", delay: 1500 };
