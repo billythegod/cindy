@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import { COMPUTER_TOOLS } from '@cindy/mcps/computer';
+import { HumanDesktopInput, HUMAN_INPUT_QUIET_MS } from '../../remote-desktop/inputOwnership';
 
 const {
   existsSyncMock,
@@ -1397,6 +1398,108 @@ describe('computer mcp integration', () => {
       sessionId: 'text-cancel', signal: controller.signal,
     })).rejects.toMatchObject({ code: 'REQUEST_CANCELLED', outcomeUnknown: true });
     expect(mcpCallToolMock.mock.calls.filter(([call]) => call.name === 'type_text')).toHaveLength(1);
+  });
+
+  it('yields to remote input between text chunks and requires a fresh target before resuming', async () => {
+    vi.useFakeTimers();
+    const human = new HumanDesktopInput();
+    let batch: ReturnType<HumanDesktopInput['begin']> | undefined;
+    const context = { sessionId: 'remote-yield' };
+    const target = { pid: 123, window_id: 7 };
+    try {
+      mcpCallToolMock.mockImplementation(({ name }) => {
+        if (name === 'type_text' && !batch) batch = human.begin([{ kind: 'text', text: 'human' }]);
+        return { structuredContent: { ok: true, effect: 'confirmed' } };
+      });
+      await expect(callComputerDriverTool('type_text', { ...target, text: 'a'.repeat(850) }, context))
+        .rejects.toThrow('Agent yielded');
+      expect(mcpCallToolMock.mock.calls.filter(([call]) => call.name === 'type_text')).toHaveLength(1);
+      await batch!.ready;
+      batch!.complete();
+      vi.advanceTimersByTime(HUMAN_INPUT_QUIET_MS);
+      await expect(callComputerDriverTool('click', { ...target, x: 1, y: 1 }, context))
+        .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
+      await callComputerDriverTool('get_window_state', target, context);
+      await expect(callComputerDriverTool('click', { ...target, x: 1, y: 1 }, context)).resolves.toBeDefined();
+    } finally {
+      human.release();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not count an observation taken during pending remote input as a fresh target', async () => {
+    vi.useFakeTimers();
+    const human = new HumanDesktopInput();
+    const context = { sessionId: 'remote-observation' };
+    const target = { pid: 123, window_id: 7 };
+    try {
+      mcpCallToolMock.mockResolvedValue({ structuredContent: { ok: true } });
+      const batch = human.begin([{ kind: 'text', text: 'human' }]);
+      await callComputerDriverTool('get_window_state', target, context);
+      batch.complete();
+      vi.advanceTimersByTime(HUMAN_INPUT_QUIET_MS);
+      await expect(callComputerDriverTool('click', { ...target, x: 1, y: 1 }, context))
+        .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
+      await callComputerDriverTool('get_window_state', { ...target, window_id: 8 }, context);
+      await expect(callComputerDriverTool('click', { ...target, x: 1, y: 1 }, context))
+        .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
+      await callComputerDriverTool('get_window_state', target, context);
+      await expect(callComputerDriverTool('click', { ...target, x: 1, y: 1 }, context)).resolves.toBeDefined();
+    } finally { human.release(); vi.useRealTimers(); }
+  });
+
+  it('bounds delayed typing chunks while a remote input connection is open', async () => {
+    const human = new HumanDesktopInput();
+    try {
+      mcpCallToolMock.mockResolvedValue({ structuredContent: { ok: true, effect: 'confirmed' } });
+      await callComputerDriverTool('type_text', { pid: 123, window_id: 7, text: 'abc', delay_ms: 200 }, { sessionId: 'remote-slow-text' });
+      expect(mcpCallToolMock.mock.calls.filter(([call]) => call.name === 'type_text')
+        .map(([call]) => call.arguments.text)).toEqual(['a', 'b', 'c']);
+    } finally { human.release(); }
+  });
+
+  it('lets remote input proceed during driver startup and refuses the now-stale Agent action', async () => {
+    const human = new HumanDesktopInput();
+    let finish!: () => void;
+    mcpConnectMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const action = callComputerDriverTool('click', { pid: 123, window_id: 7, x: 1, y: 1 }, { sessionId: 'remote-startup' });
+    const rejected = expect(action).rejects.toThrow('Agent yielded');
+    try {
+      await vi.waitFor(() => expect(mcpConnectMock).toHaveBeenCalled());
+      const batch = human.begin([{ kind: 'text', text: 'human' }]);
+      await batch.ready;
+      batch.complete();
+      finish();
+      await rejected;
+      expect(mcpCallToolMock.mock.calls.filter(([call]) => call.name === 'click')).toHaveLength(0);
+    } finally { finish?.(); human.release(); }
+  });
+
+  it('keeps remote input waiting through driver teardown after an interrupted primitive', async () => {
+    const human = new HumanDesktopInput();
+    let batch: ReturnType<HumanDesktopInput['begin']> | undefined;
+    let finish!: () => void;
+    let delivered = false;
+    mcpCallToolMock.mockImplementation(({ name }) => {
+      if (name === 'type_text') {
+        batch = human.begin([{ kind: 'text', text: 'human' }]);
+        void batch.ready.then(() => { delivered = true; });
+        throw new Error('session ended; tool call ignored');
+      }
+      if (name === 'end_session') return new Promise((resolve) => {
+        finish = () => resolve({ structuredContent: { ok: true } });
+      });
+      return { structuredContent: { ok: true } };
+    });
+    const action = callComputerDriverTool('type_text', { pid: 123, window_id: 7, text: 'hello' }, { sessionId: 'remote-teardown' });
+    const rejected = expect(action).rejects.toMatchObject({ code: 'ACTION_OUTCOME_UNKNOWN' });
+    try {
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+      expect(delivered).toBe(false);
+      finish(); await rejected; await batch!.ready;
+      expect(delivered).toBe(true);
+      batch!.complete();
+    } finally { finish?.(); human.release(); }
   });
 
   it.each(['connect', 'tools/list'] as const)('cancels the caller during %s without interrupting shared startup', async (phase) => {
