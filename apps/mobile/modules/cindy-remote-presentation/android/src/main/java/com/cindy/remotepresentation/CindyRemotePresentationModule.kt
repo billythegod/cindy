@@ -27,6 +27,21 @@ import java.io.ByteArrayOutputStream
 // Bound encoded buffers before Bitmap/JSON/Base64 can multiply their footprint.
 private const val IMAGE_BYTES = 8 * 1024 * 1024
 private const val IMAGE_PIXELS = 4_000_000L
+private fun decodeClipboardPng(encoded: String): ByteArray {
+  if (encoded.length > ((IMAGE_BYTES + 2) / 3) * 4) throw Exception("CLIPBOARD_TOO_LONG")
+  val bytes = Base64.decode(encoded, Base64.DEFAULT)
+  if (bytes.size > IMAGE_BYTES) throw Exception("CLIPBOARD_TOO_LONG")
+  if (bytes.size < 33 || !bytes.copyOfRange(0, 16).contentEquals(
+      byteArrayOf(-119,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82)))
+    throw Exception("CLIPBOARD_UNSUPPORTED")
+  fun dimension(offset: Int): Long = (offset until offset + 4).fold(0L) { value, index ->
+    (value shl 8) or (bytes[index].toLong() and 255L)
+  }
+  val width = dimension(16)
+  val height = dimension(20)
+  if (width <= 0 || height <= 0 || width > IMAGE_PIXELS / height) throw Exception("CLIPBOARD_TOO_LONG")
+  return bytes
+}
 private class ClipboardImageOutput : ByteArrayOutputStream(8192) {
   override fun write(value: Int) {
     if (count >= IMAGE_BYTES) throw Exception("CLIPBOARD_TOO_LONG")
@@ -149,9 +164,7 @@ class CindyRemotePresentationModule : Module() {
     try {
       val clip = when {
         png != null -> {
-          val bytes = Base64.decode(png, Base64.DEFAULT)
-          if (bytes.size < 8 || !bytes.copyOfRange(0, 8).contentEquals(byteArrayOf(-119,80,78,71,13,10,26,10)))
-            throw Exception("CLIPBOARD_UNSUPPORTED")
+          val bytes = decodeClipboardPng(png)
           val context = appContext.reactContext!!
           val directory = File(context.cacheDir, "remote-clipboard").apply { mkdirs() }
           // Enumerate on IO, but do not unlink anything before publication.

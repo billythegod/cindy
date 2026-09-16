@@ -191,17 +191,19 @@ export class RemoteDesktopController {
     )
       this.stop();
   }
-  stop(peer?: string): void {
+  stop(peer?: string): Promise<void> {
     if (peer && this.active?.peer !== peer) {
       // Cancelling a takeover candidate must not revoke the current owner's work.
       if (this.startingPeer === peer) this.startingPeer = null;
-      return;
+      return Promise.resolve();
     }
     this.lockAbort?.abort();
     if (this.active) this.lastEnded = { peer: this.active.peer, lease: this.active.lease };
     this.clipboardTransfer.reset();
     this.controlGeneration++;
-    void this.clearSafety().catch(() => log.warn('Safety restoration failed after stop'));
+    const restoring = this.clearSafety().catch(() =>
+      log.warn('Safety restoration failed after stop'),
+    );
     this.active = null;
     this.deps.stopInput();
     this.deps.stopVideo();
@@ -212,6 +214,7 @@ export class RemoteDesktopController {
     if (this.viewerDisplay) void this.restoreStoppedDisplay().catch(() => {});
     this.viewerGeometryManaged = false;
     this.deps.changed();
+    return restoring;
   }
   private restoreStoppedDisplay(): Promise<void> {
     if (this.displayRestoring) return this.displayRestoring;

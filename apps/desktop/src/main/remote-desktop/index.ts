@@ -1,5 +1,4 @@
 import {
-  app,
   desktopCapturer,
   ipcMain,
   nativeImage,
@@ -13,6 +12,7 @@ import {
   type DesktopCapturerSource,
 } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { onQuit } from '../lifecycle';
 import { release as osRelease } from 'node:os';
 import { loadDesktopIceServers } from './iceConfig';
 import { remoteCredentialHost } from './credentialHost';
@@ -507,11 +507,15 @@ export function registerRemoteDesktopIpc(
   denyAppDesktopCapture(session.defaultSession, isVoiceInputOwner);
   const timer = setInterval(() => remoteDesktop.tick(), 1000);
   timer.unref();
-  app.on('before-quit', () => {
-    clearInterval(timer);
-    permissions.dismiss();
-    remoteDesktop.stop();
-  });
+  onQuit(
+    'remote-desktop',
+    () => {
+      clearInterval(timer);
+      permissions.dismiss();
+      return remoteDesktop.stop();
+    },
+    'async',
+  );
   screen.on('display-removed', (_event, display) => {
     if (remoteDesktop.changingDisplay) return;
     if (String(display.id) === remoteDesktop.displayId) remoteDesktop.stop();

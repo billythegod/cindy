@@ -629,8 +629,9 @@ on completion, cancellation and lease termination; uncertain paste responses are
 never automatically retried. Native portable clipboard access and version tracking
 require new iOS and Android native builds; older runtimes retain the text fallback.
 Android supports text, HTML, HTTP(S) URLs and PNG images (not RTF), limits decoded
-clipboard image reads to 4 million pixels, with 8 MiB limits on both the source
-and encoded PNG. Oversized images are rejected before unbounded encoding or
+clipboard image reads and incoming PNGs to 4 million pixels, with 8 MiB limits on both the source
+and encoded PNG. Incoming Base64 length is checked before decoding, and its PNG
+header and dimensions before publication. Oversized images are rejected before unbounded encoding or
 Base64 copies; images are not downsampled. Android clipboard images
 use grant-scoped cache files. A later successful image write removes files older
 than one hour, preserving every URI still referenced by the current clipboard;

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { RemoteDesktopController, type DesktopControllerDeps } from '../controller';
 import { enumerateDesktopSources } from '../captureSource';
 import type { RemoteDesktopIceReply, RemoteDesktopLease } from '@cindy/device-link';
@@ -39,6 +40,49 @@ function harness() {
   };
 }
 describe('remote desktop authority and lifecycle', () => {
+  it('registers the returned stop promise with the awaited quit phase', () => {
+    const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+    const registration = source.slice(
+      source.indexOf('onQuit('),
+      source.indexOf("  screen.on('display-removed'"),
+    );
+    const register = vi.fn();
+    const pending = new Promise<void>(() => {});
+    const stop = vi.fn(() => pending);
+    const dismiss = vi.fn();
+    const clear = vi.fn();
+    new Function('onQuit', 'clearInterval', 'timer', 'permissions', 'remoteDesktop', registration)(
+      register,
+      clear,
+      1,
+      { dismiss },
+      { stop },
+    );
+    expect(register).toHaveBeenCalledWith('remote-desktop', expect.any(Function), 'async');
+    expect(register.mock.calls[0][1]()).toBe(pending);
+    expect(clear).toHaveBeenCalledWith(1);
+    expect(dismiss).toHaveBeenCalledOnce();
+  });
+  it('stops input immediately but keeps the quit promise pending until audio restoration finishes', async () => {
+    const h = harness();
+    await h.start();
+    let finish!: () => void;
+    h.deps.stopHostMute = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    let settled = false;
+    const stopped = h.controller.stop().then(() => {
+      settled = true;
+    });
+    expect(h.controller.state).toBeNull();
+    expect(h.deps.stopInput).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish();
+    await stopped;
+    expect(settled).toBe(true);
+  });
   it('keeps viewing and peer isolation after native input fails, and allows explicit control recovery', async () => {
     const h = harness(),
       lease = await h.start();
