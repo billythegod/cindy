@@ -11,6 +11,9 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.functions.Queues
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import java.util.concurrent.atomic.AtomicLong
 import android.text.Html
 import androidx.core.content.FileProvider
 import java.io.File
@@ -22,8 +25,25 @@ class CindyRemotePresentationModule : Module() {
   private val clipboard: ClipboardManager
     get() = appContext.reactContext!!.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
+  // No payload is retained: notifications and foreground transitions only
+  // invalidate the version. Atomic because Expo lifecycle callbacks may run
+  // outside the MAIN queue used by clipboard operations.
+  private val clipboardGeneration = AtomicLong(0)
+  private val clipboardEpoch = UUID.randomUUID().toString()
+  private var observedClipboard: ClipboardManager? = null
+  private val clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
+    clipboardGeneration.incrementAndGet()
+  }
+
   override fun definition() = ModuleDefinition {
     Name("CindyRemotePresentation")
+    OnActivityEntersForeground { clipboardGeneration.incrementAndGet() }
+    OnDestroy {
+      Handler(Looper.getMainLooper()).post {
+        observedClipboard?.removePrimaryClipChangedListener(clipboardListener)
+        observedClipboard = null
+      }
+    }
     // Android WebView owns playback; only iOS needs an AVAudioSession override.
     AsyncFunction("playback") { _: Boolean -> Unit }
     AsyncFunction("clipboardVersion") { foreground(); clipboardVersion() }.runOnQueue(Queues.MAIN)
@@ -41,16 +61,18 @@ class CindyRemotePresentationModule : Module() {
     if (appContext.currentActivity?.hasWindowFocus() != true) throw Exception("CLIPBOARD_NOT_ALLOWED")
   }
 
-  // The same snapshot identity is used by polling and compare-before-write.
-  // Do not decode images or open content providers just to poll for a new copy.
-  private fun clipboardVersion(): String = clipboard.primaryClip?.let { clip ->
-    val stamp = if (Build.VERSION.SDK_INT >= 26) clip.description.timestamp else 0L
-    val items = (0 until clip.itemCount).map { i ->
-      val item = clip.getItemAt(i)
-      listOf(item.text?.toString(), item.htmlText, item.uri?.toString()).toString()
+  // Poll only a change token, never primaryClip or item text/HTML/URI. The
+  // description timestamp also detects a change whose listener callback is
+  // still queued; API 24/25 use the listener and foreground invalidation.
+  private fun clipboardVersion(): String {
+    val manager = clipboard
+    if (observedClipboard == null) {
+      manager.addPrimaryClipChangedListener(clipboardListener)
+      observedClipboard = manager
     }
-    "$stamp:${items.hashCode()}"
-  } ?: "0"
+    val stamp = if (Build.VERSION.SDK_INT >= 26) manager.primaryClipDescription?.timestamp else null
+    return "$clipboardEpoch:${clipboardGeneration.get()}:$stamp"
+  }
 
   private fun readClipboard(): String {
     val clip = clipboard.primaryClip ?: throw Exception("CLIPBOARD_EMPTY")
@@ -122,6 +144,10 @@ class CindyRemotePresentationModule : Module() {
       foreground()
       if (expectedVersion != null && clipboardVersion() != expectedVersion) throw Exception("CLIPBOARD_CHANGED")
       clipboard.setPrimaryClip(clip)
+      // A successful own write changes the token before returning to JS, even
+      // if Android delivers its notification later. Duplicate invalidations
+      // are harmless: ClipboardSync compares content digests before copying.
+      clipboardGeneration.incrementAndGet()
     } catch (error: Exception) { imageFile?.delete(); throw error }
   }
 }

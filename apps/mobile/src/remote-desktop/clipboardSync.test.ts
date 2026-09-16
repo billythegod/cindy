@@ -253,6 +253,27 @@ describe("automatic clipboard synchronization", () => {
       expect(h.write).toHaveBeenCalledTimes(direction === "remote" ? 1 : 0);
     },
   );
+  it("does not echo a delayed Android notification for its own write", async () => {
+    const h = harness();
+    await h.engine.tick();
+    const copied = JSON.stringify({ text: "remote-copy" });
+    h.remote("2", copied);
+    await h.engine.tick();
+    expect(h.write).toHaveBeenCalledTimes(1);
+    h.request.mockClear();
+    // setPrimaryClip returned its new token before the platform callback ran.
+    h.local("4", copied);
+    await h.engine.tick();
+    await h.engine.tick();
+    expect(h.write).toHaveBeenCalledTimes(1);
+    expect(h.request.mock.calls.every(([r]) => r.op === "clipboardVersion")).toBe(true);
+    // A later real copy still propagates after that counter-only notification.
+    h.local("5");
+    await h.engine.tick();
+    expect(h.request.mock.calls.filter(
+      ([r]) => r.op === "clipboardContent" && r.action === "commit",
+    )).toHaveLength(1);
+  });
   it("preserves concurrent local and remote copies", async () => {
     const h = harness();
     await h.engine.tick();
