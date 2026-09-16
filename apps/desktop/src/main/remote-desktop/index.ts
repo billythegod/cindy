@@ -36,6 +36,7 @@ import { denyAppDesktopCapture } from './capturePermissions';
 import { readDeviceLinkSettings, writeDeviceLinkSetting } from '../device-link/settings-store';
 import { throwIpcError } from '../utils/ipcValidate';
 import { RemoteDesktopController } from './controller';
+import { createViewerDisplay, viewerDisplaySupported } from './viewerDisplay';
 import { desktopCaptureSource, enumerateDesktopSources } from './captureSource';
 import { encodeDesktopFrame, encodeNativeRelayFrame } from './frame';
 import { transferDesktopClipboard, transferDesktopClipboardContent } from './clipboard';
@@ -356,6 +357,7 @@ export const remoteDesktop = new RemoteDesktopController({
     windowsAvailable = (await readWindowsDesktopSupport()) === 'ready';
     const settings = readDeviceLinkSettings();
     const enabled = settings.remoteDesktopEnabled && settings.remoteControlEnabled;
+    const viewerDisplay = enabled && (await viewerDisplaySupported());
     return {
       version: 1,
       cursorOverlay: process.platform === 'darwin',
@@ -370,6 +372,8 @@ export const remoteDesktop = new RemoteDesktopController({
       trickleIce: true,
       backgroundViewing: true,
       systemAudio: supportsSystemAudio,
+      viewerDisplay,
+      viewerDisplayRestore: viewerDisplay,
       displayModes: process.platform === 'darwin',
       enabled,
       canControl: process.platform === 'darwin' || process.platform === 'win32',
@@ -458,6 +462,7 @@ export const remoteDesktop = new RemoteDesktopController({
   stopHostMute: () => systemAudioMuteGuard.restore(0xc1d0),
   displayModes: readDesktopDisplayModes,
   resolution: setDesktopDisplayMode,
+  createViewerDisplay,
   startInput: (displayId) => input.start(displayId),
   input: (events) => {
     try {
@@ -472,6 +477,7 @@ export const remoteDesktop = new RemoteDesktopController({
     }
   },
   stopInput: () => input.stop(),
+  releaseInput: () => input.release(),
   ...(process.platform === 'darwin'
     ? {
         lockScreen: async (isCurrent: () => boolean, signal: AbortSignal) => {
@@ -507,14 +513,26 @@ export function registerRemoteDesktopIpc(
     remoteDesktop.stop();
   });
   screen.on('display-removed', (_event, display) => {
+    if (remoteDesktop.changingDisplay) return;
     if (String(display.id) === remoteDesktop.displayId) remoteDesktop.stop();
   });
-  screen.on('display-added', () => remoteDesktop.stop());
+  screen.on('display-added', () => {
+    if (!remoteDesktop.changingDisplay) remoteDesktop.stop();
+  });
   screen.on('display-metrics-changed', (_event, display, metrics) => {
+    if (remoteDesktop.changingDisplay) return;
     // Work-area changes (lock screen, Dock/menu bar, display wake) do not
     // change whole-screen input coordinates and must not terminate the lease.
     if (
       String(display.id) === remoteDesktop.displayId &&
+      !(
+        metrics.every((metric) => metric === 'bounds' || metric === 'workArea') &&
+        remoteDesktop.displayGeometryMatches(
+          String(display.id),
+          display.size.width,
+          display.size.height,
+        )
+      ) &&
       metrics.some(
         (metric) => metric === 'bounds' || metric === 'scaleFactor' || metric === 'rotation',
       )
