@@ -21,6 +21,7 @@
  */
 
 import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -1174,6 +1175,8 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
   }
 
   // wasReady 且 manifest 仍是已下好的同一个版本 → 无事发生,保持 ready。
+  // Windows 同文件名但 SHA-256 变了时不能把新摘要绑到旧字节上，必须重下。
+  let replacingReadyWindowsDigest = false;
   if (wasReady && latestVersion === previousReadyVersion) {
     if (process.platform === 'win32') {
       const sameFile = path.basename(asset.file) === path.basename(previousReadyFilePath ?? '');
@@ -1183,15 +1186,23 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
         discardStagedPatchFiles();
         return 'idle';
       }
-      readyZipSha256 = trustedSha256;
+      if (!windowsZipDigestsEqual(previousReadyZipSha256, trustedSha256)) {
+        log.info('Windows: ready patch digest changed — re-downloading current artifact');
+        replacingReadyWindowsDigest = true;
+      } else {
+        readyZipSha256 = trustedSha256;
+        log.info('Ready patch v%s still matches latest — no superseding needed', previousReadyVersion);
+        return 'ready';
+      }
+    } else {
+      log.info('Ready patch v%s still matches latest — no superseding needed', previousReadyVersion);
+      return 'ready';
     }
-    log.info('Ready patch v%s still matches latest — no superseding needed', previousReadyVersion);
-    return 'ready';
   }
 
   // Cold-started Windows patches stay off the relaunch path until a current
-  // manifest restores the trust anchor. Reuse that staged file instead of
-  // downloading it again.
+  // manifest restores the trust anchor. Reuse that staged file only when its
+  // bytes still match the current digest.
   if (!wasReady && process.platform === 'win32') {
     const patchResult = checkExistingPatch();
     if (patchResult.action === 'relaunch' && patchResult.version === latestVersion) {
@@ -1202,10 +1213,13 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
         discardStagedPatchFiles();
         return 'idle';
       }
-      readyZipSha256 = trustedSha256;
-      log.info('Staged patch v%s matches latest — skipping re-download', latestVersion);
-      setStatus('ready', { version: latestVersion });
-      return 'ready';
+      if (windowsZipFileMatchesDigest(readyFilePath, trustedSha256)) {
+        readyZipSha256 = trustedSha256;
+        log.info('Staged patch v%s matches latest — skipping re-download', latestVersion);
+        setStatus('ready', { version: latestVersion });
+        return 'ready';
+      }
+      log.info('Windows: staged patch digest does not match current manifest — re-downloading');
     }
   }
 
@@ -1214,10 +1228,12 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
   const downloadUrl = `${getBaseUrl()}/${asset.file}`;
   const fileName = path.basename(asset.file);
   const destPath = path.join(getUpdatesDir(), fileName);
+  const keepPreviousReady = wasReady && !replacingReadyWindowsDigest;
 
   // wasReady 路径下,旧的 a.zip 必须保留到 b 通过 SHA 校验之后才能删,否则 b 下载失败
   // 时用户连旧的 a 都装不上了。非 wasReady 路径保持原行为(下载前清理腾空间)。
-  if (!wasReady) {
+  // 同文件 digest 变更会覆盖 destPath，不能再按 superseding 回滚到旧摘要。
+  if (!keepPreviousReady) {
     cleanOldFiles(fileName);
     setStatus('downloading', { version: latestVersion, progress: 0 });
   } else {
@@ -1243,7 +1259,7 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
   // 启动态热更包几乎总是队首(入队即开下),这条 0% 就是"真实开始"的信号;
   // 极少数排在二进制下载之后的场景,renderer 侧会在二进制段活跃期间丢弃它,
   // 不会产生假进度条。后台轮询场景 renderer 以 status==='passed' 挡掉,不受影响。
-  if (!wasReady) {
+  if (!keepPreviousReady) {
     broadcastUpdateProgress({ progress: 0, received: 0, total: lastTotal });
   }
 
@@ -1254,9 +1270,9 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
       // AND the legacy `app-update-progress` channel (used by EnvCheckContext
       // splash flow). Keeping the old channel preserves the current renderer
       // contract — see app-update-system-frontend.md ADR-2.
-      // wasReady 路径不广播 update-status:banner 期间维持 superseding,version 不变,
+      // keepPreviousReady 路径不广播 update-status:banner 期间维持 superseding,version 不变,
       // 否则每次 progress 都会把 status 重新设回 downloading,banner 隐藏闪烁。
-      if (!wasReady) {
+      if (!keepPreviousReady) {
         broadcastStatus({
           status: 'downloading',
           version: latestVersion,
@@ -1313,8 +1329,8 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
       total: result.size,
     });
 
-    // wasReady 路径下,SHA 已经过了,这时候才真正安全地把旧 a.zip 清掉。
-    if (wasReady) {
+    // keepPreviousReady 路径下,SHA 已经过了,这时候才真正安全地把旧 a.zip 清掉。
+    if (keepPreviousReady) {
       cleanOldFiles(fileName);
     }
 
@@ -1367,10 +1383,10 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
       log.error('unexpected download error:', err);
     }
 
-    // wasReady 路径:静默回退到旧的 ready 状态。a.zip / patch-info.json / readyVersion /
+    // keepPreviousReady 路径:静默回退到旧的 ready 状态。a.zip / patch-info.json / readyVersion /
     // readyFilePath 全都没动过,直接重新广播 ready 让 banner 按钮从 loading 恢复成可点。
-    // 下一次 30min 轮询会再次尝试 b。
-    if (wasReady) {
+    // 下一次 30min 轮询会再次尝试 b。同文件 digest 变更会覆盖 destPath，不能回滚。
+    if (keepPreviousReady) {
       // 下载期间用户切渠道:旧 patch 已被作废,不能从局部快照恢复。
       // 代际在下载开始前就可能已经推进过,所以还要看旧补丁自己的代际。
       const staleChannelPatch =
@@ -1454,6 +1470,22 @@ function normalizeWindowsZipSha256(value: string | undefined): string | undefine
   return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value)
     ? value.toLowerCase()
     : undefined;
+}
+
+function windowsZipDigestsEqual(left: string | undefined, right: string | undefined): boolean {
+  const a = normalizeWindowsZipSha256(left);
+  const b = normalizeWindowsZipSha256(right);
+  return Boolean(a && b && a === b);
+}
+
+function windowsZipFileMatchesDigest(filePath: string | undefined, expected: string): boolean {
+  if (!filePath) return false;
+  try {
+    const actual = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    return windowsZipDigestsEqual(actual, expected);
+  } catch {
+    return false;
+  }
 }
 
 function handleMissingWindowsArchiveDigest(): void {
@@ -2326,6 +2358,7 @@ export function initUpdateService(): void {
       const patchResult = checkExistingPatch();
       if (patchResult.action === 'relaunch' && patchResult.version === latestVersion) {
         log.info('Local patch v%s matches latest, requesting relaunch', patchResult.version);
+        let reuseStagedPatch = true;
         if (process.platform === 'win32') {
           const hotfix = manifest.app.hotfix;
           const trustedSha256 = hotfix
@@ -2337,9 +2370,18 @@ export function initUpdateService(): void {
             discardStagedPatchFiles();
             return { hasUpdate: false, action: 'none' as const };
           }
-          readyZipSha256 = trustedSha256;
+          if (!windowsZipFileMatchesDigest(readyFilePath, trustedSha256)) {
+            log.info('Windows: local patch bytes do not match current digest — will re-download');
+            readyVersion = undefined;
+            readyFilePath = undefined;
+            readyZipSha256 = undefined;
+            readyChannelEpoch = undefined;
+            reuseStagedPatch = false;
+          } else {
+            readyZipSha256 = trustedSha256;
+          }
         }
-        if (process.platform === 'linux') {
+        if (reuseStagedPatch && process.platform === 'linux') {
           // 冷启动匹配旧补丁:把这份 CDN manifest 的 installer 摘要与大小
           // 重新锚进进程内存,让后续 apply 有可信锚可用。
           const installer = manifest.app.installer;
@@ -2355,8 +2397,10 @@ export function initUpdateService(): void {
             return { hasUpdate: false, action: 'none' as const };
           }
         }
-        currentStatus = 'ready';
-        return await buildStartupReadyReply(patchResult.version);
+        if (reuseStagedPatch) {
+          currentStatus = 'ready';
+          return await buildStartupReadyReply(patchResult.version);
+        }
       }
 
       // Stale local patch — drop refs, fresh download will overwrite.

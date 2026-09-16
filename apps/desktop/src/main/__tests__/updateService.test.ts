@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -759,12 +760,16 @@ describe('app update forward-only policy', () => {
   it('lets a later online check re-anchor an offline-ready Windows patch', async () => {
     vi.useFakeTimers();
     readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    const stagedBytes = Buffer.from('update');
+    const digest = createHash('sha256').update(stagedBytes).digest('hex');
+    const manifest = updateManifest('0.0.65', 'app/windows-x64/staged.zip');
+    manifest.app.hotfix.sha256 = digest;
     fetchManifest
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(updateManifest('0.0.65', 'app/windows-x64/staged.zip'));
+      .mockResolvedValueOnce(manifest);
     const updatesDir = path.join(TEST_USER_DATA, 'updates');
     fs.mkdirSync(updatesDir, { recursive: true });
-    fs.writeFileSync(path.join(updatesDir, 'staged.zip'), 'update');
+    fs.writeFileSync(path.join(updatesDir, 'staged.zip'), stagedBytes);
     fs.writeFileSync(
       path.join(updatesDir, 'patch-info.json'),
       JSON.stringify({
@@ -794,6 +799,77 @@ describe('app update forward-only policy', () => {
     }
   });
 
+  it('redownloads a ready Windows patch when the same file is republished with a new digest', async () => {
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    const firstDigest = 'a'.repeat(64);
+    const secondDigest = 'b'.repeat(64);
+    const firstManifest = updateManifest('0.0.65', 'app/windows-x64/staged.zip');
+    firstManifest.app.hotfix.sha256 = firstDigest;
+    const secondManifest = updateManifest('0.0.65', 'app/windows-x64/staged.zip');
+    secondManifest.app.hotfix.sha256 = secondDigest;
+    download.mockImplementation(async ({ targetPath, sha256 }: { targetPath: string; sha256: string }) => {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, sha256 === firstDigest ? 'old-bytes' : 'new-bytes');
+      return { path: targetPath, size: 123 };
+    });
+
+    const service = await freshUpdateService('win32');
+    service.initUpdateService();
+    try {
+      await expect(service.checkForUpdate(firstManifest)).resolves.toBe('ready');
+      expect(download).toHaveBeenCalledTimes(1);
+      const patchPath = path.join(TEST_USER_DATA, 'updates', 'staged.zip');
+      expect(fs.readFileSync(patchPath, 'utf8')).toBe('old-bytes');
+
+      await expect(service.checkForUpdate(secondManifest)).resolves.toBe('ready');
+      expect(download).toHaveBeenCalledTimes(2);
+      expect(download.mock.calls[1]?.[0]).toMatchObject({ sha256: secondDigest });
+      expect(fs.readFileSync(patchPath, 'utf8')).toBe('new-bytes');
+    } finally {
+      service.stopUpdateService();
+    }
+  });
+
+  it('redownloads a cold-started Windows patch whose bytes do not match the current digest', async () => {
+    vi.useFakeTimers();
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    const digest = 'c'.repeat(64);
+    const manifest = updateManifest('0.0.65', 'app/windows-x64/staged.zip');
+    manifest.app.hotfix.sha256 = digest;
+    fetchManifest.mockResolvedValue(manifest);
+    const updatesDir = path.join(TEST_USER_DATA, 'updates');
+    fs.mkdirSync(updatesDir, { recursive: true });
+    fs.writeFileSync(path.join(updatesDir, 'staged.zip'), 'stale-bytes');
+    fs.writeFileSync(
+      path.join(updatesDir, 'patch-info.json'),
+      JSON.stringify({
+        version: '0.0.65',
+        fileName: 'staged.zip',
+        sha256: 'f'.repeat(64),
+        enableBeta: false,
+      }),
+    );
+    download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, 'fresh-bytes');
+      return { path: targetPath, size: 123 };
+    });
+
+    const service = await freshUpdateService('win32');
+    service.initUpdateService();
+    try {
+      const handler = ipcHandlers.get('update-check-startup');
+      await expect(handler?.()).resolves.toMatchObject({
+        hasUpdate: true,
+        version: '0.0.65',
+      });
+      expect(download).toHaveBeenCalledTimes(1);
+      expect(fs.readFileSync(path.join(updatesDir, 'staged.zip'), 'utf8')).toBe('fresh-bytes');
+    } finally {
+      service.stopUpdateService();
+    }
+  });
+
   it('uses the current matching manifest digest for a staged Windows patch', async () => {
     vi.useFakeTimers();
     readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
@@ -801,14 +877,15 @@ describe('app update forward-only policy', () => {
       satisfied: false,
       missingFiles: ['vcruntime140.dll'],
     });
-    const digest = 'b'.repeat(64);
+    const stagedBytes = Buffer.from('update');
+    const digest = createHash('sha256').update(stagedBytes).digest('hex');
     const manifest = updateManifest('0.0.65', 'app/windows-x64/staged.zip');
     manifest.app.hotfix.sha256 = digest;
     fetchManifest.mockResolvedValue(manifest);
     const updatesDir = path.join(TEST_USER_DATA, 'updates');
     const patchPath = path.join(updatesDir, 'staged.zip');
     fs.mkdirSync(updatesDir, { recursive: true });
-    fs.writeFileSync(patchPath, 'update');
+    fs.writeFileSync(patchPath, stagedBytes);
     fs.writeFileSync(
       path.join(updatesDir, 'patch-info.json'),
       JSON.stringify({
