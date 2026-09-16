@@ -60,9 +60,13 @@ export class SystemAudioMuteGuard {
     if (!SUPPORTS_MUTE) return;
     await this.enqueue(async () => {
       if (this.owners.has(ownerId)) return;
-      if (this.owners.size === 0) {
+      if (this.snapshot === null) {
         this.snapshot = await muteOutputAndReadSnapshot();
         log.info('muted for voice input', { ownerId, wasMuted: this.snapshot.outputMuted });
+      } else if (this.owners.size === 0) {
+        // A rejected restore may still have reached the OS. Reassert mute for
+        // the new owner without replacing the outstanding original snapshot.
+        await setOutputMuted(true);
       }
       this.owners.add(ownerId);
     });
@@ -71,9 +75,11 @@ export class SystemAudioMuteGuard {
   async restore(ownerId: number): Promise<void> {
     if (!SUPPORTS_MUTE) return;
     await this.enqueue(async () => {
-      if (!this.owners.delete(ownerId)) return;
+      this.owners.delete(ownerId);
       if (this.owners.size > 0) return;
 
+      // A failed OS restore leaves the snapshot pending, even after its owner
+      // has ended. A later restore or mute cycle must retain that original state.
       const snapshot = this.snapshot;
       if (!snapshot) return;
       await setOutputMuted(snapshot.outputMuted);

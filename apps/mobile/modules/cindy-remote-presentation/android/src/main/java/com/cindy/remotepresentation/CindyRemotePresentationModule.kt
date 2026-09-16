@@ -10,6 +10,9 @@ import android.util.Base64
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.functions.Queues
+import expo.modules.kotlin.functions.Coroutine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -47,14 +50,17 @@ class CindyRemotePresentationModule : Module() {
     // Android WebView owns playback; only iOS needs an AVAudioSession override.
     AsyncFunction("playback") { _: Boolean -> Unit }
     AsyncFunction("clipboardVersion") { foreground(); clipboardVersion() }.runOnQueue(Queues.MAIN)
-    AsyncFunction("readClipboard") { foreground(); readClipboard() }.runOnQueue(Queues.MAIN)
-    AsyncFunction("syncClipboard") { json: String, version: String ->
-      foreground()
-      if (clipboardVersion() != version) throw Exception("CLIPBOARD_CHANGED")
-      writeClipboard(json, version)
-      clipboardVersion()
-    }.runOnQueue(Queues.MAIN)
-    AsyncFunction("writeClipboard") { json: String -> foreground(); writeClipboard(json, null) }.runOnQueue(Queues.MAIN)
+    AsyncFunction("readClipboard") Coroutine { ->
+      val clip = withContext(Dispatchers.Main.immediate) {
+        foreground()
+        clipboard.primaryClip ?: throw Exception("CLIPBOARD_EMPTY")
+      }
+      val result = withContext(Dispatchers.IO) { readClipboard(clip) }
+      withContext(Dispatchers.Main.immediate) { foreground() }
+      result
+    }
+    AsyncFunction("syncClipboard") Coroutine { json: String, version: String -> writeClipboard(json, version) }
+    AsyncFunction("writeClipboard") Coroutine { json: String -> writeClipboard(json, null); Unit }
   }
 
   private fun foreground() {
@@ -74,8 +80,7 @@ class CindyRemotePresentationModule : Module() {
     return "$clipboardEpoch:${clipboardGeneration.get()}:$stamp"
   }
 
-  private fun readClipboard(): String {
-    val clip = clipboard.primaryClip ?: throw Exception("CLIPBOARD_EMPTY")
+  private fun readClipboard(clip: ClipData): String {
     if (clip.itemCount != 1) throw Exception("CLIPBOARD_UNSUPPORTED")
     val item = clip.getItemAt(0)
     val result = JSONObject()
@@ -112,8 +117,11 @@ class CindyRemotePresentationModule : Module() {
     return result.toString().also { if (it.length > 32 * 1024 * 1024) throw Exception("CLIPBOARD_TOO_LONG") }
   }
 
-  private fun writeClipboard(json: String, expectedVersion: String?) {
-    if (expectedVersion != null && clipboardVersion() != expectedVersion) throw Exception("CLIPBOARD_CHANGED")
+  private suspend fun writeClipboard(json: String, expectedVersion: String?): String = withContext(Dispatchers.IO) {
+    withContext(Dispatchers.Main.immediate) {
+      foreground()
+      if (expectedVersion != null && clipboardVersion() != expectedVersion) throw Exception("CLIPBOARD_CHANGED")
+    }
     if (json.length > 32 * 1024 * 1024) throw Exception("CLIPBOARD_TOO_LONG")
     val content = JSONObject(json)
     val html = content.optString("html", null)
@@ -121,33 +129,40 @@ class CindyRemotePresentationModule : Module() {
     val uri = content.optString("url", null)?.let { Uri.parse(it) }
     val png = content.optString("png", null)
     var imageFile: File? = null
-    val clip = when {
-      png != null -> {
-        val bytes = Base64.decode(png, Base64.DEFAULT)
-        if (bytes.size < 8 || !bytes.copyOfRange(0, 8).contentEquals(byteArrayOf(-119,80,78,71,13,10,26,10)))
-          throw Exception("CLIPBOARD_UNSUPPORTED")
-        val context = appContext.reactContext!!
-        val directory = File(context.cacheDir, "remote-clipboard").apply { mkdirs() }
-        // Temporary, grant-scoped clipboard images. Keep recent URIs readable;
-        // sweep older images on the next write, outside all media libraries.
-        directory.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 3_600_000 }?.forEach { it.delete() }
-        imageFile = File(directory, "${UUID.randomUUID()}.png").apply { writeBytes(bytes) }
-        val imageUri = FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", imageFile!!)
-        ClipData("Cindy", arrayOf("image/png"), ClipData.Item(text, html, null, imageUri))
-      }
-      text != null && html != null -> ClipData.newHtmlText("Cindy", text, html)
-      text != null -> ClipData.newPlainText("Cindy", text)
-      uri != null -> ClipData.newRawUri("Cindy", uri)
-      else -> throw Exception("CLIPBOARD_UNSUPPORTED")
-    }
+    var committed = false
     try {
-      foreground()
-      if (expectedVersion != null && clipboardVersion() != expectedVersion) throw Exception("CLIPBOARD_CHANGED")
-      clipboard.setPrimaryClip(clip)
-      // A successful own write changes the token before returning to JS, even
-      // if Android delivers its notification later. Duplicate invalidations
-      // are harmless: ClipboardSync compares content digests before copying.
-      clipboardGeneration.incrementAndGet()
-    } catch (error: Exception) { imageFile?.delete(); throw error }
+      val clip = when {
+        png != null -> {
+          val bytes = Base64.decode(png, Base64.DEFAULT)
+          if (bytes.size < 8 || !bytes.copyOfRange(0, 8).contentEquals(byteArrayOf(-119,80,78,71,13,10,26,10)))
+            throw Exception("CLIPBOARD_UNSUPPORTED")
+          val context = appContext.reactContext!!
+          val directory = File(context.cacheDir, "remote-clipboard").apply { mkdirs() }
+          // Temporary, grant-scoped clipboard images. Keep recent URIs readable;
+          // sweep older images on the next write, outside all media libraries.
+          directory.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 3_600_000 }?.forEach { it.delete() }
+          imageFile = File(directory, "${UUID.randomUUID()}.png")
+          imageFile!!.writeBytes(bytes)
+          val imageUri = FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", imageFile!!)
+          ClipData("Cindy", arrayOf("image/png"), ClipData.Item(text, html, null, imageUri))
+        }
+        text != null && html != null -> ClipData.newHtmlText("Cindy", text, html)
+        text != null -> ClipData.newPlainText("Cindy", text)
+        uri != null -> ClipData.newRawUri("Cindy", uri)
+        else -> throw Exception("CLIPBOARD_UNSUPPORTED")
+      }
+      withContext(Dispatchers.Main.immediate) {
+        foreground()
+        if (expectedVersion != null && clipboardVersion() != expectedVersion) throw Exception("CLIPBOARD_CHANGED")
+        clipboard.setPrimaryClip(clip)
+        committed = true
+        // Change the token before returning even if the notification is delayed.
+        clipboardGeneration.incrementAndGet()
+        clipboardVersion()
+      }
+    } finally {
+      // Cancellation after publishing must not delete the image Android now owns.
+      if (!committed) imageFile?.delete()
+    }
   }
 }

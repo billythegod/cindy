@@ -29,8 +29,9 @@ also restores the local cursor inside the picture.
 With the picture focused, Cmd+C/V on macOS or Ctrl+C/V on Windows copies selected
 remote text to the local clipboard or pastes local text remotely. Transfers use
 the existing authorized Main bridge, are ordered and user-triggered, and report
-failure without reconnecting. There is no background clipboard monitoring or
-automatic context-menu synchronization; images, files and cut are not bridged.
+failure without reconnecting. These Desktop keyboard shortcuts remain text-only;
+images, files and cut are not bridged by them. The opt-in Mobile clipboard sync
+described below is a separate, foreground-only operation.
 
 The shared viewer session marks recovery only when a start is attempted, so an
 initial capability-query timeout does not turn a retry against a legacy host into
@@ -543,8 +544,8 @@ the existing remote-desktop business channel. Old desktops show an upgrade hint;
 no relay/server protocol changes are required. Both operations require the current
 peer-bound controlling lease, reject concurrent transfers, and check revocation
 again after asynchronous native work. The phone also discards results after its
-lease changes or it leaves the foreground. No clipboard listeners, background
-synchronization, history, logs containing text, or disk persistence are added.
+lease changes or it leaves the foreground. These explicit text operations do not
+retain clipboard history or log its contents. Opt-in synchronization is described below.
 
 TypeScript and native compilation checks cover this implementation. Keyboard/menu
 interaction, application-specific selection support, and physical-phone transfer
@@ -564,7 +565,8 @@ fall back to clipboard content, but protected/failed/stale selection reads do no
 
 Clipboard JSON is transferred sequentially in 64 Ki-character chunks, at most
 32 Mi-characters total (native iOS additionally bounds UTF-8 bytes). Images are
-limited to 64 million pixels. Each transfer is peer/lease/control-generation
+limited to 64 million pixels on iOS; Android uses the smaller limits below.
+Each transfer is peer/lease/control-generation
 bound, lives only in memory, expires after 60 seconds, and is discarded on
 control changes or disconnect. Commit consumes its transfer before pasting and
 is never automatically retried. No transport/global frame limits are changed.
@@ -622,7 +624,28 @@ clipboard. Transfers support text, HTML, RTF, URLs and PNG images through bounde
 sequential chunks, with a blocking progress overlay. Arbitrary files and private
 application clipboard formats are not supported. Transfer buffers are discarded
 on completion, cancellation and lease termination; uncertain paste responses are
-never automatically retried. Native clipboard access requires a new iOS build.
+never automatically retried. Native portable clipboard access and version tracking
+require new iOS and Android native builds; older runtimes retain the text fallback.
+Android supports text, HTML, HTTP(S) URLs and PNG images (not RTF), limits decoded
+images to 16 million pixels and source reads to 24 MiB. Android clipboard images
+use grant-scoped cache files, swept after one hour on a later image write.
+
+### Opt-in Mobile clipboard synchronization
+
+On supported peers, the security options can enable clipboard synchronization
+while the phone is foregrounded and owns the controlling lease. Every 1.5 seconds
+the phone checks local and remote version tokens, reading portable content only
+when a version changes. Android uses change notifications and description timestamps
+without reading the clipboard body during unchanged polls. Image provider reads,
+conversion and file preparation run off the Android main thread; clipboard access
+and the final foreground/version check and write run on the main thread.
+
+Synchronization compares content digests to avoid echoing its own writes and
+checks the destination version again before writing so it cannot overwrite a
+newer local copy. Disabling sync, leaving the foreground, losing control or
+disconnecting invalidates pending work. It does not poll in the background,
+maintain history or log clipboard contents. Private formats and arbitrary files
+remain unsupported; only portable representations are synchronized.
 
 Only one viewer lease is active. A second viewer sees a busy state and can
 explicitly take over when the host advertises `connectionTakeover`. Ordinary
