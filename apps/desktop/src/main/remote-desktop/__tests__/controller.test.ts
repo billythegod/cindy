@@ -884,6 +884,39 @@ describe('remote desktop authority and lifecycle', () => {
     expect(h.controller.hasLease(lease.lease)).toBe(true);
   });
 });
+it.each(['control', 'presentation', 'failure', 'stop'] as const)(
+  'releases input before failing safety restoration on %s, without stopping replacement input',
+  async (kind) => {
+    const h = harness(),
+      { lease } = await h.start();
+    await h.controller.request('phone', { op: 'control', lease, enabled: true });
+    let rejectRestore!: (error: Error) => void;
+    h.deps.stopHostMute = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          rejectRestore = reject;
+        }),
+    );
+    h.deps.stopPrivacyScreen = vi.fn();
+    let result: Promise<unknown> | undefined;
+    if (kind === 'failure') h.controller.releaseControl();
+    else if (kind === 'stop') h.controller.stop();
+    else
+      result = h.controller.request('phone', { op: kind, lease, enabled: kind === 'presentation' });
+    // Critical cleanup cannot wait for slow/failing operating-system restoration.
+    expect(h.deps.stopInput).toHaveBeenCalledOnce();
+    expect(h.deps.stopPrivacyScreen).toHaveBeenCalledOnce();
+    expect(h.controller.state?.controlling ?? false).toBe(false);
+    const next = kind === 'stop' ? (await h.start()).lease : lease;
+    await h.controller.request('phone', { op: 'control', lease: next, enabled: true });
+    const rejection = result ? expect(result).rejects.toThrow('restore failed') : Promise.resolve();
+    rejectRestore(new Error('restore failed'));
+    await rejection;
+    await Promise.resolve();
+    expect(h.deps.stopInput).toHaveBeenCalledOnce();
+    expect(h.controller.state?.controlling).toBe(true);
+  },
+);
 it.each(['control', 'presentation', 'failure'] as const)(
   'revokes safety effects on %s control loss',
   async (kind) => {

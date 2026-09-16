@@ -1,5 +1,6 @@
 import { ClipboardTransfer } from './clipboardTransfer';
 import { randomUUID } from 'node:crypto';
+import { createLogger } from '../logger';
 import type { ViewerDisplayHandle } from './viewerDisplay';
 import {
   parseRemoteDesktopRequest,
@@ -17,6 +18,8 @@ import {
   type RemoteDesktopIceReply,
   desktopPermissionReady,
 } from '@cindy/device-link';
+
+const log = createLogger('remote-desktop:controller');
 
 export interface DesktopControllerDeps {
   authorized(peer: string): boolean;
@@ -109,8 +112,23 @@ export class RemoteDesktopController {
     this.privacyOperation = null;
     this.syncGeneration++;
     if (this.active) this.active.clipboardSync = false;
-    this.deps.stopPrivacyScreen?.();
-    await this.deps.stopHostMute?.();
+    try {
+      this.deps.stopPrivacyScreen?.();
+    } finally {
+      await this.deps.stopHostMute?.();
+    }
+  }
+  /** Revoke input synchronously; optional OS restoration must never retain it
+   * or stop a replacement helper after an asynchronous restore settles.
+   */
+  private revokeControl(): Promise<void> {
+    if (this.active) this.active.controlling = false;
+    this.controlGeneration++;
+    this.clipboardTransfer.reset();
+    this.deps.stopInput();
+    const restoring = this.clearSafety();
+    this.deps.changed();
+    return restoring;
   }
   private clipboardTransfer = new ClipboardTransfer();
   private lastFrame = -Infinity;
@@ -183,7 +201,7 @@ export class RemoteDesktopController {
     if (this.active) this.lastEnded = { peer: this.active.peer, lease: this.active.lease };
     this.clipboardTransfer.reset();
     this.controlGeneration++;
-    this.clearSafety();
+    void this.clearSafety().catch(() => log.warn('Safety restoration failed after stop'));
     this.active = null;
     this.deps.stopInput();
     this.deps.stopVideo();
@@ -222,12 +240,7 @@ export class RemoteDesktopController {
   releaseControl(): void {
     const active = this.active;
     if (!active || (!active.controlling && !this.inputStarting)) return;
-    active.controlling = false;
-    this.clearSafety();
-    this.controlGeneration++;
-    this.clipboardTransfer.reset();
-    this.deps.stopInput();
-    this.deps.changed();
+    void this.revokeControl().catch(() => log.warn('Safety restoration failed after control loss'));
   }
   /** Explicit local disconnect must not be undone by the phone's recovery. */
   stopByUser(): void {
@@ -536,26 +549,23 @@ export class RemoteDesktopController {
       case 'presentation': {
         active.backgroundViewing = request.enabled;
         if (request.enabled) {
-          active.controlling = false;
-          await this.clearSafety();
-          this.clipboardTransfer.reset();
-          this.controlGeneration++;
-          this.deps.stopInput();
+          await this.revokeControl();
+        } else {
+          this.deps.changed();
         }
-        this.deps.changed();
         return { controlling: active.controlling };
       }
       case 'control': {
         if (this.locking) throw new Error('DESKTOP_BUSY');
         if (request.enabled) active.backgroundViewing = false;
         if (request.enabled && this.inputStarting) throw new Error('DESKTOP_INPUT_BUSY');
+        if (!request.enabled) {
+          await this.revokeControl();
+          return { controlling: active.controlling };
+        }
         this.clipboardTransfer.reset();
         const generation = ++this.controlGeneration;
-        if (!request.enabled) {
-          active.controlling = false;
-          await this.clearSafety();
-          this.deps.stopInput();
-        } else if (!active.controlling) {
+        if (!active.controlling) {
           this.inputStarting = true;
           try {
             await this.deps.startInput(active.display.id);
