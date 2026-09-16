@@ -683,7 +683,6 @@
       "loginItem": {
         "label": "登录电脑后自动启动 Cindy",
         "hint": "登录系统后自动打开 Cindy，默认关闭",
-        "development": "请在安装版 Cindy 中开启此功能",
         "requiresApproval": "请在 macOS 系统设置的登录项中允许 Cindy，完成后此设置才会生效",
         "loading": "正在读取系统设置…",
         "loadFailed": "无法读取启动设置，请重新打开此设置页重试",

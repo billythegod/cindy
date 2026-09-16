@@ -683,7 +683,6 @@
       "loginItem": {
         "label": "Start Cindy at Login",
         "hint": "Open Cindy automatically when you sign in to your computer. Off by default.",
-        "development": "Use an installed copy of Cindy to enable this setting.",
         "requiresApproval": "Allow Cindy in Login Items in macOS System Settings to finish enabling startup.",
         "loading": "Reading system settings…",
         "loadFailed": "Could not read startup settings. Reopen this settings page to retry.",

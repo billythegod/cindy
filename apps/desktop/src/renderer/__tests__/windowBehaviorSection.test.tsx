@@ -92,7 +92,7 @@ describe('WindowBehaviorSection login startup', () => {
     await act(async () => {});
   });
 
-  it('disables the development-build control with an explanation', async () => {
+  it('keeps the development-build control disabled without an installation hint', async () => {
     const api = installWindowBehaviorApi('win32');
     api.getLoginItem.mockResolvedValue({
       available: false,
@@ -101,7 +101,8 @@ describe('WindowBehaviorSection login startup', () => {
       requiresApproval: false,
     });
     render(<WindowBehaviorSection />);
-    await screen.findByText('settings.windowBehavior.loginItem.development');
+    await act(async () => {});
+    expect(screen.queryByText('settings.windowBehavior.loginItem.development')).toBeNull();
     expect(screen.getByRole('switch', { name: label }).hasAttribute('disabled')).toBe(true);
   });
 

@@ -161,8 +161,6 @@ export function WindowBehaviorSection() {
             >
               {loginItem.error ? (
                 <p role="alert">{t(`settings.windowBehavior.loginItem.${loginItem.error}`)}</p>
-              ) : loginItem.state?.unavailableReason === 'development' ? (
-                <p>{t('settings.windowBehavior.loginItem.development')}</p>
               ) : loginItem.state?.requiresApproval ? (
                 <p>{t('settings.windowBehavior.loginItem.requiresApproval')}</p>
               ) : loginItem.busy ? (
