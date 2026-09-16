@@ -1,6 +1,7 @@
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
@@ -259,6 +260,19 @@ pub(crate) fn should_relaunch_restored_app_on_abandon(
         && (owned_lock || stopped_app)
 }
 
+static ABANDONED_RETRY_LOCKS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// First Close / Destroyed for this lock path wins. `quit_now` then
+/// `app.exit(0)` also fires `Destroyed`; the second call must not relaunch.
+pub(crate) fn begin_abandon_retry(path: &Path) -> bool {
+    let mut seen = ABANDONED_RETRY_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.iter().any(|p| p == path) {
+        return false;
+    }
+    seen.push(path.to_path_buf());
+    true
+}
+
 /// User closed the failure window instead of Retry. Drop this process's
 /// retained lock, then relaunch the restored Cindy if Retry had kept it closed.
 /// Retryable failures can happen before `.updating` exists, so relaunch also
@@ -270,6 +284,9 @@ pub(crate) fn abandon_retry(
     retry_in_progress: bool,
     stopped_app: bool,
 ) {
+    if !begin_abandon_retry(&args.lock) {
+        return;
+    }
     let owned = lock_file_owned_by_this_process(&args.lock);
     release_abandoned_update_lock(&args.lock);
     if should_relaunch_restored_app_on_abandon(
@@ -422,9 +439,20 @@ pub(crate) fn retry_request_allowed(
 /// Electron's normal spawn omits `--elevated`. The updater is `asInvoker`, so a
 /// Cindy that is already running elevated hands this process a high token with
 /// `args.elevated == false`. Staging must follow the real token, not the flag.
+///
+/// Do not ask an already-elevated token whether `app_dir` is writable: after
+/// UAC, Program Files looks writable and would send extract/backup back to the
+/// unelevated `%TEMP%` workdir. `--elevated` is the pre-UAC classification;
+/// inherited high integrity is treated the same. Unelevated per-user installs
+/// still probe and stay in TEMP.
 pub(crate) fn staging_dirs(args: &CliArgs) -> (PathBuf, PathBuf) {
-    let install_writable = !matches!(needs_elevation(&args.app_dir), Ok(true));
-    staging_dirs_for(args, process_is_elevated(), install_writable)
+    let process_elevated = process_is_elevated();
+    let install_writable = if args.elevated || process_elevated {
+        false
+    } else {
+        !matches!(needs_elevation(&args.app_dir), Ok(true))
+    };
+    staging_dirs_for(args, process_elevated, install_writable)
 }
 
 pub(crate) fn uses_protected_staging(
@@ -1774,6 +1802,10 @@ mod tests {
             !args.lock.exists(),
             "abandoning Retry still deletes this process's retained .updating"
         );
+        assert!(
+            !super::begin_abandon_retry(&args.lock),
+            "quit_now plus window destroy must not relaunch Cindy a second time"
+        );
     }
 
     #[test]
@@ -1792,6 +1824,11 @@ mod tests {
         assert!(super::should_relaunch_restored_app_on_abandon(
             true, false, false, true
         ));
+        assert!(super::begin_abandon_retry(&args.lock));
+        assert!(
+            !super::begin_abandon_retry(&args.lock),
+            "Destroyed after quit_now must not start a second restored Cindy"
+        );
     }
 
     #[test]
@@ -2160,6 +2197,24 @@ mod tests {
             body.contains("process_is_elevated()"),
             "staging_dirs must read the process token; --elevated is omitted on inherited elevation"
         );
+    }
+
+    #[test]
+    fn uac_elevated_staging_ignores_a_writable_probe_of_the_install_directory() {
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.elevated = true;
+        args.app_dir = temp.0.join("Cindy");
+        args.workdir = temp.0.join("workdir");
+        fs::create_dir(&args.app_dir).unwrap();
+        fs::create_dir(&args.workdir).unwrap();
+        let (extract_dir, backup_dir) = staging_dirs(&args);
+        assert!(
+            extract_dir.starts_with(&args.app_dir),
+            "after UAC, do not reclassify a protected install as writable just because the elevated token can write"
+        );
+        assert!(backup_dir.starts_with(&args.app_dir));
+        assert!(!extract_dir.starts_with(&args.workdir));
     }
 
     #[test]
