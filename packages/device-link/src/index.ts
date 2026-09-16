@@ -25,6 +25,8 @@ export * from "./remoteDesktopIce.js";
 export * from "./remoteDesktopIceConfig.js";
 export * from "./remoteClipboard.js";
 export * from "./remoteCursor.js";
+export * from "./peerRecoveryScheduler.js";
+export * from "./invokePolicy.js";
 export * from "./filePeer.js";
 export * from "./fileAccess.js";
 export * from "./filePeerRuntime.js";
