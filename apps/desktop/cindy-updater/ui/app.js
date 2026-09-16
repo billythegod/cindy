@@ -89,6 +89,9 @@ els.btnRetry.addEventListener("click", async () => {
   retrying = true;
   els.btnRetry.hidden = true;
   els.btnRetry.disabled = true;
+  // Hide Close until the worker reports a terminal state. retry_update returns
+  // before hashing the ZIP; quitting here would kill an in-flight install.
+  els.btnQuit.hidden = true;
 
   try {
     await invoke("retry_update");
@@ -100,6 +103,7 @@ els.btnRetry.addEventListener("click", async () => {
     }
     els.btnRetry.hidden = !canRetry;
     els.btnRetry.disabled = false;
+    els.btnQuit.hidden = false;
     els.errorBar.hidden = false;
     els.errorText.textContent = retryCopy[code] || retryCopy.spawn_failed;
   }

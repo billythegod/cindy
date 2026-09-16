@@ -113,9 +113,11 @@ PID change: the retry uses the isolated zip and does not wait on the original,
 potentially stale PID. The WebView cannot supply paths or commands.
 When the updater is already elevated — either via `--elevated` after UAC, or
 because it inherited a high token from an elevated Cindy spawn that omitted
-that flag — extract and backup staging live under the install directory
-instead of the unelevated `%TEMP%` workdir, so a same-login medium-integrity
-process cannot replace extracted files before they are copied.
+that flag — extract and backup staging live under the install directory only
+if that directory is not user-writable. A writable per-user install is not a
+protected staging root; those retries stay in the TEMP workdir so a
+medium-integrity process cannot plant files that a high-integrity copy later
+installs. UAC-protected Program Files installs still stage next to the app.
 Failures before replacement delete those staging directories; only a rollback
 that itself failed keeps the backup for manual recovery.
 The retry command checks for processes running from the install directory and
@@ -132,9 +134,13 @@ Cindy while Retry remains available. The exclusive `.updating` lock stays on
 disk for that window so a second updater cannot start from `%TEMP%`. Close, or
 any other abandoned Retry exit, deletes that file so the next Cindy launch does
 not wait 30 seconds, then relaunches the restored Cindy — the concurrency
-reason for keeping it closed no longer applies. A second updater that never
-owned the lock does not relaunch or delete it. Failures before UAC on a protected install directory do not
-offer Retry. A successful update still removes its zip. If rollback fails, Retry
+reason for keeping it closed no longer applies. Retryable failures that never
+acquired `.updating` still relaunch if this updater already stopped Cindy. A
+second updater that never owned the lock and never stopped Cindy does not
+relaunch or delete it. Clicking Retry hides Close until the worker reports a
+terminal state, so Close cannot kill an in-flight hash/install. Retry reopens
+a retained lock only when the file still names this process.
+Failures before UAC on a protected install directory do not offer Retry. A successful update still removes its zip. If rollback fails, Retry
 is unavailable and the backup directory is preserved for manual recovery. Stale
 temporary directories retain
 the existing seven-day cleanup policy.

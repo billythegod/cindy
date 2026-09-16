@@ -35,6 +35,9 @@ pub enum InstallerEvent {
     Progress(Phase, String, i32),
     Done,
     Failed(String, bool),
+    /// Cindy has exited (or this is an in-process Retry that no longer waits).
+    /// Abandoning Retry must relaunch even if `.updating` was never acquired.
+    AppExited,
 }
 
 const PID_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -204,6 +207,10 @@ fn lock_file_owned_by_this_process(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn lock_contents_owned_by_this_process(contents: &str) -> bool {
+    contents == format!("updating {}\n", std::process::id())
+}
+
 /// Close / abandon Retry must delete a retained `.updating` file. Cindy's
 /// startup lock loop cannot tell this leftover from a live updater and would
 /// otherwise wait the full 30s timeout. Only delete a lock this process wrote;
@@ -242,30 +249,58 @@ fn relaunch_restored_app(args: &CliArgs) {
     }
 }
 
+pub(crate) fn should_relaunch_restored_app_on_abandon(
+    can_retry: bool,
+    retry_in_progress: bool,
+    owned_lock: bool,
+    stopped_app: bool,
+) -> bool {
+    should_relaunch_after_abandoning_retry(can_retry, retry_in_progress)
+        && (owned_lock || stopped_app)
+}
+
 /// User closed the failure window instead of Retry. Drop this process's
 /// retained lock, then relaunch the restored Cindy if Retry had kept it closed.
-/// A second updater that never owned the lock must not relaunch or delete it.
-/// `quit_now` plus `Destroyed` both call this; only the owner relaunches once.
-pub(crate) fn abandon_retry(args: &CliArgs, can_retry: bool, retry_in_progress: bool) {
+/// Retryable failures can happen before `.updating` exists, so relaunch also
+/// when this updater already stopped Cindy. A second updater that never owned
+/// the lock and never stopped Cindy must not relaunch.
+pub(crate) fn abandon_retry(
+    args: &CliArgs,
+    can_retry: bool,
+    retry_in_progress: bool,
+    stopped_app: bool,
+) {
     let owned = lock_file_owned_by_this_process(&args.lock);
     release_abandoned_update_lock(&args.lock);
-    if owned && should_relaunch_after_abandoning_retry(can_retry, retry_in_progress) {
+    if should_relaunch_restored_app_on_abandon(
+        can_retry,
+        retry_in_progress,
+        owned,
+        stopped_app,
+    ) {
         relaunch_restored_app(args);
     }
 }
 
 /// Re-open a lock this process already created and kept during the failure
-/// window. Missing or unreadable files mean another updater is active.
+/// window. Missing, unreadable, or foreign-owned files mean another updater is
+/// active — do not take over a later process's mutex.
 pub(crate) fn reopen_held_update_lock(path: &Path) -> Option<UpdateLock> {
     let mut options = fs::OpenOptions::new();
-    options.write(true);
+    options.write(true).read(true);
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::fs::OpenOptionsExt;
         const FILE_SHARE_READ: u32 = 0x00000001;
         options.share_mode(FILE_SHARE_READ);
     }
-    options.open(path).ok().map(|file| UpdateLock {
+    let mut file = options.open(path).ok()?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).ok()?;
+    if !lock_contents_owned_by_this_process(&contents) {
+        return None;
+    }
+    Some(UpdateLock {
         path: path.to_path_buf(),
         _file: file,
     })
@@ -388,16 +423,25 @@ pub(crate) fn retry_request_allowed(
 /// Cindy that is already running elevated hands this process a high token with
 /// `args.elevated == false`. Staging must follow the real token, not the flag.
 pub(crate) fn staging_dirs(args: &CliArgs) -> (PathBuf, PathBuf) {
-    staging_dirs_for(args, process_is_elevated())
+    let install_writable = !matches!(needs_elevation(&args.app_dir), Ok(true));
+    staging_dirs_for(args, process_is_elevated(), install_writable)
 }
 
-pub(crate) fn uses_protected_staging(cli_elevated: bool, process_elevated: bool) -> bool {
-    cli_elevated || process_elevated
+pub(crate) fn uses_protected_staging(
+    cli_elevated: bool,
+    process_elevated: bool,
+    install_writable: bool,
+) -> bool {
+    (cli_elevated || process_elevated) && !install_writable
 }
 
-pub(crate) fn staging_dirs_for(args: &CliArgs, process_elevated: bool) -> (PathBuf, PathBuf) {
+pub(crate) fn staging_dirs_for(
+    args: &CliArgs,
+    process_elevated: bool,
+    install_writable: bool,
+) -> (PathBuf, PathBuf) {
     let ts = workdir_ts(&args.workdir);
-    let root = if uses_protected_staging(args.elevated, process_elevated) {
+    let root = if uses_protected_staging(args.elevated, process_elevated, install_writable) {
         &args.app_dir
     } else {
         &args.workdir
@@ -697,6 +741,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
             pre_elevation_retry,
         ));
     }
+    emit(InstallerEvent::AppExited);
     std::thread::sleep(FS_SETTLE_DELAY);
 
     // 1.2. Terminate lingering processes that run FROM app_dir. pid_wait only
@@ -1724,11 +1769,29 @@ mod tests {
         retain_update_lock_file(held);
 
         assert_eq!(super::restored_app_relaunch_path(&args).as_ref(), Some(&exe));
-        super::abandon_retry(&args, true, false);
+        super::abandon_retry(&args, true, false, false);
         assert!(
             !args.lock.exists(),
             "abandoning Retry still deletes this process's retained .updating"
         );
+    }
+
+    #[test]
+    fn abandoning_retry_relaunches_even_without_a_retained_lock() {
+        assert!(
+            should_relaunch_after_abandoning_retry(true, false),
+            "retryable failures that never acquired .updating still left Cindy closed"
+        );
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.app_dir = temp.0.join("app");
+        args.lock = temp.0.join(".updating");
+        fs::create_dir(&args.app_dir).unwrap();
+        fs::write(args.app_dir.join(&args.exe_name), b"cindy").unwrap();
+        assert!(!args.lock.exists());
+        assert!(super::should_relaunch_restored_app_on_abandon(
+            true, false, false, true
+        ));
     }
 
     #[test]
@@ -1821,6 +1884,19 @@ mod tests {
         let reopened = super::reopen_held_update_lock(&lock).expect("retry reopens retained lock");
         release_update_lock(reopened);
         assert!(!lock.exists());
+    }
+
+    #[test]
+    fn reopen_held_update_lock_rejects_a_lock_owned_by_another_process() {
+        let temp = TestDir::new();
+        let lock = temp.0.join(".updating");
+        let other_pid = if std::process::id() == 1 { 2 } else { 1 };
+        fs::write(&lock, format!("updating {other_pid}\n")).unwrap();
+        assert!(
+            super::reopen_held_update_lock(&lock).is_none(),
+            "Retry must not take over a later updater's mutex just because the path still exists"
+        );
+        assert!(lock.exists());
     }
 
     #[test]
@@ -2034,7 +2110,7 @@ mod tests {
         args.workdir = temp.0.join("workdir");
         fs::create_dir(&args.app_dir).unwrap();
         fs::create_dir(&args.workdir).unwrap();
-        let (extract_dir, backup_dir) = staging_dirs_for(&args, false);
+        let (extract_dir, backup_dir) = staging_dirs_for(&args, false, false);
         assert!(extract_dir.starts_with(&args.app_dir));
         assert!(backup_dir.starts_with(&args.app_dir));
         assert!(!extract_dir.starts_with(&args.workdir));
@@ -2049,7 +2125,7 @@ mod tests {
         args.workdir = temp.0.join("workdir");
         fs::create_dir(&args.app_dir).unwrap();
         fs::create_dir(&args.workdir).unwrap();
-        let (extract_dir, backup_dir) = staging_dirs_for(&args, false);
+        let (extract_dir, backup_dir) = staging_dirs_for(&args, false, false);
         assert!(extract_dir.starts_with(&args.workdir));
         assert!(backup_dir.starts_with(&args.workdir));
     }
@@ -2064,10 +2140,10 @@ mod tests {
         fs::create_dir(&args.app_dir).unwrap();
         fs::create_dir(&args.workdir).unwrap();
         assert!(
-            uses_protected_staging(false, true),
+            uses_protected_staging(false, true, false),
             "a high-integrity updater spawned without --elevated must not stage in TEMP"
         );
-        let (extract_dir, backup_dir) = staging_dirs_for(&args, true);
+        let (extract_dir, backup_dir) = staging_dirs_for(&args, true, false);
         assert!(extract_dir.starts_with(&args.app_dir));
         assert!(backup_dir.starts_with(&args.app_dir));
         assert!(!extract_dir.starts_with(&args.workdir));
@@ -2084,6 +2160,26 @@ mod tests {
             body.contains("process_is_elevated()"),
             "staging_dirs must read the process token; --elevated is omitted on inherited elevation"
         );
+    }
+
+    #[test]
+    fn elevated_staging_stays_in_temp_when_the_install_directory_is_writable() {
+        assert!(
+            !uses_protected_staging(false, true, true),
+            "a writable per-user install is not a UAC-protected staging root"
+        );
+        assert!(uses_protected_staging(true, true, false));
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.elevated = false;
+        args.app_dir = temp.0.join("Cindy");
+        args.workdir = temp.0.join("workdir");
+        fs::create_dir(&args.app_dir).unwrap();
+        fs::create_dir(&args.workdir).unwrap();
+        let (extract_dir, backup_dir) = staging_dirs_for(&args, true, true);
+        assert!(extract_dir.starts_with(&args.workdir));
+        assert!(backup_dir.starts_with(&args.workdir));
+        assert!(!extract_dir.starts_with(&args.app_dir));
     }
 
     #[test]

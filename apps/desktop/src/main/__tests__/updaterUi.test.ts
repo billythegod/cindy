@@ -147,6 +147,35 @@ describe('updater failure retry UI', () => {
     expect(button.disabled).toBe(false);
   });
 
+  it('hides Close as soon as Retry is accepted and restores it only on a later failed status', async () => {
+    const ui = createUi();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    ui.status({ phase: 'failed', can_retry: true });
+    const close = ui.elements.get('btn-quit')!;
+    expect(close.hidden).toBe(false);
+    const pending = ui.elements.get('btn-retry')!.click!();
+    expect(close.hidden).toBe(true);
+    ui.resolveRetry();
+    await pending;
+    expect(close.hidden).toBe(true);
+    ui.status({ phase: 'waiting', can_retry: false });
+    expect(close.hidden).toBe(true);
+    ui.status({ phase: 'failed', can_retry: true });
+    expect(close.hidden).toBe(false);
+  });
+
+  it('restores Close when Retry is rejected before a worker starts', async () => {
+    const ui = createUi();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    ui.status({ phase: 'failed', can_retry: true });
+    const close = ui.elements.get('btn-quit')!;
+    const pending = ui.elements.get('btn-retry')!.click!();
+    expect(close.hidden).toBe(true);
+    ui.rejectRetry('processes_running');
+    await pending;
+    expect(close.hidden).toBe(false);
+  });
+
   it('submits one retry despite repeated clicks and restores the button on spawn failure', async () => {
     const ui = createUi();
     await new Promise<void>((resolve) => setImmediate(resolve));

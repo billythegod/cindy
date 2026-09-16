@@ -34,6 +34,7 @@ struct AppState {
     args: CliArgs,
     last_status: Arc<Mutex<StatusPayload>>,
     retry_started: Arc<Mutex<bool>>,
+    stopped_app: Arc<Mutex<bool>>,
 }
 
 #[tauri::command]
@@ -57,7 +58,8 @@ fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
 fn quit_now(app: AppHandle, state: State<'_, AppState>) {
     let can_retry = state.last_status.lock().unwrap().can_retry;
     let retry_in_progress = *state.retry_started.lock().unwrap();
-    installer::abandon_retry(&state.args, can_retry, retry_in_progress);
+    let stopped_app = *state.stopped_app.lock().unwrap();
+    installer::abandon_retry(&state.args, can_retry, retry_in_progress, stopped_app);
     app.exit(0);
 }
 
@@ -92,10 +94,15 @@ fn retry_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String
     };
     let last_status = state.last_status.clone();
     let retry_started = state.retry_started.clone();
+    let stopped_app = state.stopped_app.clone();
     let handle = app.clone();
     logger::info("[command] retry_update continuing in-process");
     std::thread::spawn(move || {
         installer::run_with_lock(args, held_lock, |event| {
+            if matches!(event, InstallerEvent::AppExited) {
+                *stopped_app.lock().unwrap() = true;
+                return;
+            }
             let payload = event_to_payload(event, &handle);
             *last_status.lock().unwrap() = payload.clone();
             let _ = handle.emit("update-status", payload);
@@ -136,10 +143,12 @@ pub fn run() {
     };
     let last_status = Arc::new(Mutex::new(initial_status));
     let retry_started = Arc::new(Mutex::new(false));
+    let stopped_app = Arc::new(Mutex::new(false));
     let state = AppState {
         args: args.clone(),
         last_status: last_status.clone(),
         retry_started,
+        stopped_app: stopped_app.clone(),
     };
 
     tauri::Builder::default()
@@ -173,7 +182,13 @@ pub fn run() {
                         let state = handle.state::<AppState>();
                         let can_retry = state.last_status.lock().unwrap().can_retry;
                         let retry_in_progress = *state.retry_started.lock().unwrap();
-                        installer::abandon_retry(&state.args, can_retry, retry_in_progress);
+                        let stopped_app = *state.stopped_app.lock().unwrap();
+                        installer::abandon_retry(
+                            &state.args,
+                            can_retry,
+                            retry_in_progress,
+                            stopped_app,
+                        );
                     }
                 });
                 let resolved = match app.state::<AppState>().args.theme {
@@ -196,8 +211,13 @@ pub fn run() {
             let handle = app.handle().clone();
             let args = args.clone();
             let last_status = last_status.clone();
+            let stopped_app = stopped_app.clone();
             std::thread::spawn(move || {
                 installer::run(args, |event| {
+                    if matches!(event, InstallerEvent::AppExited) {
+                        *stopped_app.lock().unwrap() = true;
+                        return;
+                    }
                     let payload = event_to_payload(event, &handle);
                     *last_status.lock().unwrap() = payload.clone();
                     let _ = handle.emit("update-status", payload);
@@ -301,5 +321,6 @@ fn event_to_payload(event: InstallerEvent, handle: &AppHandle) -> StatusPayload 
             can_retry,
             log_path,
         },
+        InstallerEvent::AppExited => unreachable!("AppExited is consumed before UI payload mapping"),
     }
 }
