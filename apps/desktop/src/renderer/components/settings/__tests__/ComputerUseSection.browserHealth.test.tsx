@@ -23,10 +23,7 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, options?: { reasons?: string }) =>
-      options?.reasons ? `${key}: ${options.reasons}` : key,
-  }),
+  useTranslation: () => ({ t: (key: string) => key }),
 }));
 
 vi.mock('@/lib/toast', () => ({
@@ -131,7 +128,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('ComputerUseSection browser backend health loading', () => {
-  it('shows why optional data was skipped without reporting a failed browser launch', async () => {
+  it('keeps optional copy diagnostics out of user-facing launch notifications', async () => {
     api.getBackendState.mockResolvedValue({ active: 'external' });
     api.getBackendHealth.mockResolvedValue({
       active: 'external',
@@ -155,13 +152,13 @@ describe('ComputerUseSection browser backend health loading', () => {
     fireEvent.click(
       await screen.findByRole('button', { name: 'settings.computerUse.browser.openForLogin' }),
     );
-    await waitFor(() => expect(api.warningToast).toHaveBeenCalledOnce());
-    const message = api.warningToast.mock.calls[0][0];
-    expect(message).toContain('openedWithCopyWarnings');
-    expect(message.match(/copyWarningReasons.locked/g)).toHaveLength(1);
-    expect(message).toContain('copyWarningReasons.permission-denied');
+    await waitFor(() =>
+      expect(api.successToast).toHaveBeenCalledWith(
+        'settings.computerUse.browser.toast.openedForLogin',
+      ),
+    );
+    expect(api.warningToast).not.toHaveBeenCalled();
     expect(api.errorToast).not.toHaveBeenCalled();
-    expect(api.successToast).not.toHaveBeenCalled();
   });
 
   it('renders the Automation settings while the recoverable health probe is still pending', async () => {

@@ -12,11 +12,6 @@ export interface BrowserProfileCopyWarning {
   reason: 'locked' | 'permission-denied' | 'copy-failed';
 }
 
-export interface BrowserOpenForLoginResult {
-  launched: boolean;
-  warnings?: BrowserProfileCopyWarning[];
-}
-
 /** Only known, non-sensitive fields may cross the runtime / IPC boundary. */
 export function browserProfileCopyWarningsFromData(data: unknown): BrowserProfileCopyWarning[] {
   const raw = (data as { realProfile?: { warnings?: unknown } } | null)?.realProfile?.warnings;

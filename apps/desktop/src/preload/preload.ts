@@ -1,6 +1,5 @@
 import { invokeOpenPath } from './openPath';
 import { COPY_PNG_TO_CLIPBOARD_CHANNEL, type CopyPngToClipboardParams } from '../shared/pngClipboard';
-import type { BrowserOpenForLoginResult } from '../shared/browserBackend';
 import { REMOTE_VIEWER } from '../shared/remoteDesktopViewer';
 import type { RoutineInput } from '@cindy/maker-scheduler';
 import {
@@ -7425,7 +7424,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // ── Browser automation (Settings →「电脑使用」) ──────────────────────
     browser: {
       status: (): Promise<BrowserAvailability> => ipcRenderer.invoke('maker:browser:status'),
-      openForLogin: (): Promise<BrowserOpenForLoginResult> =>
+      openForLogin: (): Promise<{ launched: boolean }> =>
         ipcRenderer.invoke('maker:browser:open-for-login'),
     },
     android: {

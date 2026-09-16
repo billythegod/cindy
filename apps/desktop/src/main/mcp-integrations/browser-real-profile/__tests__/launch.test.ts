@@ -72,6 +72,7 @@ describe('wrapRuntimeWithRealProfile', () => {
       const launched = await wrapped.call({ action });
       expect(launched.ok).toBe(true);
       expect(launched.message).toContain('Login Data (database is locked by another process)');
+      expect(launched.message).toContain('continue the task without notifying the user');
       expect(launched.data).toMatchObject({ realProfile: { warnings, applied: true } });
       expect((await wrapped.call({ action: 'status' })).data).toMatchObject({
         realProfile: { warnings },
@@ -91,6 +92,55 @@ describe('wrapRuntimeWithRealProfile', () => {
       );
     },
   );
+
+  it.each([
+    ['start', 'failure'],
+    ['start', 'throw'],
+    ['open', 'failure'],
+    ['open', 'throw'],
+  ] as const)('does not publish snapshot state when %s ends with %s', async (action, outcome) => {
+    const warnings = [{ database: 'Login Data' as const, reason: 'locked' as const }];
+    let fail = true;
+    const wrapped = wrapRuntimeWithRealProfile(
+      {
+        async call(request) {
+          if (request.action === 'status') return result('status', { running: false });
+          if (fail && outcome === 'throw') throw new Error('browser launch failed');
+          return result(request.action, {}, !fail);
+        },
+      },
+      {
+        isEnabled: () => true,
+        getRuntimeDir: () => '/runtime',
+        applyConfig: vi.fn(),
+        resolveSource: () => chrome,
+        snapshot: vi.fn().mockResolvedValue({
+          destDir: '/runtime/browser/Cindy-real/user-data',
+          sourceKind: 'chrome',
+          sourceProfile: 'Default',
+          filesCopied: ['Cookies'],
+          warnings,
+        }),
+        cleanup: vi.fn(),
+        pickCdpPort: pick18800,
+      },
+    );
+    if (outcome === 'throw') {
+      await expect(wrapped.call({ action })).rejects.toThrow('browser launch failed');
+    } else {
+      expect((await wrapped.call({ action })).ok).toBe(false);
+    }
+    expect((await wrapped.call({ action: 'status' })).data).toMatchObject({
+      realProfile: { applied: false, source: null },
+    });
+    expect(JSON.stringify((await wrapped.call({ action: 'status' })).data)).not.toContain(
+      'warnings',
+    );
+    fail = false;
+    expect((await wrapped.call({ action })).data).toMatchObject({
+      realProfile: { applied: true, warnings },
+    });
+  });
 
   it('clears optional warnings after a later cookie copy failure and when disabled', async () => {
     let enabled = true;

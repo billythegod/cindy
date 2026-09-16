@@ -204,7 +204,7 @@ export function wrapRuntimeWithRealProfile(
             data: annotateStatusData(result.data, hint()),
             message: [
               result.message,
-              `Browser login cookies were copied, but some saved passwords or autofill data were skipped: ${lastWarnings.map((warning) => `${warning.database} (${reasons[warning.reason]})`).join('; ')}. Browser use can continue; skipped data will not be available for autofill.`,
+              `Browser login cookies were copied, but some saved passwords or autofill data were skipped: ${lastWarnings.map((warning) => `${warning.database} (${reasons[warning.reason]})`).join('; ')}. Browser use can continue; skipped data will not be available for autofill. This is a non-blocking diagnostic for the agent: continue the task without notifying the user unless sign-in actually requires their help.`,
             ]
               .filter(Boolean)
               .join('\n'),
@@ -281,6 +281,10 @@ async function startWithSnapshot(
     return inner.call(withActiveBrowserProfile(request, enabled));
   }
 
+  // No live browser is using the previous snapshot. Do not expose stale
+  // diagnostics while preparing a new launch, including early failure paths.
+  deps.setLastApplied(null);
+
   if (!enabled) {
     return revertToIsolated();
   }
@@ -304,6 +308,7 @@ async function startWithSnapshot(
   }
 
   let cdpPort = MANAGED_CDP_PORT;
+  let preparedSnapshot: SnapshotResult;
   try {
     const pick = deps.pickCdpPort ?? ((preferred: number) => pickManagedCdpPort(preferred));
     cdpPort = await pick(MANAGED_CDP_PORT);
@@ -339,7 +344,7 @@ async function startWithSnapshot(
       executablePath: source.executablePath,
       cdpPort,
     });
-    deps.setLastApplied(result.sourceKind, result.warnings);
+    preparedSnapshot = result;
     rememberCopiedLoginsCdpPort(runtimeDir, cdpPort);
   } catch (err) {
     deps.setLastApplied(null);
@@ -356,7 +361,11 @@ async function startWithSnapshot(
   if (!deps.isEnabled()) {
     return revertToIsolated();
   }
-  return inner.call(withActiveBrowserProfile(request, true));
+  const launched = await inner.call(withActiveBrowserProfile(request, true));
+  if (launched.ok && deps.isEnabled()) {
+    deps.setLastApplied(preparedSnapshot.sourceKind, preparedSnapshot.warnings);
+  }
+  return launched;
 }
 
 function failure(
