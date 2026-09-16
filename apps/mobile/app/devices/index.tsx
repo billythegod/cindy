@@ -52,7 +52,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { Gesture, GestureDetector } from '@/platform/gestureHandler';
-import Reanimated, { runOnJS, useAnimatedReaction, useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import Reanimated, { measure, runOnJS, useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, type AnimatedRef, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -3333,36 +3333,45 @@ function HomeProjectWindowAnchorTracker({
   childOffsets,
   onAnchorChange,
   projectHeaderHeight,
-  projectLayoutReady,
-  projectTop,
+  projectLayoutRevision,
+  projectRef,
   scrollY,
   viewportHeight,
 }: {
   childOffsets: readonly number[];
   onAnchorChange(anchor: number): void;
   projectHeaderHeight: SharedValue<number>;
-  projectLayoutReady: SharedValue<boolean>;
-  projectTop: SharedValue<number>;
+  projectLayoutRevision: SharedValue<number>;
+  projectRef: AnimatedRef<View>;
   scrollY: SharedValue<number>;
   viewportHeight: number;
 }) {
   useAnimatedReaction(
     () => {
-      if (!projectLayoutReady.value) return -1;
+      // Both layout and scrolling invalidate the measurement. Read pageY on
+      // the UI thread, in screen coordinates; never combine an asynchronous
+      // measureInWindow result with a newer scroll offset.
+      const revision = projectLayoutRevision.value;
+      const offset = scrollY.value;
+      if (revision === 0 || !Number.isFinite(offset)) return null;
+      const layout = measure(projectRef);
+      if (!layout || !Number.isFinite(layout.pageY)) return null;
       return resolveHomeProjectChildAnchor({
         childOffsets,
         projectHeaderHeight: projectHeaderHeight.value,
-        projectTop: projectTop.value,
+        projectTop: layout.pageY,
         shift: PROJECT_CHILD_WINDOW_SHIFT,
         viewportHeight,
-        viewportTop: scrollY.value,
+        viewportTop: 0,
       });
     },
     (next, previous) => {
-      if (next === previous) return;
+      // A temporarily unavailable native view is not evidence that its rows
+      // left the viewport. Keep the last bounded window until measured again.
+      if (next === null || next === previous) return;
       runOnJS(onAnchorChange)(next);
     },
-    [childOffsets, onAnchorChange, projectHeaderHeight, projectLayoutReady, projectTop, scrollY, viewportHeight],
+    [childOffsets, onAnchorChange, projectHeaderHeight, projectLayoutRevision, projectRef, scrollY, viewportHeight],
   );
   return null;
 }
@@ -3431,11 +3440,10 @@ function ProjectRow({
       isSessionRunning: (sessionId) => remoteSessionStore.isSessionRunning(sessionId),
     },
   );
-  const projectTop = useSharedValue(0);
   const projectHeaderHeight = useSharedValue(HOME_PROJECT_HEADER_HEIGHT);
-  const projectRef = useRef<View>(null);
+  const projectRef = useAnimatedRef<View>();
   const [windowAnchor, setWindowAnchor] = useState(-1);
-  const projectLayoutReady = useSharedValue(false);
+  const projectLayoutRevision = useSharedValue(0);
   const estimatedChildHeights = useMemo(() => {
     const expandedKeys = new Set(expandedAutomationGroups);
     return visibleSessions.map((item) => estimateHomeProjectChildHeight(item, expandedKeys));
@@ -3556,22 +3564,11 @@ function ProjectRow({
     </Pressable>
   );
   return (
-    <View
-      onLayout={(event) => {
+    <Reanimated.View
+      collapsable={false}
+      onLayout={() => {
         if (!windowingEnabled) return;
-        projectLayoutReady.value = false;
-        const fallbackY = event.nativeEvent.layout.y;
-        projectRef.current?.measureInWindow((_x, screenY) => {
-          projectTop.value = screenY + (homeScrollY?.value ?? 0);
-          projectLayoutReady.value = true;
-        });
-        // A native measure can be unavailable in shallow/unit renderers. Keep
-        // the local layout as a safe fallback; the real device measurement
-        // above is used whenever the row is mounted in a ScrollView.
-        if (!projectRef.current) {
-          projectTop.value = fallbackY;
-          projectLayoutReady.value = true;
-        }
+        projectLayoutRevision.value += 1;
       }}
       ref={projectRef}
       style={[styles.projectGroup, suppressTopBorder && styles.projectGroupNoTop]}
@@ -3582,8 +3579,8 @@ function ProjectRow({
           childOffsets={estimatedChildOffsets}
           onAnchorChange={setWindowAnchor}
           projectHeaderHeight={projectHeaderHeight}
-          projectLayoutReady={projectLayoutReady}
-          projectTop={projectTop}
+          projectLayoutRevision={projectLayoutRevision}
+          projectRef={projectRef}
           scrollY={scrollY}
           viewportHeight={viewportHeight}
         />
@@ -3663,7 +3660,7 @@ function ProjectRow({
           ) : null}
         </View>
       )}
-    </View>
+    </Reanimated.View>
   );
 }
 

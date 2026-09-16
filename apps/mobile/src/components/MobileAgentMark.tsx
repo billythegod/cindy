@@ -30,7 +30,16 @@ export function MobileAgentMark({ agentKind, color, size = iconSize.sm }: Mobile
   return (
     <Svg accessible={false} height={size} viewBox="0 0 24 24" width={size}>
       {agentKind === 'pi' ? (
-        <G fill="none" stroke={color} strokeWidth={PI_STROKE} strokeLinecap="round" strokeLinejoin="round"><Path d="M3.6 6.6h16.8" /><Path d="M8.4 6.6v11.8" /><Path d="M15.6 6.6v9.6c0 1.5.9 2.2 2.4 2.2" /></G>
+        // Keep all three strokes in one native path. Separate horizontal/vertical
+        // paths have degenerate bounds and can disappear in the iOS SVG renderer.
+        <Path
+          d="M3.6 6.6h16.8 M8.4 6.6v11.8 M15.6 6.6v9.6c0 1.5.9 2.2 2.4 2.2"
+          fill="none"
+          stroke={color}
+          strokeWidth={PI_STROKE}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       ) : agentKind === 'codex' ? (
         <G transform="translate(12 12) scale(1.1) translate(-12 -12)">
           <Path
