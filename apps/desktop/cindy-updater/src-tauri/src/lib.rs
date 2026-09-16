@@ -79,12 +79,20 @@ fn retry_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String
     // `vcruntime140*.dll` before System32; fallback-safe staging leaves those
     // DLLs absent, so a medium-integrity plant would load into an elevated retry.
     let args = installer::retry_args(&state.args);
+    let held_lock = match installer::reopen_held_update_lock(&args.lock) {
+        Some(lock) => Some(lock),
+        None if args.lock.exists() => {
+            *state.retry_started.lock().unwrap() = false;
+            return Err("updater_busy".into());
+        }
+        None => None,
+    };
     let last_status = state.last_status.clone();
     let retry_started = state.retry_started.clone();
     let handle = app.clone();
     logger::info("[command] retry_update continuing in-process");
     std::thread::spawn(move || {
-        installer::run(args, |event| {
+        installer::run_with_lock(args, held_lock, |event| {
             let payload = event_to_payload(event, &handle);
             *last_status.lock().unwrap() = payload.clone();
             let _ = handle.emit("update-status", payload);
@@ -211,7 +219,7 @@ mod retry_update_contract {
             .expect("run follows retry_update");
         let body = &source[start..start + end];
         assert!(
-            body.contains("installer::run") && body.contains("retry_args"),
+            body.contains("installer::run_with_lock") && body.contains("retry_args"),
             "Retry must continue in this already-loaded process:\n{body}"
         );
         assert!(

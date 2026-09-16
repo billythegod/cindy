@@ -119,9 +119,11 @@ Cancelling that prompt, or a Retry that would need a second `runas`, does not
 offer Retry and does not relaunch the TEMP executable; close the window and
 check for updates again. An already-elevated Retry continues in-process.
 
-A successful rollback retains the isolated zip for retry and still attempts to
-relaunch the restored app; close that app before retrying. A successful update
-still removes its zip. If rollback fails, Retry is unavailable and the backup
+A successful rollback retains the isolated zip for retry and does not relaunch
+Cindy while Retry remains available. The exclusive `.updating` lock stays held
+for that window so a second updater cannot start from `%TEMP%`. A successful
+update still removes its zip. If rollback fails, Retry is unavailable and the
+backup
 directory is preserved for manual recovery. Stale temporary directories retain
 the existing seven-day cleanup policy.
 

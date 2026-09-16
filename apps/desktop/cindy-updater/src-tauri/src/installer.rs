@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -52,13 +52,35 @@ const APPDIR_PROCESS_POLL: Duration = Duration::from_millis(500);
 const LAUNCH_VERIFY_TIMEOUT: Duration = Duration::from_secs(3);
 const LAUNCH_VERIFY_POLL: Duration = Duration::from_millis(100);
 
-pub fn run<F: FnMut(InstallerEvent)>(mut args: CliArgs, mut emit: F) {
+pub fn run<F: FnMut(InstallerEvent)>(args: CliArgs, emit: F) {
+    run_with_lock(args, None, emit);
+}
+
+pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
+    mut args: CliArgs,
+    held_lock: Option<UpdateLock>,
+    mut emit: F,
+) {
+    let lock = match held_lock {
+        Some(lock) => lock,
+        None => match acquire_update_lock(&args.lock) {
+            Ok(lock) => lock,
+            Err(error) => {
+                logger::error(format!("[installer] FAILED: {error}"));
+                emit(InstallerEvent::Failed(
+                    "另一项更新正在进行，请关闭此窗口后重新检查更新".into(),
+                    false,
+                ));
+                return;
+            }
+        },
+    };
     if let Err(error) = bind_zip_sha256(&mut args) {
         logger::error(format!("[installer] FAILED: archive unavailable ({error})"));
         let (extract_dir, backup_dir) = staging_dirs(&args);
         remove_pre_install_staging(&extract_dir, &backup_dir);
         discard_staged_archives(&args);
-        let _ = fs::remove_file(&args.lock);
+        release_update_lock(lock);
         emit(InstallerEvent::Failed(
             "更新文件已不存在或无法读取，请重新检查更新".into(),
             false,
@@ -66,7 +88,10 @@ pub fn run<F: FnMut(InstallerEvent)>(mut args: CliArgs, mut emit: F) {
         return;
     }
     match run_inner(&args, &mut emit) {
-        Ok(()) => emit(InstallerEvent::Done),
+        Ok(()) => {
+            release_update_lock(lock);
+            emit(InstallerEvent::Done);
+        }
         Err(failure) => {
             let (extract_dir, backup_dir) = staging_dirs(&args);
             if !failure.keep_backup {
@@ -81,7 +106,14 @@ pub fn run<F: FnMut(InstallerEvent)>(mut args: CliArgs, mut emit: F) {
                 false
             };
             logger::error(format!("[installer] FAILED: {}", failure.message));
-            let _ = fs::remove_file(&args.lock);
+            if can_retry {
+                // Keep the `.updating` file so Cindy waits at startup, but close
+                // the handle so in-process Retry can reopen it. create_new still
+                // rejects a second updater while the file exists.
+                retain_update_lock_file(lock);
+            } else {
+                release_update_lock(lock);
+            }
             emit(InstallerEvent::Failed(failure.message, can_retry));
         }
     }
@@ -119,6 +151,71 @@ impl InstallerFailure {
             keep_backup: false,
         }
     }
+}
+
+/// Exclusive `.updating` lock. Cindy waits on this file at startup; a second
+/// updater must fail closed instead of replacing files concurrently.
+pub(crate) struct UpdateLock {
+    path: PathBuf,
+    _file: File,
+}
+
+pub(crate) fn acquire_update_lock(path: &Path) -> Result<UpdateLock, String> {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x00000001;
+        options.share_mode(FILE_SHARE_READ);
+    }
+    let mut file = options.open(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            "updater_busy".to_string()
+        } else {
+            error.to_string()
+        }
+    })?;
+    file.write_all(format!("updating {}\n", std::process::id()).as_bytes())
+        .map_err(|error| error.to_string())?;
+    file.sync_all().map_err(|error| error.to_string())?;
+    Ok(UpdateLock {
+        path: path.to_path_buf(),
+        _file: file,
+    })
+}
+
+pub(crate) fn release_update_lock(lock: UpdateLock) {
+    drop(lock._file);
+    let _ = fs::remove_file(&lock.path);
+}
+
+pub(crate) fn retain_update_lock_file(lock: UpdateLock) {
+    drop(lock._file);
+}
+
+/// Re-open a lock this process already created and kept during the failure
+/// window. Missing or unreadable files mean another updater is active.
+pub(crate) fn reopen_held_update_lock(path: &Path) -> Option<UpdateLock> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x00000001;
+        options.share_mode(FILE_SHARE_READ);
+    }
+    options.open(path).ok().map(|file| UpdateLock {
+        path: path.to_path_buf(),
+        _file: file,
+    })
+}
+
+pub(crate) fn should_relaunch_after_rollback(can_retry: bool) -> bool {
+    !can_retry
 }
 
 pub(crate) fn retry_available(zip: &Path) -> bool {
@@ -492,14 +589,8 @@ fn run_inner<F: FnMut(InstallerEvent)>(
         }
     }
 
-    // 2. Mark lock so a racing main-process restart waits.
-    if let Some(parent) = args.lock.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    fs::write(&args.lock, b"updating")
-        .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
-
-    // 3. Extract zip into a subdir of workdir. Child dirs preserve the
+    // 2. Extract zip into a subdir of workdir. The exclusive lock was already
+    //    acquired by `run` so a racing Cindy start waits at `.updating`. Child dirs preserve the
     //    parent's `{ts}` suffix so a copy-out for support still carries the
     //    attempt timestamp regardless of whether the parent context survives.
     //    A user retry reuses this workdir, so discard any partial staging from
@@ -565,10 +656,9 @@ fn run_inner<F: FnMut(InstallerEvent)>(
             ));
         })?;
 
-        // 5. Drop lock so the new process won't busy-wait on it at startup.
-        let _ = fs::remove_file(&args.lock);
-
-        // 6. Verify exe exists, launch detached, verify it actually came up.
+        // 5. Verify exe exists, launch detached, verify it actually came up.
+        //    The exclusive lock stays held until `run` finishes so a racing
+        //    Cindy start waits at the .updating file.
         let exe_path = args.app_dir.join(&args.exe_name);
         if !exe_path.exists() {
             anyhow::bail!(
@@ -637,24 +727,28 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                     if !can_retry {
                         let _ = fs::remove_file(&args.zip);
                     }
-                    // Best-effort relaunch of the (now restored) old exe so
-                    // the user isn't left without the app after a failed
-                    // update. If it fails to start, the Failed UI still
-                    // tells them what happened.
-                    let exe_path = args.app_dir.join(&args.exe_name);
-                    if exe_path.exists() {
-                        if let Err(e) = launch_detached(&exe_path) {
-                            logger::warn(format!(
-                                "[installer] relaunch of old exe after rollback failed: {e}"
-                            ));
-                        } else {
-                            logger::info(format!(
-                                "[installer] relaunched old exe at {}",
-                                exe_path.display()
-                            ));
+                    // Keep Cindy closed while Retry is still available. Relaunching
+                    // here would let the restored app spawn a second updater from
+                    // %TEMP% while this failure window can still replace files.
+                    if should_relaunch_after_rollback(can_retry) {
+                        let exe_path = args.app_dir.join(&args.exe_name);
+                        if exe_path.exists() {
+                            if let Err(e) = launch_detached(&exe_path) {
+                                logger::warn(format!(
+                                    "[installer] relaunch of old exe after rollback failed: {e}"
+                                ));
+                            } else {
+                                logger::info(format!(
+                                    "[installer] relaunched old exe at {}",
+                                    exe_path.display()
+                                ));
+                            }
                         }
+                    } else {
+                        logger::info(
+                            "[installer] skipping Cindy relaunch because Retry remains available",
+                        );
                     }
-                    let _ = fs::remove_file(&args.lock);
                     return Err(InstallerFailure::new(
                         format!("{} (已回滚到旧版本)", install_err),
                         can_retry,
@@ -1111,10 +1205,11 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        archive_matches_digest, bind_zip_sha256, extract_error_can_retry, finalize_retry_state,
-        may_self_elevate, path_is_within, prepare_retry_archive, remove_staging_dir, retry_allowed,
-        retry_args, retry_available, retry_cli_args, retry_request_allowed, rollback, run,
-        staging_dirs, Phase,
+        acquire_update_lock, archive_matches_digest, bind_zip_sha256, extract_error_can_retry,
+        finalize_retry_state, may_self_elevate, path_is_within, prepare_retry_archive,
+        release_update_lock, remove_staging_dir, retain_update_lock_file, retry_allowed, retry_args,
+        retry_available, retry_cli_args, retry_request_allowed, rollback, run,
+        should_relaunch_after_rollback, staging_dirs, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use sha2::Digest;
@@ -1384,6 +1479,34 @@ mod tests {
     #[test]
     fn cancelled_or_failed_uac_prompt_is_not_retryable() {
         assert!(!super::elevation_prompt_can_retry());
+    }
+
+    #[test]
+    fn retryable_rollback_does_not_relaunch_cindy() {
+        assert!(!should_relaunch_after_rollback(true));
+        assert!(should_relaunch_after_rollback(false));
+    }
+
+    #[test]
+    fn update_lock_rejects_a_second_updater() {
+        let temp = TestDir::new();
+        let lock = temp.0.join(".updating");
+        let first = acquire_update_lock(&lock).expect("first updater holds the lock");
+        assert!(matches!(
+            acquire_update_lock(&lock),
+            Err(error) if error == "updater_busy"
+        ));
+        release_update_lock(first);
+        let second = acquire_update_lock(&lock).expect("released lock can be acquired");
+        retain_update_lock_file(second);
+        assert!(lock.exists());
+        assert!(matches!(
+            acquire_update_lock(&lock),
+            Err(error) if error == "updater_busy"
+        ));
+        let reopened = super::reopen_held_update_lock(&lock).expect("retry reopens retained lock");
+        release_update_lock(reopened);
+        assert!(!lock.exists());
     }
 
     #[test]
