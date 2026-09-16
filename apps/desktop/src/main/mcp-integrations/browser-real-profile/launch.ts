@@ -16,6 +16,8 @@ import type {
 import {
   FOREIGN_AGENT_BROWSER_ERROR,
   isBrowserOpenForLoginErrorCode,
+  browserProfileCopyWarningsFromData,
+  type BrowserProfileCopyWarning,
 } from '../../../shared/browserBackend.js';
 
 import { resolveSourceBrowserFromOs } from './source.js';
@@ -143,6 +145,11 @@ export function annotateStatusData(
     enabled: hint.enabled,
     applied: hint.applied,
     source: hint.source,
+    ...(hint.warnings?.length
+      ? {
+          warnings: browserProfileCopyWarningsFromData({ realProfile: hint }),
+        }
+      : {}),
   };
   return next;
 }
@@ -152,6 +159,7 @@ export function wrapRuntimeWithRealProfile(
   deps: RealProfileLaunchDeps,
 ): Pick<BrowserControlRuntime, 'call'> {
   let lastApplied: ChromiumKind | null = null;
+  let lastWarnings: BrowserProfileCopyWarning[] = [];
 
   const resolveSource = deps.resolveSource ?? resolveSourceBrowserFromOs;
   const snapshot = deps.snapshot ?? snapshotRealProfile;
@@ -162,6 +170,7 @@ export function wrapRuntimeWithRealProfile(
     enabled: deps.isEnabled(),
     applied: deps.isEnabled() && lastApplied !== null,
     source: deps.isEnabled() ? lastApplied : null,
+    ...(deps.isEnabled() && lastApplied && lastWarnings.length ? { warnings: lastWarnings } : {}),
   });
 
   return {
@@ -170,20 +179,45 @@ export function wrapRuntimeWithRealProfile(
       // /start. Consent-on sessions must snapshot before those implicit
       // launches, or the next explicit start short-circuits on our live pid.
       if (shouldPrepareCopiedLogins(request.action, deps.isEnabled())) {
-        return startWithSnapshot(inner, request, {
+        let prepared = false;
+        const result = await startWithSnapshot(inner, request, {
           ...deps,
           resolveSource,
           snapshot,
           cleanup,
           platform,
           getLastApplied: () => lastApplied,
-          setLastApplied: (kind) => {
+          setLastApplied: (kind, warnings = []) => {
             lastApplied = kind;
+            lastWarnings = warnings;
+            prepared = kind !== null;
           },
         });
+        if (result.ok && hint().warnings?.length && (prepared || request.action === 'start')) {
+          const reasons = {
+            locked: 'database is locked by another process',
+            'permission-denied': 'read permission denied',
+            'copy-failed': 'database could not be copied',
+          };
+          return {
+            ...result,
+            data: annotateStatusData(result.data, hint()),
+            message: [
+              result.message,
+              `Browser login cookies were copied, but some saved passwords or autofill data were skipped: ${lastWarnings.map((warning) => `${warning.database} (${reasons[warning.reason]})`).join('; ')}. Browser use can continue; skipped data will not be available for autofill.`,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          };
+        }
+        return result;
       }
 
       const result = await inner.call(withActiveBrowserProfile(request, deps.isEnabled()));
+      if (request.action === 'stop' && result.ok) {
+        lastApplied = null;
+        lastWarnings = [];
+      }
       if (request.action === 'status' && result.ok) {
         return {
           ...result,
@@ -230,7 +264,7 @@ async function startWithSnapshot(
     cleanup: typeof cleanupRealProfileSnapshots;
     platform: NodeJS.Platform;
     getLastApplied: () => ChromiumKind | null;
-    setLastApplied: (kind: ChromiumKind | null) => void;
+    setLastApplied: (kind: ChromiumKind | null, warnings?: BrowserProfileCopyWarning[]) => void;
   },
 ): Promise<BrowserControlResult> {
   const enabled = deps.isEnabled();
@@ -305,7 +339,7 @@ async function startWithSnapshot(
       executablePath: source.executablePath,
       cdpPort,
     });
-    deps.setLastApplied(result.sourceKind);
+    deps.setLastApplied(result.sourceKind, result.warnings);
     rememberCopiedLoginsCdpPort(runtimeDir, cdpPort);
   } catch (err) {
     deps.setLastApplied(null);

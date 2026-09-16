@@ -3336,10 +3336,17 @@
           "copyFailed": "无法复制浏览器登录态。请彻底退出日常浏览器后重试，或关闭「使用我的浏览器登录态」。",
           "headlessForbidden": "Agent 专用浏览器处于无界面模式时无法使用你的浏览器登录态。",
           "stopFailed": "请彻底关闭 Agent 专用浏览器，然后重试。",
-          "appBoundEncryptionUnsupported": "Windows 已使用应用绑定加密保护这些浏览器登录态，Cindy 无法复制。请关闭「使用我的浏览器登录态」，打开 Agent 专用浏览器并在其中登录一次。"
+          "appBoundEncryptionUnsupported": "Windows 已使用应用绑定加密保护这些浏览器登录态，Cindy 无法复制。请关闭「使用我的浏览器登录态」，打开 Agent 专用浏览器并在其中登录一次。",
+          "openedWithCopyWarnings": "浏览器已打开，登录 Cookie 已复制。部分保存的密码或自动填充数据未复制（{{reasons}}），可继续浏览"
         },
         "openForLogin": "打开 Agent 专用浏览器",
-        "openForLoginHint": "这是 Agent 专用的独立浏览器：基于你本机的 Chrome，但用一份独立配置（右上角显示为 Cindy），不会动你日常 Chrome 的标签页、书签和登录态。Agent 会在这里替你打开网页、阅读内容、点击和截图。需要登录的网站，点上面「打开 Agent 专用浏览器」手动登录一次即可——登录态会长期保留，之后 Agent 就能以你的身份继续操作。"
+        "openForLoginHint": "这是 Agent 专用的独立浏览器：基于你本机的 Chrome，但用一份独立配置（右上角显示为 Cindy），不会动你日常 Chrome 的标签页、书签和登录态。Agent 会在这里替你打开网页、阅读内容、点击和截图。需要登录的网站，点上面「打开 Agent 专用浏览器」手动登录一次即可——登录态会长期保留，之后 Agent 就能以你的身份继续操作。",
+        "copyWarningReasons": {
+          "locked": "正被其他进程占用",
+          "permission-denied": "没有读取权限",
+          "copy-failed": "复制失败"
+        },
+        "copyWarningSeparator": "、"
       },
       "realProfile": {
         "title": "使用我的浏览器登录态",

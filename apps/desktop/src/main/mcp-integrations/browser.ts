@@ -66,6 +66,8 @@ import { raiseAgentBrowserWindow } from './raise-agent-browser-window.js';
 import {
   BrowserOpenForLoginError,
   browserOpenForLoginErrorCodeFromData,
+  browserProfileCopyWarningsFromData,
+  type BrowserOpenForLoginResult,
 } from '../../shared/browserBackend.js';
 
 export { extractBrowserAvailability, type BrowserAvailability } from './browser-availability.js';
@@ -593,7 +595,7 @@ export function registerBrowserBackendIpc(): void {
  * want the agent to operate. Drives the Settings →「自动操作」"打开 Agent 专用浏览器"
  * action. Logins persist in the managed profile's user-data-dir.
  */
-export async function openBrowserForLogin(): Promise<void> {
+export async function openBrowserForLogin(): Promise<BrowserOpenForLoginResult> {
   // `start` launches the headed managed Chrome (idempotent: no-op if already running).
   // It already provides a window + new-tab page, so we NEVER open another tab here:
   // doing so raced with Chrome's own initial tab on a cold start and produced a
@@ -627,6 +629,7 @@ export async function openBrowserForLogin(): Promise<void> {
   // never came forward. `start` is the only path that adopts or replaces such a
   // process and reinstates its request guard, so run it in that case too.
   const proxyMode = (status.data as { proxy?: { mode?: unknown } } | undefined)?.proxy?.mode;
+  let warnings = browserProfileCopyWarningsFromData(status.data);
   if (!running || proxyMode === 'unknown') {
     const started = await externalBackend.call({ action: 'start' });
     if (!started.ok) {
@@ -640,12 +643,14 @@ export async function openBrowserForLogin(): Promise<void> {
       }
       throw new Error('Agent browser failed to start.');
     }
+    warnings = browserProfileCopyWarningsFromData(started.data);
   }
   // Occupancy is handled inside start (relocate CDP instead of attaching).
   // Do not re-probe status.running here: vendored `running` means "CDP is
   // reachable", and pid/userDataDir can still be missing or point at a
   // leftover Chrome on 18800 after a successful start of *this* window.
   await raiseAgentBrowserWindow(externalBackend);
+  return { launched: true, ...(warnings.length ? { warnings } : {}) };
 }
 
 /**

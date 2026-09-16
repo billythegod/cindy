@@ -1068,8 +1068,19 @@ export function ComputerUseSection({
   // logins persist in the managed profile across sessions.
   const handleOpenForLogin = useCallback(async () => {
     try {
-      await window.electronAPI.maker.browser.openForLogin();
-      toast.success(t('settings.computerUse.browser.toast.openedForLogin'));
+      const result = await window.electronAPI.maker.browser.openForLogin();
+      if (result.warnings?.length) {
+        const reasons = [
+          ...new Set(
+            result.warnings.map(({ reason }) =>
+              t(`settings.computerUse.browser.copyWarningReasons.${reason}`),
+            ),
+          ),
+        ].join(t('settings.computerUse.browser.copyWarningSeparator'));
+        toast.warning(t('settings.computerUse.browser.toast.openedWithCopyWarnings', { reasons }));
+      } else {
+        toast.success(t('settings.computerUse.browser.toast.openedForLogin'));
+      }
     } catch (err) {
       log.warn('browser.openForLogin failed', err);
       const errorCode = browserOpenForLoginErrorCode(err);

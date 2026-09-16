@@ -45,6 +45,125 @@ const chrome: InstalledChromium = {
 const pick18800 = async () => 18800;
 
 describe('wrapRuntimeWithRealProfile', () => {
+  it.each(['start', 'open'] as const)(
+    'reports optional copy warnings on %s and status, then clears them on retry',
+    async (action) => {
+      const state = { running: false, starts: 0 };
+      const warnings = [{ database: 'Login Data' as const, reason: 'locked' as const }];
+      const snapshotResult = {
+        destDir: '/runtime/browser/Cindy-real/user-data',
+        sourceKind: 'chrome' as const,
+        sourceProfile: 'Default',
+        filesCopied: ['Cookies'],
+      };
+      const snapshot = vi
+        .fn()
+        .mockResolvedValueOnce({ ...snapshotResult, warnings })
+        .mockResolvedValue(snapshotResult);
+      const wrapped = wrapRuntimeWithRealProfile(fakeInner(state), {
+        isEnabled: () => true,
+        getRuntimeDir: () => '/runtime',
+        applyConfig: vi.fn(),
+        resolveSource: () => chrome,
+        snapshot,
+        cleanup: vi.fn(),
+        pickCdpPort: pick18800,
+      });
+      const launched = await wrapped.call({ action });
+      expect(launched.ok).toBe(true);
+      expect(launched.message).toContain('Login Data (database is locked by another process)');
+      expect(launched.data).toMatchObject({ realProfile: { warnings, applied: true } });
+      expect((await wrapped.call({ action: 'status' })).data).toMatchObject({
+        realProfile: { warnings },
+      });
+
+      await wrapped.call({ action: 'stop' });
+      expect((await wrapped.call({ action: 'status' })).data).toMatchObject({
+        realProfile: { applied: false, source: null },
+      });
+      expect(JSON.stringify((await wrapped.call({ action: 'status' })).data)).not.toContain(
+        'warnings',
+      );
+      const retried = await wrapped.call({ action: 'start' });
+      expect(retried.message).toBeUndefined();
+      expect(JSON.stringify((await wrapped.call({ action: 'status' })).data)).not.toContain(
+        'warnings',
+      );
+    },
+  );
+
+  it('clears optional warnings after a later cookie copy failure and when disabled', async () => {
+    let enabled = true;
+    const snapshot = vi
+      .fn()
+      .mockResolvedValueOnce({
+        destDir: '/runtime/browser/Cindy-real/user-data',
+        sourceKind: 'chrome',
+        sourceProfile: 'Default',
+        filesCopied: ['Cookies'],
+        warnings: [{ database: 'Web Data', reason: 'copy-failed' }],
+      })
+      .mockRejectedValue(new RealProfileError('PROFILE_LOCKED', 'Cookie database is locked'));
+    const wrapped = wrapRuntimeWithRealProfile(fakeInner({ running: false, starts: 0 }), {
+      isEnabled: () => enabled,
+      getRuntimeDir: () => '/runtime',
+      applyConfig: vi.fn(),
+      resolveSource: () => chrome,
+      snapshot,
+      cleanup: vi.fn(),
+      pickCdpPort: pick18800,
+    });
+    expect((await wrapped.call({ action: 'start' })).ok).toBe(true);
+    enabled = false;
+    expect(JSON.stringify((await wrapped.call({ action: 'status' })).data)).not.toContain(
+      'warnings',
+    );
+    enabled = true;
+    expect((await wrapped.call({ action: 'start' })).ok).toBe(false);
+    expect(JSON.stringify((await wrapped.call({ action: 'status' })).data)).not.toContain(
+      'warnings',
+    );
+  });
+
+  it('retains warnings when reopening the live browser without resnapshotting', async () => {
+    let running = false;
+    const snapshot = vi.fn().mockResolvedValue({
+      destDir: '/runtime/browser/Cindy-real/user-data',
+      sourceKind: 'chrome',
+      sourceProfile: 'Default',
+      filesCopied: ['Cookies'],
+      warnings: [{ database: 'Login Data', reason: 'locked' }],
+    });
+    const wrapped = wrapRuntimeWithRealProfile(
+      {
+        async call(request) {
+          if (request.action === 'status')
+            return result(
+              'status',
+              running
+                ? { running: true, pid: 1234, userDataDir: '/runtime/browser/Cindy-real/user-data' }
+                : { running: false },
+            );
+          running = true;
+          return result(request.action, {});
+        },
+      },
+      {
+        isEnabled: () => true,
+        getRuntimeDir: () => '/runtime',
+        applyConfig: vi.fn(),
+        resolveSource: () => chrome,
+        snapshot,
+        cleanup: vi.fn(),
+        pickCdpPort: pick18800,
+      },
+    );
+    await wrapped.call({ action: 'start' });
+    expect((await wrapped.call({ action: 'start' })).message).toContain('Login Data');
+    expect((await wrapped.call({ action: 'navigate' })).message).toBeUndefined();
+    expect(snapshot).toHaveBeenCalledOnce();
+  });
+
   it('snapshots then starts when consent is on and the browser is stopped', async () => {
     const inner = fakeInner({ running: false, starts: 0 });
     const applyConfig = vi.fn();

@@ -6673,7 +6673,7 @@ interface ElectronAPI {
     };
     browser: {
       status: () => Promise<BrowserAvailability>;
-      openForLogin: () => Promise<{ launched: boolean }>;
+      openForLogin: () => Promise<import('../shared/browserBackend').BrowserOpenForLoginResult>;
     };
     android: {
       status: () => Promise<AndroidStatusSummary>;

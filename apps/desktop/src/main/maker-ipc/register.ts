@@ -17693,8 +17693,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // Launch the headed automation browser + open a blank tab so the user logs in once.
   ipcMain.handle(MAKER_INVOKE.BROWSER_OPEN_FOR_LOGIN, async () => {
     try {
-      await openBrowserForLogin();
-      return { launched: true };
+      return await openBrowserForLogin();
     } catch (err) {
       if (isBrowserOpenForLoginError(err)) {
         throwIpcError(err.code, err.code);
