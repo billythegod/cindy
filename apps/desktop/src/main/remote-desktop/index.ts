@@ -474,12 +474,15 @@ export function registerRemoteDesktopIpc(
   });
   screen.on('display-metrics-changed', (_event, display, metrics) => {
     if (remoteDesktop.changingDisplay) return;
-    // Work-area changes (lock screen, Dock/menu bar, display wake) do not
-    // change whole-screen input coordinates and must not terminate the lease.
+    // Managed resolution changes can deliver scaleFactor after preparation
+    // finishes. Matching logical geometry keeps input coordinates valid;
+    // rotation still invalidates the lease, even for an unchanged size.
     if (
       String(display.id) === remoteDesktop.displayId &&
       !(
-        metrics.every((metric) => metric === 'bounds' || metric === 'workArea') &&
+        metrics.every(
+          (metric) => metric === 'bounds' || metric === 'workArea' || metric === 'scaleFactor',
+        ) &&
         remoteDesktop.displayGeometryMatches(
           String(display.id),
           display.size.width,

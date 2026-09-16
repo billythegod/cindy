@@ -3,6 +3,8 @@ import { DESKTOP_LOCAL } from '../../../shared/remoteDesktop';
 
 const h = vi.hoisted(() => ({
   handlers: new Map<string, any>(),
+  screenHandlers: new Map<string, any>(),
+  geometryMatches: vi.fn(() => true),
   windows: [] as any[],
   deps: null as any,
   permissionDeps: null as any,
@@ -40,7 +42,10 @@ vi.mock('electron', () => ({
   powerMonitor: { on: vi.fn() },
   shell: {},
   nativeImage: {},
-  screen: { on: vi.fn(), getAllDisplays: () => [{ id: 1 }] },
+  screen: {
+    on: (name: string, handler: any) => h.screenHandlers.set(name, handler),
+    getAllDisplays: () => [{ id: 1 }],
+  },
   systemPreferences: { getMediaAccessStatus: () => 'granted' },
   desktopCapturer: {
     getSources: () => h.source ?? Promise.resolve([{ id: 'screen:1', display_id: '1' }]),
@@ -97,6 +102,9 @@ vi.mock('../controller', () => ({
       h.deps = deps;
     }
     state = null;
+    displayId = '1';
+    changingDisplay = false;
+    displayGeometryMatches = h.geometryMatches;
     hasLease(value: string) {
       return value === h.lease;
     }
@@ -176,6 +184,8 @@ const offer = () =>
 beforeEach(() => {
   vi.useFakeTimers();
   h.handlers.clear();
+  h.screenHandlers.clear();
+  h.geometryMatches.mockReset().mockReturnValue(true);
   h.windows.length = 0;
   h.source = null;
   h.lease = 'lease';
@@ -239,6 +249,35 @@ it.each(['resolution', 'restoreResolution'])(
     expect(settled).toHaveBeenCalledOnce();
   },
 );
+
+it.each([
+  ['scaleFactor'],
+  ['bounds', 'scaleFactor'],
+  ['bounds', 'workArea', 'scaleFactor'],
+])('keeps managed geometry after late display metrics %j', (...metrics) => {
+  h.screenHandlers.get('display-metrics-changed')(
+    {},
+    { id: 1, size: { width: 1920, height: 1080 } },
+    metrics,
+  );
+  expect(h.geometryMatches).toHaveBeenCalledWith('1', 1920, 1080);
+  expect(h.stop).not.toHaveBeenCalled();
+});
+
+it.each([
+  [true, ['rotation']],
+  [true, ['scaleFactor', 'rotation']],
+  [false, ['scaleFactor']],
+  [false, ['bounds', 'scaleFactor']],
+])('stops on rotation or unmatched geometry (%s, %j)', (matches, metrics) => {
+  h.geometryMatches.mockReturnValue(matches);
+  h.screenHandlers.get('display-metrics-changed')(
+    {},
+    { id: 1, size: { width: 1920, height: 1080 } },
+    metrics,
+  );
+  expect(h.stop).toHaveBeenCalledOnce();
+});
 
 it('joins resolution restoration through the shared asynchronous quit phase', async () => {
   const cleanup = h.quit.get('remote-desktop-restore')!;
