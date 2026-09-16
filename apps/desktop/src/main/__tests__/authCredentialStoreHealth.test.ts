@@ -92,10 +92,32 @@ describe('authCredentialStoreHealth', () => {
  * authSessionExpiredDetection.test.ts 的源码守卫模式)。
  */
 describe('authManager credential-store escalation wiring', () => {
-  const authSource = readFileSync(resolve(process.cwd(), 'src/main/authManager.ts'), 'utf8').replace(
-    /\r\n/g,
-    '\n',
-  );
+  const authSource = readFileSync(
+    resolve(process.cwd(), 'src/main/authManager.ts'),
+    'utf8',
+  ).replace(/\r\n/g, '\n');
+
+  it('keeps explicit login available for corrupt vaults when encryption is healthy', () => {
+    const expression = authSource.match(
+      /'cold-start-credential-reconcile-unavailable',\s*([\s\S]*?),\s*\);/,
+    )?.[1];
+    expect(expression).toBeDefined();
+    class AuthApiError extends Error {
+      constructor(public code: string) {
+        super(code);
+      }
+    }
+    const classify = new Function(
+      'credentialEncryptionUnavailable',
+      'error',
+      'AuthApiError',
+      `return (${expression});`,
+    );
+    const unavailable = new AuthApiError('CREDENTIAL_STORE_UNAVAILABLE');
+    expect(classify(false, unavailable, AuthApiError)).toBe(false);
+    expect(classify(true, unavailable, AuthApiError)).toBe(true);
+    expect(classify(true, new Error('unrelated'), AuthApiError)).toBe(false);
+  });
 
   it('retains startup failure across all owner cleanup paths and exposes it before loading providers', () => {
     const recovery = authSource.slice(
@@ -103,14 +125,29 @@ describe('authManager credential-store escalation wiring', () => {
       authSource.indexOf('interface CloudOwnerDataReservation'),
     );
     // Passive, normal commit and failed cleanup must all retain the same cause.
-    expect(recovery.match(/credentialStoreUnavailable: opts\.credentialStoreUnavailable/g)).toHaveLength(3);
-    expect(recovery).toContain('if (credentialStoreUnavailable) credentialStoreHealth.noteStartupFailure();');
-    const clear = authSource.slice(authSource.indexOf('function clearAuth('), authSource.indexOf('// ── Public API'));
-    expect(clear.indexOf('credentialStoreHealth.noteStartupFailure()'))
-      .toBeGreaterThan(clear.indexOf('credentialStoreHealth.reset()'));
-    const login = authSource.slice(authSource.indexOf('export async function getLoginState()'), authSource.indexOf('async function completeLogin('));
-    expect(login.indexOf('credentialStoreHealth.unavailable')).toBeLessThan(login.indexOf('await loadLoginProviders'));
-    expect(login).toContain("state: { step: 'error', code: 'CREDENTIAL_STORE_UNAVAILABLE', recoverTo: 'identifier' }");
+    expect(
+      recovery.match(/credentialStoreUnavailable: opts\.credentialStoreUnavailable/g),
+    ).toHaveLength(3);
+    expect(recovery).toContain(
+      'if (credentialStoreUnavailable) credentialStoreHealth.noteStartupFailure();',
+    );
+    const clear = authSource.slice(
+      authSource.indexOf('function clearAuth('),
+      authSource.indexOf('// ── Public API'),
+    );
+    expect(clear.indexOf('credentialStoreHealth.noteStartupFailure()')).toBeGreaterThan(
+      clear.indexOf('credentialStoreHealth.reset()'),
+    );
+    const login = authSource.slice(
+      authSource.indexOf('export async function getLoginState()'),
+      authSource.indexOf('async function completeLogin('),
+    );
+    expect(login.indexOf('credentialStoreHealth.unavailable')).toBeLessThan(
+      login.indexOf('await loadLoginProviders'),
+    );
+    expect(login).toContain(
+      "state: { step: 'error', code: 'CREDENTIAL_STORE_UNAVAILABLE', recoverTo: 'identifier' }",
+    );
   });
 
   it('transient-unreadable 分支喂失败计数并在翻转时广播,但仍保持瞬时语义', () => {

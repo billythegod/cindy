@@ -4562,7 +4562,9 @@ export async function initialize(options: AuthInitializeOptions = {}): Promise<A
     );
     return finishColdStartSignedOut(
       'cold-start-credential-reconcile-unavailable',
-      error instanceof AuthApiError && error.code === 'CREDENTIAL_STORE_UNAVAILABLE',
+      credentialEncryptionUnavailable &&
+        error instanceof AuthApiError &&
+        error.code === 'CREDENTIAL_STORE_UNAVAILABLE',
     );
   }
   if (!persistedSession) {
@@ -5302,7 +5304,8 @@ async function runLoginAction(action: DesktopLoginAction): Promise<DesktopLoginA
       }
       if (confirmation.personalLoginAvailable) {
         const personal = pendingPersonalLogin;
-        if (!personal) throw new AuthApiError('INVALID_AUTH_ACTION', 400, 'Personal login unavailable');
+        if (!personal)
+          throw new AuthApiError('INVALID_AUTH_ACTION', 400, 'Personal login unavailable');
         pendingAuthRealm = personal.realm;
         const state = await completeLogin(personal.outcome, actionLoginFlowEpoch);
         pendingPersonalLogin = null;
