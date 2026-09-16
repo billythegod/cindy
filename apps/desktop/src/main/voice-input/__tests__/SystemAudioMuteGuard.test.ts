@@ -6,6 +6,7 @@ vi.mock('../../logger.js', () => ({ createLogger: () => ({ info: vi.fn(), warn: 
 
 beforeEach(() => {
   vi.resetModules();
+  vi.doMock('loudness', () => ({ default: audio }));
   vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
   audio.getMuted.mockReset().mockResolvedValue(false);
   audio.setMuted.mockReset().mockResolvedValue(undefined);
@@ -39,4 +40,16 @@ it('allows a failed last-owner restore to be retried without another mute', asyn
   await expect(guard.restore(1)).rejects.toThrow();
   await guard.restore(1);
   expect(audio.setMuted.mock.calls).toEqual([[true], [false], [false]]);
+});
+
+it('rejects mute when the Windows backend cannot load, including cached failures', async () => {
+  vi.doMock('loudness', () => {
+    throw new Error('module missing');
+  });
+  const { SystemAudioMuteGuard } = await import('../SystemAudioMuteGuard');
+  const guard = new SystemAudioMuteGuard();
+  await expect(guard.mute(1)).rejects.toThrow('SYSTEM_AUDIO_UNAVAILABLE');
+  await expect(guard.mute(2)).rejects.toThrow('SYSTEM_AUDIO_UNAVAILABLE');
+  expect(audio.getMuted).not.toHaveBeenCalled();
+  expect(audio.setMuted).not.toHaveBeenCalled();
 });

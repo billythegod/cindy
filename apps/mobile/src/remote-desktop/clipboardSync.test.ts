@@ -370,3 +370,61 @@ describe("automatic clipboard synchronization", () => {
     expect(h.write).not.toHaveBeenCalled();
   });
 });
+
+it.each(["local", "remote"] as const)(
+  "keeps the other digest after skipping an unsupported %s version",
+  async (failed) => {
+    const h = harness();
+    await h.engine.tick();
+    h[failed]("2");
+    if (failed === "local") {
+      vi.mocked(h.deps.readLocal).mockRejectedValueOnce(
+        new Error("CLIPBOARD_UNSUPPORTED"),
+      );
+    } else {
+      const original = h.request.getMockImplementation()!;
+      h.request.mockImplementation(async (message) => {
+        if (message.op === "clipboardContent" && message.action === "copy")
+          throw new Error("CLIPBOARD_UNSUPPORTED");
+        return original(message);
+      });
+    }
+    await h.engine.tick();
+    const other = failed === "local" ? "remote" : "local";
+    h[other]("4", JSON.stringify({ text: `${other}-1` }));
+    await h.engine.tick();
+    expect(h.write).not.toHaveBeenCalled();
+    expect(
+      h.request.mock.calls.some(
+        ([r]) => r.op === "clipboardContent" && r.action === "commit",
+      ),
+    ).toBe(false);
+    h[other]("5");
+    await h.engine.tick();
+    expect(
+      h.write.mock.calls.length +
+        h.request.mock.calls.filter(
+          ([r]) => r.op === "clipboardContent" && r.action === "commit",
+        ).length,
+    ).toBe(1);
+  },
+);
+it("retains a successfully read new local digest when the remote read is unsupported", async () => {
+  const h = harness();
+  const baseline: ClipboardSyncBaseline = { local: "", remote: "" };
+  const engine = new ClipboardSync(h.deps, baseline);
+  await engine.tick();
+  h.local("2");
+  h.remote("2");
+  const original = h.request.getMockImplementation()!;
+  h.request.mockImplementation(async (message) => {
+    if (message.op === "clipboardContent" && message.action === "copy")
+      throw new Error("CLIPBOARD_UNSUPPORTED");
+    return original(message);
+  });
+  await engine.tick();
+  expect(baseline.localDigest).toBe(
+    clipboardDigest(JSON.stringify({ text: "local-2" })),
+  );
+  expect(baseline.remoteDigest).toBeUndefined();
+});

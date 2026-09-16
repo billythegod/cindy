@@ -28,9 +28,10 @@ async function loadLoudness(): Promise<LoudnessModule | null> {
   if (loudnessCache !== undefined) return loudnessCache;
   try {
     const mod = await import('loudness');
-    loudnessCache = ((mod as { default?: LoudnessModule }).default ?? (mod as unknown as LoudnessModule));
+    loudnessCache =
+      (mod as { default?: LoudnessModule }).default ?? (mod as unknown as LoudnessModule);
   } catch (err) {
-    log.warn('failed to load loudness on Windows; voice input mute will be no-op', {
+    log.warn('failed to load loudness on Windows', {
       error: err instanceof Error ? err.message : String(err),
     });
     loudnessCache = null;
@@ -103,7 +104,9 @@ export class SystemAudioMuteGuard {
   private enqueue(job: () => Promise<void>): Promise<void> {
     const next = this.tail.then(job, job);
     this.tail = next.catch((error) => {
-      log.warn('system audio mute job failed', { error: error instanceof Error ? error.message : String(error) });
+      log.warn('system audio mute job failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
     return next;
   }
@@ -135,7 +138,7 @@ async function readOutputMuted(): Promise<boolean> {
   }
   if (process.platform === 'win32') {
     const l = await loadLoudness();
-    if (!l) return false;
+    if (!l) throw new Error('SYSTEM_AUDIO_UNAVAILABLE');
     return l.getMuted();
   }
   return false;
@@ -143,12 +146,14 @@ async function readOutputMuted(): Promise<boolean> {
 
 async function setOutputMuted(muted: boolean): Promise<void> {
   if (process.platform === 'darwin') {
-    await runOsascript([muted ? 'set volume with output muted' : 'set volume without output muted']);
+    await runOsascript([
+      muted ? 'set volume with output muted' : 'set volume without output muted',
+    ]);
     return;
   }
   if (process.platform === 'win32') {
     const l = await loadLoudness();
-    if (!l) return;
+    if (!l) throw new Error('SYSTEM_AUDIO_UNAVAILABLE');
     await l.setMuted(muted);
     return;
   }

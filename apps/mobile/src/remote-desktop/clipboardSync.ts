@@ -240,6 +240,8 @@ export class ClipboardSync {
     this.pending = true;
     let local: string | undefined;
     let remote: string | undefined;
+    let readLocalDigest: string | undefined;
+    let readRemoteDigest: string | undefined;
     try {
       this.check();
       local = await this.deps.localVersion();
@@ -289,10 +291,16 @@ export class ClipboardSync {
       let remoteChanged = remote !== this.baseline.remote;
       if (!localChanged && !remoteChanged) return;
       const localContent = localChanged
-        ? await this.readLocal(local)
+        ? await this.readLocal(local).then((content) => {
+            readLocalDigest = content.digest;
+            return content;
+          })
         : undefined;
       const remoteContent = remoteChanged
-        ? await this.readRemote(remote)
+        ? await this.readRemote(remote).then((content) => {
+            readRemoteDigest = content.digest;
+            return content;
+          })
         : undefined;
       this.check();
       if ((await this.deps.localVersion()) !== local)
@@ -362,8 +370,16 @@ export class ClipboardSync {
         Object.assign(this.baseline, {
           local,
           remote,
-          localDigest: undefined,
-          remoteDigest: undefined,
+          // Keep evidence for an unchanged or successfully read peer. Only
+          // an unreadable new version loses its digest, never both peers.
+          localDigest:
+            local === this.baseline.local
+              ? this.baseline.localDigest
+              : readLocalDigest,
+          remoteDigest:
+            remote === this.baseline.remote
+              ? this.baseline.remoteDigest
+              : readRemoteDigest,
         });
         this.deps.trace?.("content-skipped");
         return;
