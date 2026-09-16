@@ -87,6 +87,7 @@ export class PrivacyScreen {
     if (!current()) throw new Error('DESKTOP_LEASE_EXPIRED');
     if (this.windows.length) return;
     const generation = ++this.generation;
+    const created: BrowserWindow[] = [];
     const partition = session.fromPartition('cindy-desktop-privacy', { cache: false });
     if (!this.partitionConfigured) {
       partition.setPermissionCheckHandler(() => false);
@@ -135,7 +136,8 @@ export class PrivacyScreen {
             devTools: false,
           },
         });
-        this.windows.push(window);
+        created.push(window);
+        if (generation === this.generation) this.windows.push(window);
         window.setMenuBarVisibility(false);
         await window.loadURL(
           `data:text/html;charset=utf-8,${encodeURIComponent(privacyScreenHtml(t('privacyExit.status'), t('privacyExit.hint')))}`,
@@ -197,6 +199,9 @@ export class PrivacyScreen {
       }
     } catch (error) {
       if (generation === this.generation) this.stop();
+      else {
+        for (const window of created) if (!window.isDestroyed()) window.destroy();
+      }
       throw error;
     }
   }

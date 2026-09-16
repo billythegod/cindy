@@ -63,7 +63,7 @@ export interface DesktopControllerDeps {
   privacyScreen?(enabled: boolean, isCurrent: () => boolean): Promise<void>;
   stopPrivacyScreen?(): void;
   hostMute?(enabled: boolean): Promise<void>;
-  stopHostMute?(): void;
+  stopHostMute?(): Promise<void>;
   changed(): void;
   now?: () => number;
 }
@@ -92,13 +92,13 @@ export class RemoteDesktopController {
   private privacyGeneration = 0;
   private privacyOperation: { enabled: boolean; promise: Promise<{ enabled: boolean }> } | null =
     null;
-  private clearSafety(): void {
+  private async clearSafety(): Promise<void> {
     this.privacyGeneration++;
     this.privacyOperation = null;
     this.syncGeneration++;
     if (this.active) this.active.clipboardSync = false;
     this.deps.stopPrivacyScreen?.();
-    this.deps.stopHostMute?.();
+    await this.deps.stopHostMute?.();
   }
   private clipboardTransfer = new ClipboardTransfer();
   private lastFrame = -Infinity;
@@ -392,7 +392,7 @@ export class RemoteDesktopController {
         active.backgroundViewing = request.enabled;
         if (request.enabled) {
           active.controlling = false;
-          this.clearSafety();
+          await this.clearSafety();
           this.clipboardTransfer.reset();
           this.controlGeneration++;
           this.deps.stopInput();
@@ -408,7 +408,7 @@ export class RemoteDesktopController {
         const generation = ++this.controlGeneration;
         if (!request.enabled) {
           active.controlling = false;
-          this.clearSafety();
+          await this.clearSafety();
           this.deps.stopInput();
         } else if (!active.controlling) {
           this.inputStarting = true;

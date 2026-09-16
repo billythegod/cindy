@@ -455,7 +455,7 @@ export const remoteDesktop = new RemoteDesktopController({
     if (enabled) await systemAudioMuteGuard.mute(0xc1d0);
     else await systemAudioMuteGuard.restore(0xc1d0);
   },
-  stopHostMute: () => void systemAudioMuteGuard.restore(0xc1d0),
+  stopHostMute: () => systemAudioMuteGuard.restore(0xc1d0),
   displayModes: readDesktopDisplayModes,
   resolution: setDesktopDisplayMode,
   startInput: (displayId) => input.start(displayId),
