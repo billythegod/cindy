@@ -198,17 +198,59 @@ pub(crate) fn retain_update_lock_file(lock: UpdateLock) {
     drop(lock._file);
 }
 
+fn lock_file_owned_by_this_process(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .map(|contents| contents == format!("updating {}\n", std::process::id()))
+        .unwrap_or(false)
+}
+
 /// Close / abandon Retry must delete a retained `.updating` file. Cindy's
 /// startup lock loop cannot tell this leftover from a live updater and would
 /// otherwise wait the full 30s timeout. Only delete a lock this process wrote;
 /// a second updater that lost acquisition must not remove the first instance's
 /// mutex by pathname.
 pub(crate) fn release_abandoned_update_lock(path: &Path) {
-    let Ok(contents) = fs::read_to_string(path) else {
+    if lock_file_owned_by_this_process(path) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+pub(crate) fn should_relaunch_after_abandoning_retry(
+    can_retry: bool,
+    retry_in_progress: bool,
+) -> bool {
+    can_retry && !retry_in_progress
+}
+
+pub(crate) fn restored_app_relaunch_path(args: &CliArgs) -> Option<PathBuf> {
+    let exe = args.app_dir.join(&args.exe_name);
+    exe.exists().then_some(exe)
+}
+
+fn relaunch_restored_app(args: &CliArgs) {
+    let Some(exe) = restored_app_relaunch_path(args) else {
         return;
     };
-    if contents == format!("updating {}\n", std::process::id()) {
-        let _ = fs::remove_file(path);
+    match launch_detached(&exe) {
+        Ok(()) => logger::info(format!(
+            "[installer] relaunched restored exe after abandoning Retry at {}",
+            exe.display()
+        )),
+        Err(error) => logger::warn(format!(
+            "[installer] relaunch of restored exe after abandoning Retry failed: {error}"
+        )),
+    }
+}
+
+/// User closed the failure window instead of Retry. Drop this process's
+/// retained lock, then relaunch the restored Cindy if Retry had kept it closed.
+/// A second updater that never owned the lock must not relaunch or delete it.
+/// `quit_now` plus `Destroyed` both call this; only the owner relaunches once.
+pub(crate) fn abandon_retry(args: &CliArgs, can_retry: bool, retry_in_progress: bool) {
+    let owned = lock_file_owned_by_this_process(&args.lock);
+    release_abandoned_update_lock(&args.lock);
+    if owned && should_relaunch_after_abandoning_retry(can_retry, retry_in_progress) {
+        relaunch_restored_app(args);
     }
 }
 
@@ -1376,8 +1418,9 @@ mod tests {
         finalize_retry_state, may_self_elevate, path_is_within, pre_elevation_failure_can_retry,
         prepare_retry_archive, release_abandoned_update_lock, release_update_lock, remove_staging_dir,
         retain_update_lock_file, retry_allowed, retry_args, retry_available, retry_cli_args,
-        retry_request_allowed, rollback, run, should_relaunch_after_rollback, staging_dirs,
-        staging_dirs_for, uses_protected_staging, Phase,
+        retry_request_allowed, rollback, run, should_relaunch_after_abandoning_retry,
+        should_relaunch_after_rollback, staging_dirs, staging_dirs_for, uses_protected_staging,
+        Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use sha2::Digest;
@@ -1653,6 +1696,39 @@ mod tests {
     fn retryable_rollback_does_not_relaunch_cindy() {
         assert!(!should_relaunch_after_rollback(true));
         assert!(should_relaunch_after_rollback(false));
+    }
+
+    #[test]
+    fn abandoning_retry_relaunches_the_restored_app() {
+        assert!(
+            should_relaunch_after_abandoning_retry(true, false),
+            "Close after a retryable rollback must relaunch the restored Cindy"
+        );
+        assert!(
+            !should_relaunch_after_abandoning_retry(true, true),
+            "do not relaunch while an in-process Retry is still replacing files"
+        );
+        assert!(
+            !should_relaunch_after_abandoning_retry(false, false),
+            "non-retryable failures already relaunched or never left Cindy closed for Retry"
+        );
+
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.app_dir = temp.0.join("app");
+        args.lock = temp.0.join(".updating");
+        fs::create_dir(&args.app_dir).unwrap();
+        let exe = args.app_dir.join(&args.exe_name);
+        fs::write(&exe, b"cindy").unwrap();
+        let held = acquire_update_lock(&args.lock).expect("retain lock while Retry is available");
+        retain_update_lock_file(held);
+
+        assert_eq!(super::restored_app_relaunch_path(&args).as_ref(), Some(&exe));
+        super::abandon_retry(&args, true, false);
+        assert!(
+            !args.lock.exists(),
+            "abandoning Retry still deletes this process's retained .updating"
+        );
     }
 
     #[test]

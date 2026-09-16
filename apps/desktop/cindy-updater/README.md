@@ -131,7 +131,9 @@ A successful rollback retains the isolated zip for retry and does not relaunch
 Cindy while Retry remains available. The exclusive `.updating` lock stays on
 disk for that window so a second updater cannot start from `%TEMP%`. Close, or
 any other abandoned Retry exit, deletes that file so the next Cindy launch does
-not wait 30 seconds. Failures before UAC on a protected install directory do not
+not wait 30 seconds, then relaunches the restored Cindy — the concurrency
+reason for keeping it closed no longer applies. A second updater that never
+owned the lock does not relaunch or delete it. Failures before UAC on a protected install directory do not
 offer Retry. A successful update still removes its zip. If rollback fails, Retry
 is unavailable and the backup directory is preserved for manual recovery. Stale
 temporary directories retain

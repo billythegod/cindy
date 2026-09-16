@@ -55,7 +55,9 @@ fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn quit_now(app: AppHandle, state: State<'_, AppState>) {
-    installer::release_abandoned_update_lock(&state.args.lock);
+    let can_retry = state.last_status.lock().unwrap().can_retry;
+    let retry_in_progress = *state.retry_started.lock().unwrap();
+    installer::abandon_retry(&state.args, can_retry, retry_in_progress);
     app.exit(0);
 }
 
@@ -165,10 +167,13 @@ pub fn run() {
             // when --theme=dark — because both the win32 surface and the
             // WebView default to white until HTML/CSS lands.
             if let Some(w) = win.as_ref() {
-                let lock_path = app.state::<AppState>().args.lock.clone();
+                let handle = app.handle().clone();
                 w.on_window_event(move |event| {
                     if matches!(event, tauri::WindowEvent::Destroyed) {
-                        installer::release_abandoned_update_lock(&lock_path);
+                        let state = handle.state::<AppState>();
+                        let can_retry = state.last_status.lock().unwrap().can_retry;
+                        let retry_in_progress = *state.retry_started.lock().unwrap();
+                        installer::abandon_retry(&state.args, can_retry, retry_in_progress);
                     }
                 });
                 let resolved = match app.state::<AppState>().args.theme {
@@ -240,13 +245,12 @@ mod retry_update_contract {
             .expect("retry_update follows quit_now");
         let body = &source[start..start + end];
         assert!(
-            body.contains("release_abandoned_update_lock"),
-            "Close must delete a retained .updating file:\n{body}"
+            body.contains("abandon_retry"),
+            "Close must abandon Retry (release lock and relaunch restored Cindy):\n{body}"
         );
         assert!(
-            source.contains("WindowEvent::Destroyed")
-                && source.contains("release_abandoned_update_lock"),
-            "closing the updater window must also delete a retained .updating file"
+            source.contains("WindowEvent::Destroyed") && source.contains("abandon_retry"),
+            "closing the updater window must also abandon Retry"
         );
         assert!(
             !body.contains("current_exe")
