@@ -637,6 +637,12 @@ use grant-scoped cache files. A later successful image write removes files older
 than one hour, preserving every URI still referenced by the current clipboard;
 failed preparation/publication never removes an earlier image.
 
+Desktop manual copy, automatic reads and write verification share a 4 million
+pixel check before native PNG encoding. PNG buffers over 8 MiB are rejected before
+Base64/hash copies. Incoming PNGs have encoded-length, byte and dimension checks
+before native decoding. The pixel limit bounds encoding work; Electron still
+allocates the PNG buffer before its byte length can be checked.
+
 ### Opt-in Mobile clipboard synchronization
 
 On supported peers, the security options can enable clipboard synchronization

@@ -9,6 +9,45 @@ import {
 } from '@cindy/device-link';
 import { readDesktopClipboardVersion, readDesktopSelection } from './inputHost';
 
+const IMAGE_BYTES = 8 * 1024 * 1024;
+const IMAGE_PIXELS = 4_000_000;
+
+function checkImageSize(width: number, height: number): void {
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    width > IMAGE_PIXELS / height
+  )
+    throw new Error('CLIPBOARD_TOO_LONG');
+}
+
+/** Bound native encoding before PNG allocation, and Base64/hash copies afterwards. */
+function clipboardPng(image: Electron.NativeImage): Buffer {
+  if (image.isEmpty()) return Buffer.alloc(0);
+  const size = image.getSize(1);
+  checkImageSize(size.width, size.height);
+  const png = image.toPNG({ scaleFactor: 1 });
+  if (png.length > IMAGE_BYTES) throw new Error('CLIPBOARD_TOO_LONG');
+  return png;
+}
+
+function incomingPng(encoded: string): Buffer {
+  if (encoded.length > Math.ceil(IMAGE_BYTES / 3) * 4) throw new Error('CLIPBOARD_TOO_LONG');
+  const bytes = Buffer.from(encoded, 'base64');
+  if (bytes.length > IMAGE_BYTES) throw new Error('CLIPBOARD_TOO_LONG');
+  if (
+    bytes.length < 33 ||
+    !bytes
+      .subarray(0, 16)
+      .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]))
+  )
+    throw new Error('CLIPBOARD_UNSUPPORTED');
+  checkImageSize(bytes.readUInt32BE(16), bytes.readUInt32BE(20));
+  return bytes;
+}
+
 /** Explicit selection/text transfer. No background sync, logging or persistence. */
 export async function transferDesktopClipboard(
   action: 'copy' | 'paste',
@@ -95,9 +134,7 @@ export async function transferDesktopClipboardContent(
     if (html) snapshot.html = html;
     if (rtf) snapshot.rtf = rtf;
     if (!image.isEmpty()) {
-      const size = image.getSize();
-      if (size.width * size.height > 64_000_000) throw new Error('CLIPBOARD_TOO_LONG');
-      snapshot.png = image.toPNG().toString('base64');
+      snapshot.png = clipboardPng(image).toString('base64');
     }
     const after = await readDesktopClipboardVersion(true);
     check();
@@ -109,14 +146,11 @@ export async function transferDesktopClipboardContent(
     return parseClipboardContent(json);
   }
   if (!content) throw new Error('CLIPBOARD_EMPTY');
+  const pngBytes = content.png ? incomingPng(content.png) : undefined;
   const value = parseClipboardContent(JSON.stringify(content));
   let image: Electron.NativeImage | undefined;
   if (value.png) {
-    const bytes = Buffer.from(value.png, 'base64');
-    // Bound decompression before passing untrusted image bytes to nativeImage.
-    if (bytes.length < 24 || bytes.readUInt32BE(16) * bytes.readUInt32BE(20) > 64_000_000)
-      throw new Error('CLIPBOARD_TOO_LONG');
-    image = nativeImage.createFromBuffer(bytes);
+    image = nativeImage.createFromBuffer(pngBytes!);
     if (image.isEmpty()) throw new Error('CLIPBOARD_UNSUPPORTED');
   }
   const version = await readDesktopClipboardVersion();
@@ -145,7 +179,7 @@ export async function transferDesktopClipboardContent(
             clipboard.readRTF(),
           ]),
         )
-        .update(clipboard.readImage().toPNG())
+        .update(clipboardPng(clipboard.readImage()))
         .digest('hex');
     const written = fingerprint();
     const version = await readDesktopClipboardVersion(true);
