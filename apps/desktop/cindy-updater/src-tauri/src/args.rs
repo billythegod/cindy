@@ -54,7 +54,7 @@ pub struct CliArgs {
     #[arg(long, default_value_t = false)]
     pub elevated: bool,
 
-    /// SHA-256 of the zip this updater process first opened. Elevation and
+    /// Manifest SHA-256 supplied by the Electron main process. Elevation and
     /// retry pass the same digest so a later replacement of the TEMP file
     /// cannot be extracted by a still-elevated child.
     #[arg(long = "zip-sha256")]

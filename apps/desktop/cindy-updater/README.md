@@ -42,6 +42,7 @@ that the Electron main process previously generated in `executeUpdateWindows`
 ```
 cindy-updater.exe \
   --zip       <path-to-downloaded-patch.zip> \
+  --zip-sha256 <verified-manifest-sha256> \
   --app-dir   <electron-install-dir> \
   --exe-name  Cindy.exe \
   --pid       <main-process-pid> \
@@ -57,7 +58,10 @@ on a light OS who has selected dark mode in Cindy would briefly see a
 light updater window.
 
 The Electron main process owns argument construction; see
-`executeUpdateWindows`.
+`executeUpdateWindows`. It passes the SHA-256 from the verified update manifest
+through `--zip-sha256`. The updater fails closed when that digest is missing or
+the archive does not match it, and forwards the same value through elevation
+and manual Retry.
 
 ### Logging
 
@@ -89,14 +93,17 @@ prevents the restored app from automatically applying the same failed archive.
 If the move fails, Retry is unavailable.
 
 Retry is never automatic: Rust rechecks the failure state and readable archive,
-then starts a new updater using trusted Rust-owned arguments. The first process
-captures the zip SHA-256 before constructing retry state, then passes it through
-elevation and retry; extract reopens that same file handle only after the digest
-still matches. A TEMP replacement after failure cannot be installed. If the
-isolated archive is later missing, unreadable, or no longer matches, Retry stays
-hidden and the failure window only keeps the check-for-updates guidance. Only the
-archive path and PID change: the retry uses the isolated zip and does not wait on
-the original, potentially stale PID. The WebView cannot supply paths or commands.
+then starts a new updater using trusted Rust-owned arguments. Electron supplies
+the SHA-256 from the verified update manifest; Rust verifies it before the first
+attempt and passes it through elevation and retry. Extraction hashes and consumes
+the same protected file handle only after the digest still matches. A TEMP
+replacement after failure cannot be installed. If the isolated archive is later
+missing, unreadable, or no longer matches, Retry stays hidden and the failure
+window only keeps the check-for-updates guidance. Deterministically malformed or
+unsupported ZIP formats also do not offer Retry; transient archive I/O failures
+remain eligible. Only the archive path and PID change: the retry uses the isolated
+zip and does not wait on the original, potentially stale PID. The WebView cannot
+supply paths or commands.
 When the updater is already elevated, extract and backup staging live under the
 install directory instead of the unelevated `%TEMP%` workdir, so a same-login
 medium-integrity process cannot replace extracted files before they are copied.
@@ -136,6 +143,7 @@ For testing the updater UI without running an actual update, pass dummy args:
 ```
 cargo run -- \
   --zip path/to/anything.zip \
+  --zip-sha256 <sha256-of-anything.zip> \
   --app-dir C:\Temp\fake-app \
   --exe-name notepad.exe \
   --pid 0 \

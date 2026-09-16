@@ -141,18 +141,20 @@ pub(crate) fn archive_matches_digest(zip: &Path, expected: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Capture the digest of the zip this process first opened. Later elevation
-/// and retry reuse that digest so a TEMP replacement cannot be extracted.
+/// Verify the archive against the manifest digest supplied by Electron. Later
+/// elevation and retry reuse that digest so a TEMP replacement cannot be extracted.
 pub(crate) fn bind_zip_sha256(args: &mut CliArgs) -> Result<String, String> {
+    let expected = args
+        .zip_sha256
+        .as_deref()
+        .filter(|digest| !digest.is_empty())
+        .ok_or_else(|| "archive_unavailable".to_string())?;
     let mut file = open_regular_file(&args.zip).map_err(|_| "archive_unavailable".to_string())?;
     let digest = sha256_hex(&mut file).map_err(|_| "archive_unavailable".to_string())?;
-    match args.zip_sha256.as_deref() {
-        Some(expected) if expected.eq_ignore_ascii_case(&digest) => Ok(digest),
-        Some(_) => Err("archive_unavailable".into()),
-        None => {
-            args.zip_sha256 = Some(digest.clone());
-            Ok(digest)
-        }
+    if expected.eq_ignore_ascii_case(&digest) {
+        Ok(digest)
+    } else {
+        Err("archive_unavailable".into())
     }
 }
 
@@ -400,7 +402,10 @@ fn run_inner<F: FnMut(InstallerEvent)>(
             pct,
         ));
     })
-    .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
+    .map_err(|error| {
+        let can_retry = extract_error_can_retry(&error);
+        InstallerFailure::new(error.to_string(), can_retry)
+    })?;
 
     // 3.5. Selective backup: copy *only* the files in app_dir that the new
     //      release is about to overwrite. Files that exist in the old version
@@ -640,6 +645,18 @@ fn workdir_ts(workdir: &Path) -> String {
         .and_then(|n| n.strip_prefix("cindy-update-").or_else(|| n.strip_prefix("xdt-update-")))
         .map(|s| s.to_string())
         .unwrap_or_else(|| chrono::Local::now().timestamp_millis().to_string())
+}
+
+fn extract_error_can_retry(error: &anyhow::Error) -> bool {
+    !error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<zip::result::ZipError>(),
+            Some(
+                zip::result::ZipError::InvalidArchive(_)
+                    | zip::result::ZipError::UnsupportedArchive(_)
+            )
+        )
+    })
 }
 
 fn extract_zip<F: FnMut(u64, u64)>(
@@ -969,11 +986,12 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        archive_matches_digest, bind_zip_sha256, path_is_within, prepare_retry_archive,
-        remove_staging_dir, retry_allowed, retry_available, retry_cli_args, retry_request_allowed,
-        rollback, staging_dirs, Phase,
+        archive_matches_digest, bind_zip_sha256, extract_error_can_retry, path_is_within,
+        prepare_retry_archive, remove_staging_dir, retry_allowed, retry_available, retry_cli_args,
+        retry_request_allowed, rollback, staging_dirs, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
+    use sha2::Digest;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1055,11 +1073,13 @@ mod tests {
         let zip = temp.0.join("update.zip");
         fs::write(&zip, b"update").expect("create test archive");
 
-        let digest = bind_zip_sha256(&mut CliArgs {
+        let digest = format!("{:x}", sha2::Sha256::digest(b"update"));
+        bind_zip_sha256(&mut CliArgs {
             zip: zip.clone(),
+            zip_sha256: Some(digest.clone()),
             ..test_args()
         })
-        .expect("capture digest");
+        .expect("verify trusted digest");
         assert!(retry_allowed(true, &zip, Some(&digest)));
         assert!(!retry_allowed(false, &zip, Some(&digest)));
         assert!(!retry_allowed(true, &zip, None));
@@ -1152,7 +1172,30 @@ mod tests {
     }
 
     #[test]
-    fn retry_binds_to_the_archive_digest_captured_on_first_open() {
+    fn deterministic_zip_format_errors_are_not_retryable() {
+        let invalid = anyhow::Error::new(zip::result::ZipError::InvalidArchive(
+            "invalid central directory",
+        ));
+        let unsupported = anyhow::Error::new(zip::result::ZipError::UnsupportedArchive(
+            "unsupported compression",
+        ));
+
+        assert!(!extract_error_can_retry(&invalid));
+        assert!(!extract_error_can_retry(&unsupported));
+    }
+
+    #[test]
+    fn zip_io_errors_remain_retryable() {
+        let error = anyhow::Error::new(zip::result::ZipError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "temporarily locked",
+        )));
+
+        assert!(extract_error_can_retry(&error));
+    }
+
+    #[test]
+    fn initial_archive_requires_an_externally_trusted_digest() {
         let temp = TestDir::new();
         let mut args = test_args();
         args.workdir = temp.0.join("workdir");
@@ -1160,8 +1203,21 @@ mod tests {
         args.zip = temp.0.join("update.zip");
         fs::write(&args.zip, b"trusted-archive").unwrap();
 
-        bind_zip_sha256(&mut args).expect("capture digest from the first readable zip");
-        let digest = args.zip_sha256.clone().expect("digest stored on args");
+        assert_eq!(bind_zip_sha256(&mut args), Err("archive_unavailable".into()));
+        assert!(args.zip_sha256.is_none());
+    }
+
+    #[test]
+    fn initial_archive_must_match_the_externally_trusted_digest() {
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.workdir = temp.0.join("workdir");
+        fs::create_dir(&args.workdir).unwrap();
+        args.zip = temp.0.join("update.zip");
+        fs::write(&args.zip, b"trusted-archive").unwrap();
+        args.zip_sha256 = Some(format!("{:x}", sha2::Sha256::digest(b"trusted-archive")));
+
+        let digest = bind_zip_sha256(&mut args).expect("verify trusted digest");
         assert!(archive_matches_digest(&args.zip, &digest));
         assert!(retry_allowed(true, &args.zip, args.zip_sha256.as_deref()));
 
@@ -1183,7 +1239,8 @@ mod tests {
         fs::create_dir(&args.workdir).unwrap();
         fs::write(&args.zip, b"trusted-archive").unwrap();
         let unbound = args.clone();
-        bind_zip_sha256(&mut args).expect("capture digest");
+        args.zip_sha256 = Some(format!("{:x}", sha2::Sha256::digest(b"trusted-archive")));
+        bind_zip_sha256(&mut args).expect("verify trusted digest");
         assert!(prepare_retry_archive(&args));
         let retry_zip = super::retry_archive(&args);
         assert_eq!(

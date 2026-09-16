@@ -165,6 +165,8 @@ const STARTUP_MANIFEST_TIMEOUT_MS = 8_000;
 let currentStatus: UpdateStatus = 'idle';
 let readyVersion: string | undefined;
 let readyFilePath: string | undefined;
+/** SHA-256 from the verified manifest for the staged Windows archive. */
+let readyZipSha256: string | undefined;
 /** 当前 staged 补丁对应的渠道代际。延迟清理用它区分「同路径上的新旧包」。 */
 let readyChannelEpoch: number | undefined;
 /**
@@ -175,6 +177,7 @@ let readyChannelEpoch: number | undefined;
 let updateChannelEpoch = 0;
 /** 本进程上次看到的有效渠道。别的共库实例改开关后,用这个发现跨进程渠道变化。 */
 let observedEnableBeta = false;
+let firstCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let autoRelaunchPollTimer: ReturnType<typeof setInterval> | null = null;
 let isRelaunching = false;
@@ -692,9 +695,11 @@ function checkExistingPatch(): { action: 'relaunch' | 'check' | 'none'; version?
     return { action: 'check' };
   }
 
-  // Patch present, awaiting relaunch.
+  // Patch present, awaiting relaunch. User-writable patch-info metadata cannot
+  // re-establish the Windows archive trust anchor after a cold start.
   readyVersion = patchInfo.version;
   readyFilePath = patchFilePath;
+  readyZipSha256 = undefined;
   readyChannelEpoch = updateChannelEpoch;
   return { action: 'relaunch', version: patchInfo.version };
 }
@@ -846,6 +851,7 @@ function discardStagedPatchFiles(): void {
   }
   readyVersion = undefined;
   readyFilePath = undefined;
+  readyZipSha256 = undefined;
   readyChannelEpoch = undefined;
   linuxStagedDebSha256 = null;
   linuxStagedDebSize = null;
@@ -874,6 +880,7 @@ function flushDeferredStagedPatchClear(): void {
     if (readyChannelEpoch === stale.epoch) {
       readyVersion = undefined;
       readyFilePath = undefined;
+      readyZipSha256 = undefined;
       readyChannelEpoch = undefined;
     }
     return;
@@ -1097,6 +1104,7 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
   const wasReady = currentStatus === 'ready';
   const previousReadyVersion = wasReady ? readyVersion : undefined;
   const previousReadyFilePath = wasReady ? readyFilePath : undefined;
+  const previousReadyZipSha256 = wasReady ? readyZipSha256 : undefined;
   const previousReadyChannelEpoch = wasReady ? readyChannelEpoch : undefined;
 
   // 只有非 ready 路径才广播 'checking' — wasReady 路径下广播 checking 会让 banner
@@ -1167,6 +1175,16 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
 
   // wasReady 且 manifest 仍是已下好的同一个版本 → 无事发生,保持 ready。
   if (wasReady && latestVersion === previousReadyVersion) {
+    if (process.platform === 'win32') {
+      const sameFile = path.basename(asset.file) === path.basename(previousReadyFilePath ?? '');
+      const trustedSha256 = sameFile ? normalizeWindowsZipSha256(asset.sha256) : undefined;
+      if (!trustedSha256) {
+        log.info('Windows: current manifest cannot re-anchor the ready patch — discarding it');
+        discardStagedPatchFiles();
+        return 'idle';
+      }
+      readyZipSha256 = trustedSha256;
+    }
     log.info('Ready patch v%s still matches latest — no superseding needed', previousReadyVersion);
     return 'ready';
   }
@@ -1310,6 +1328,9 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
     }
     readyVersion = latestVersion;
     readyFilePath = result.path;
+    readyZipSha256 = process.platform === 'win32'
+      ? normalizeWindowsZipSha256(asset.sha256)
+      : undefined;
     readyChannelEpoch = updateChannelEpoch;
     // 信任锚:manifest 里的 installer 摘要与大小,进本进程内存,不落用户可写盘。
     linuxStagedDebSha256 = normalizeLinuxDebSha256(asset.sha256 ?? '');
@@ -1342,6 +1363,7 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
         }
         readyVersion = undefined;
         readyFilePath = undefined;
+        readyZipSha256 = undefined;
         readyChannelEpoch = undefined;
         removePatchInfo();
         setStatus('idle');
@@ -1350,6 +1372,7 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
       log.info('Superseding download failed — rolling back to ready v%s', previousReadyVersion);
       readyVersion = previousReadyVersion;
       readyFilePath = previousReadyFilePath;
+      readyZipSha256 = previousReadyZipSha256;
       readyChannelEpoch = previousReadyChannelEpoch;
       setStatus('ready', { version: previousReadyVersion });
       return 'ready';
@@ -1380,6 +1403,7 @@ function handleApplyFailure(reason: string): void {
   removePatchInfo();
   readyVersion = undefined;
   readyFilePath = undefined;
+  readyZipSha256 = undefined;
   readyChannelEpoch = undefined;
   isRelaunching = false;
   autoRelaunchInProgress = false;
@@ -1406,8 +1430,39 @@ function handleApplyFailure(reason: string): void {
 
 // ── F3: Platform Executors ────────────────────────────────────────────────
 
+function normalizeWindowsZipSha256(value: string | undefined): string | undefined {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value)
+    ? value.toLowerCase()
+    : undefined;
+}
 
-function executeUpdateWindows(zipPath: string, theme: 'light' | 'dark'): void {
+function handleMissingWindowsArchiveDigest(): void {
+  cancelStartupBinaryUpdateCheck?.();
+  cancelStartupBinaryUpdateCheck = undefined;
+  log.error('Windows update archive is missing its trusted manifest SHA-256');
+  // Cold-started patches have only user-writable patch-info metadata until a
+  // current manifest re-establishes the trust anchor. Refuse this apply, but
+  // keep the staged patch so a later online startup/check can reconcile it.
+  readyZipSha256 = undefined;
+  isRelaunching = false;
+  autoRelaunchInProgress = false;
+  void clearSubagentLaunchFence().catch((err: unknown) => {
+    log.error('clearing the Subagent launch fence after a failed apply failed: %s', String(err));
+  });
+  setStatus('error', { errorCode: 'updater_spawn_failed' });
+}
+
+function executeUpdateWindows(
+  zipPath: string,
+  theme: 'light' | 'dark',
+  expectedSha256: string | undefined,
+): void {
+  const trustedSha256 = normalizeWindowsZipSha256(expectedSha256);
+  if (!trustedSha256) {
+    handleMissingWindowsArchiveDigest();
+    return;
+  }
+
   const appExePath = app.getPath('exe');
   const appDir = path.dirname(appExePath);
   const exeName = path.basename(appExePath);
@@ -1491,6 +1546,7 @@ function executeUpdateWindows(zipPath: string, theme: 'light' | 'dark'): void {
   // an in-app override disagrees with the OS preference.
   const args = [
     '--zip', zipPath,
+    '--zip-sha256', trustedSha256,
     '--app-dir', appDir,
     '--exe-name', exeName,
     '--pid', String(pid),
@@ -1946,7 +2002,7 @@ async function executeRelaunchUnguarded(theme: 'light' | 'dark', checkForBinaryU
 
   switch (process.platform) {
     case 'win32':
-      executeUpdateWindows(readyFilePath, theme);
+      executeUpdateWindows(readyFilePath, theme, readyZipSha256);
       break;
     case 'darwin':
       // Increment immediately before starting the platform executor so a
@@ -2152,7 +2208,11 @@ export function initUpdateService(): void {
     // 这里复用 'downloading' 结果让前端 toast 文案保持一致。
     if (currentStatus === 'downloading') return { result: 'downloading' };
     if (currentStatus === 'superseding') return { result: 'downloading' };
-    if (currentStatus === 'ready')       return { result: 'ready' };
+    // A cold-started Windows patch has no process-local trust anchor yet. Let a
+    // current manifest re-establish it instead of short-circuiting forever.
+    if (currentStatus === 'ready' && (process.platform !== 'win32' || readyZipSha256)) {
+      return { result: 'ready' };
+    }
     const result = await checkForUpdate();
     return { result };
   });
@@ -2234,6 +2294,19 @@ export function initUpdateService(): void {
       const patchResult = checkExistingPatch();
       if (patchResult.action === 'relaunch' && patchResult.version === latestVersion) {
         log.info('Local patch v%s matches latest, requesting relaunch', patchResult.version);
+        if (process.platform === 'win32') {
+          const hotfix = manifest.app.hotfix;
+          const trustedSha256 = hotfix
+            && path.basename(hotfix.file) === path.basename(readyFilePath ?? '')
+            ? normalizeWindowsZipSha256(hotfix.sha256)
+            : undefined;
+          if (!trustedSha256) {
+            log.info('Windows: manifest has no matching trusted hotfix digest — discarding local patch');
+            discardStagedPatchFiles();
+            return { hasUpdate: false, action: 'none' as const };
+          }
+          readyZipSha256 = trustedSha256;
+        }
         if (process.platform === 'linux') {
           // 冷启动匹配旧补丁:把这份 CDN manifest 的 installer 摘要与大小
           // 重新锚进进程内存,让后续 apply 有可信锚可用。
@@ -2262,6 +2335,7 @@ export function initUpdateService(): void {
         );
         readyVersion = undefined;
         readyFilePath = undefined;
+        readyZipSha256 = undefined;
         readyChannelEpoch = undefined;
         linuxStagedDebSha256 = null;
         linuxStagedDebSize = null;
@@ -2315,7 +2389,8 @@ export function initUpdateService(): void {
   powerMonitor.on('unlock-screen', handlePowerMonitorActivity);
   powerMonitor.on('user-did-become-active', handlePowerMonitorActivity);
 
-  setTimeout(() => {
+  firstCheckTimer = setTimeout(() => {
+    firstCheckTimer = null;
     log.info('First background check fires');
     checkForUpdate().catch((err) => {
       log.error('Background check threw:', err);
@@ -2370,6 +2445,10 @@ export async function enableUncustomizedBetaChannel(
 }
 
 export function stopUpdateService(): void {
+  if (firstCheckTimer) {
+    clearTimeout(firstCheckTimer);
+    firstCheckTimer = null;
+  }
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
