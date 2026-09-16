@@ -5636,7 +5636,7 @@ function RunningStatusBar({
   // Local timer (F-SDK-3: render-side setInterval)
   useEffect(() => {
     if (!startedAt) {
-      setElapsed(0);
+      // Keep the last completed turn duration visible while a pinned panel lingers.
       return;
     }
 
