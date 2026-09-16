@@ -337,8 +337,11 @@ connection. Queued native batches, held mouse buttons/keys, and a 300 ms quiet
 interval after native completion exclude new Agent actions. An already-dispatched
 Agent primitive finishes before remote input is delivered; further Agent text
 chunks yield. Agent actions are never automatically replayed. After remote input,
-the Agent must observe the target window again while input is idle before acting
-on it. Empty connection heartbeats do not claim input ownership.
+the Agent must successfully observe the target window again while input is idle
+before acting on it, including the first action of a new or cleaned-up driver
+session. Actions without a window ID accept an observation of the same process;
+an explicit window ID still requires that exact window. Empty connection
+heartbeats do not claim input ownership.
 
 The native macOS/Windows helper acknowledges a batch only after posting all its
 events; the Windows service forwards that acknowledgement. Main retains ownership

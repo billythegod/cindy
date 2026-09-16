@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import { COMPUTER_TOOLS } from '@cindy/mcps/computer';
 import { HumanDesktopInput, HUMAN_INPUT_QUIET_MS } from '../../remote-desktop/inputOwnership';
+import * as inputOwnership from '../../remote-desktop/inputOwnership';
 
 const {
   existsSyncMock,
@@ -320,7 +321,14 @@ function mockWorkspaceRootExists(workspaceRoot: string): void {
 }
 
 describe('computer mcp integration', () => {
+  let revisionSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(async () => {
+    // Each test starts with a fresh process input history; cleanup of a driver
+    // session deliberately does not reset production remote-input revisions.
+    const readRevision = inputOwnership.desktopInputRevision;
+    const initialRevision = readRevision();
+    revisionSpy = vi.spyOn(inputOwnership, 'desktopInputRevision')
+      .mockImplementation(() => readRevision() - initialRevision);
     setPlatform(originalPlatform);
     await cleanupAllComputerDriverSessions();
     resetComputerDriverPermissionProbeCacheForTests();
@@ -344,6 +352,7 @@ describe('computer mcp integration', () => {
   });
 
   afterEach(() => {
+    revisionSpy.mockRestore();
     for (const key of driverResolutionEnvKeys) {
       const value = originalDriverResolutionEnv.get(key);
       if (value === undefined) {
@@ -1445,6 +1454,37 @@ describe('computer mcp integration', () => {
         .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
       await callComputerDriverTool('get_window_state', target, context);
       await expect(callComputerDriverTool('click', { ...target, x: 1, y: 1 }, context)).resolves.toBeDefined();
+    } finally { human.release(); vi.useRealTimers(); }
+  });
+
+  it.each([false, true])('requires successful re-observation after remote input, including session cleanup=%s', async (cleanup) => {
+    vi.useFakeTimers();
+    const human = new HumanDesktopInput();
+    const context = { sessionId: 'fresh-observation' };
+    const target = { pid: 123, window_id: 7 };
+    try {
+      mcpCallToolMock.mockResolvedValue({ structuredContent: { ok: true } });
+      if (cleanup) await callComputerDriverTool('get_window_state', target, context);
+      human.begin([{ kind: 'text', text: 'human' }]).complete();
+      vi.advanceTimersByTime(HUMAN_INPUT_QUIET_MS);
+      if (cleanup) await cleanupComputerDriverSession(context.sessionId);
+      await expect(callComputerDriverTool('click', target, context))
+        .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
+      mcpCallToolMock.mockResolvedValue({ structuredContent: { ok: false, error: 'unavailable' } });
+      await callComputerDriverTool('get_window_state', target, context);
+      await expect(callComputerDriverTool('click', target, context))
+        .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
+      mcpCallToolMock.mockResolvedValue({ structuredContent: { ok: true } });
+      await callComputerDriverTool('get_window_state', target, context);
+      for (const name of ['type_text', 'press_key', 'hotkey', 'click'] as const) {
+        await expect(callComputerDriverTool(name, { pid: 123, text: 'hello', key: 'a', keys: ['CTRL', 'a'] }, context))
+          .resolves.toBeDefined();
+      }
+      await expect(callComputerDriverTool('click', { pid: 124 }, context))
+        .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
+      await expect(callComputerDriverTool('click', { ...target, window_id: 8 }, context))
+        .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
+      await expect(callComputerDriverTool('click', target, context)).resolves.toBeDefined();
     } finally { human.release(); vi.useRealTimers(); }
   });
 

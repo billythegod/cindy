@@ -3379,7 +3379,7 @@ export async function grantComputerDriverPermissions(
 
 // Remote input invalidates previously observed targets even after its short
 // ownership window ends. Never resume typing into a stale focus implicitly.
-const inputObservations = new Map<string, { initial: number; windows: Map<string, number> }>();
+const inputObservations = new Map<string, { windows: Map<string, number> }>();
 
 export async function callComputerDriverTool(
   name: ComputerMcpToolName,
@@ -3390,14 +3390,18 @@ export async function callComputerDriverTool(
   const revision = desktopInputRevision();
   let observations = sessionId ? inputObservations.get(sessionId) : undefined;
   if (sessionId && !observations) {
-    observations = { initial: isHumanDesktopInputActive() ? -1 : revision, windows: new Map() };
+    observations = { windows: new Map() };
     inputObservations.set(sessionId, observations);
   }
   const window = `${args.pid}:${args.window_id}`;
   if (getComputerTool(name)?.readOnly === true) {
     const result = await callComputerDriverToolImpl(name, args, context);
-    if (name === 'get_window_state' && revision === desktopInputRevision() && !isHumanDesktopInputActive()) {
+    if (name === 'get_window_state' && computerResultOutcome(name, result).ok
+      && revision === desktopInputRevision() && !isHumanDesktopInputActive()) {
       observations?.windows.set(window, revision);
+      // App-scoped actions may omit window_id; a successful observation of
+      // that app also refreshes its focus, without refreshing other windows.
+      observations?.windows.set(`${args.pid}:undefined`, revision);
     }
     return result;
   }
@@ -3412,7 +3416,7 @@ export async function callComputerDriverTool(
     }
   };
   assertCurrent();
-  if (args.pid !== undefined && observations && observations.initial !== revision
+  if (args.pid !== undefined && observations && revision > 0
     && observations.windows.get(window) !== revision) {
     throw new ComputerDriverError('Remote desktop input changed the desktop. Get fresh state for this window before acting again.', 'STALE_SNAPSHOT');
   }
