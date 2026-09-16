@@ -40,6 +40,39 @@ function harness() {
   };
 }
 describe('remote desktop authority and lifecycle', () => {
+  it('keeps shutdown pending until resolution restoration finishes', async () => {
+    const h = harness();
+    h.deps.displayModes = async () => [
+      { id: '1', width: 1920, height: 1080, current: true },
+      { id: '2', width: 3840, height: 2160, current: false },
+    ];
+    h.deps.resolution = async (_display, _mode, beforeChange) => beforeChange();
+    let finish!: () => void;
+    h.deps.restoreResolution = vi.fn(async (_display, _mode, beforeChange) => {
+      beforeChange();
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const { lease } = await h.start();
+    await h.controller.request('phone', { op: 'control', lease, enabled: true });
+    await h.controller.request('phone', { op: 'resolution', lease, modeId: '2', temporary: true });
+    const settled = vi.fn();
+    const quitting = h.controller.stopAndRestore().then(settled);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(h.controller.state).toBeNull();
+    expect(settled).not.toHaveBeenCalled();
+    expect(h.deps.restoreResolution).toHaveBeenCalledWith(
+      '1',
+      '1',
+      expect.any(Function),
+      expect.objectContaining({ width: 1920, height: 1080 }),
+    );
+    finish();
+    await quitting;
+    expect(settled).toHaveBeenCalledOnce();
+    expect(h.deps.restoreResolution).toHaveBeenCalledOnce();
+  });
   it('waits for an in-flight mode change before restoring after disconnect', async () => {
     const h = harness();
     let finish!: () => void;
@@ -98,7 +131,12 @@ describe('remote desktop authority and lifecycle', () => {
     await expect(h.start()).rejects.toThrow('restore failed');
     fail = false;
     await h.start();
-    expect(h.deps.resolution).toHaveBeenLastCalledWith('1', '1', expect.any(Function));
+    expect(h.deps.resolution).toHaveBeenLastCalledWith(
+      '1',
+      '1',
+      expect.any(Function),
+      expect.objectContaining({ width: 1920, height: 1080 }),
+    );
   });
   it.each(['stop', 'timeout', 'takeover', 'revoke'] as const)(
     'restores the first system mode after multiple changes on %s',

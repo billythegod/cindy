@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   owner: null as any,
   dispose: vi.fn(),
   stop: vi.fn(),
+  stopAndRestore: vi.fn(async () => {}),
+  quit: new Map<string, { fn: () => unknown; phase: string }>(),
   releaseControl: vi.fn(),
   inputFailure: null as null | (() => void),
   nativeStop: vi.fn(),
@@ -22,6 +24,9 @@ const h = vi.hoisted(() => ({
   iceConfig: vi.fn(async (): Promise<any[]> => [
     { urls: ['turn:relay.example.test:3478'], username: 'temporary', credential: 'test-only' },
   ]),
+}));
+vi.mock('../../lifecycle', () => ({
+  onQuit: (name: string, fn: () => unknown, phase = 'sync') => h.quit.set(name, { fn, phase }),
 }));
 vi.mock('../iceConfig', () => ({ loadDesktopIceServers: h.iceConfig }));
 vi.mock('electron', () => ({
@@ -96,6 +101,7 @@ vi.mock('../controller', () => ({
     stopByUser() {
       this.stop();
     }
+    stopAndRestore = h.stopAndRestore;
     releaseControl() {
       h.releaseControl();
     }
@@ -125,7 +131,9 @@ vi.mock('../inputHost', () => ({
 }));
 vi.mock('../permissions', () => ({
   RemoteDesktopPermissionsService: class {
-    constructor(deps: any) { h.permissionDeps = deps; }
+    constructor(deps: any) {
+      h.permissionDeps = deps;
+    }
     dismiss() {}
   },
 }));
@@ -185,14 +193,39 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it('joins resolution restoration through the shared asynchronous quit phase', async () => {
+  const cleanup = h.quit.get('remote-desktop-restore')!;
+  expect(cleanup.phase).toBe('async');
+  let finish!: () => void;
+  h.stopAndRestore.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const settled = vi.fn();
+  const pending = Promise.resolve(cleanup.fn()).then(settled);
+  await Promise.resolve();
+  expect(settled).not.toHaveBeenCalled();
+  finish();
+  await pending;
+  expect(settled).toHaveBeenCalledOnce();
+});
+
 it('bounds a stalled screen permission probe so the guide can finish its request', async () => {
   h.source = new Promise(() => {});
-  const pending = h.permissionDeps.request('screenRecording', () => true, new AbortController().signal);
+  const pending = h.permissionDeps.request(
+    'screenRecording',
+    () => true,
+    new AbortController().signal,
+  );
   const rejected = expect(pending).rejects.toThrow('DESKTOP_VIDEO_TIMEOUT');
   await vi.advanceTimersByTimeAsync(5000);
   await rejected;
   h.source = Promise.resolve([]);
-  await expect(h.permissionDeps.request('screenRecording', () => true, new AbortController().signal)).resolves.toBeUndefined();
+  await expect(
+    h.permissionDeps.request('screenRecording', () => true, new AbortController().signal),
+  ).resolves.toBeUndefined();
   expect(h.stop).not.toHaveBeenCalled();
 });
 
@@ -209,32 +242,40 @@ it('drops enumeration timeouts for one relay frame and resumes without stopping 
   await expect(h.deps.frame('1', false)).rejects.toThrow('DESKTOP_DISABLED');
 });
 
-it.each(['success', 'timeout'])('keeps relay polls out of native preparation and resumes after %s', async (outcome) => {
-  vi.stubGlobal('process', { ...process, platform: 'darwin' });
-  let sourcesReady!: (sources: any[]) => void;
-  h.source = new Promise((resolve) => { sourcesReady = resolve; });
-  const pending = offer();
-  const settled = outcome === 'success'
-    ? expect(pending).resolves.toBe('answer')
-    : expect(pending).rejects.toThrow('DESKTOP_VIDEO_TIMEOUT');
-  expect(h.nativeStop).toHaveBeenCalled();
-  await expect(h.deps.frame('1', true)).resolves.toBeNull();
-  h.handlers.get(DESKTOP_LOCAL.REGISTER)(event());
-  await flush();
-  await expect(h.deps.frame('1', true)).resolves.toBeNull();
-  sourcesReady([{ id: 'screen:1', display_id: '1' }]);
-  await flush();
-  await expect(h.deps.frame('1', true)).resolves.toBeNull();
-  expect(h.nativeFrame).not.toHaveBeenCalled();
-  await expect(h.handlers.get(DESKTOP_LOCAL.NATIVE_FRAME)(event(), 'lease')).resolves.toBe('frame');
-  if (outcome === 'success') {
-    const id = h.owner.send.mock.calls[0][1].id;
-    h.handlers.get(DESKTOP_LOCAL.REPLY)(event(), id, 'answer');
-  } else await vi.advanceTimersByTimeAsync(18_000);
-  await settled;
-  await h.deps.frame('1', true);
-  expect(h.nativeFrame).toHaveBeenCalledTimes(2);
-});
+it.each(['success', 'timeout'])(
+  'keeps relay polls out of native preparation and resumes after %s',
+  async (outcome) => {
+    vi.stubGlobal('process', { ...process, platform: 'darwin' });
+    let sourcesReady!: (sources: any[]) => void;
+    h.source = new Promise((resolve) => {
+      sourcesReady = resolve;
+    });
+    const pending = offer();
+    const settled =
+      outcome === 'success'
+        ? expect(pending).resolves.toBe('answer')
+        : expect(pending).rejects.toThrow('DESKTOP_VIDEO_TIMEOUT');
+    expect(h.nativeStop).toHaveBeenCalled();
+    await expect(h.deps.frame('1', true)).resolves.toBeNull();
+    h.handlers.get(DESKTOP_LOCAL.REGISTER)(event());
+    await flush();
+    await expect(h.deps.frame('1', true)).resolves.toBeNull();
+    sourcesReady([{ id: 'screen:1', display_id: '1' }]);
+    await flush();
+    await expect(h.deps.frame('1', true)).resolves.toBeNull();
+    expect(h.nativeFrame).not.toHaveBeenCalled();
+    await expect(h.handlers.get(DESKTOP_LOCAL.NATIVE_FRAME)(event(), 'lease')).resolves.toBe(
+      'frame',
+    );
+    if (outcome === 'success') {
+      const id = h.owner.send.mock.calls[0][1].id;
+      h.handlers.get(DESKTOP_LOCAL.REPLY)(event(), id, 'answer');
+    } else await vi.advanceTimersByTimeAsync(18_000);
+    await settled;
+    await h.deps.frame('1', true);
+    expect(h.nativeFrame).toHaveBeenCalledTimes(2);
+  },
+);
 
 it.each(['ready', 'sources'])(
   'revocation during %s prevents late capture from reviving the old offer',
@@ -295,14 +336,23 @@ it('drops view-only input without breaking heartbeats, but still rejects invalid
   h.handlers.get(DESKTOP_LOCAL.REPLY)(event(), h.owner.send.mock.calls[0][1].id, 'answer');
   await pending;
   const input = h.handlers.get(DESKTOP_LOCAL.INPUT);
-  h.input.mockImplementation(() => { throw new Error('DESKTOP_VIEW_ONLY'); });
+  h.input.mockImplementation(() => {
+    throw new Error('DESKTOP_VIEW_ONLY');
+  });
   expect(() => input(event(), 'lease', 1, [{ type: 'release' }])).not.toThrow();
   h.handlers.get(DESKTOP_LOCAL.VIEW_HEARTBEAT)(event(), 'lease');
   expect(h.viewHeartbeat).toHaveBeenCalledWith('lease');
   expect(h.owner.dead).toBe(false);
   expect(() => input(event(), 'old-lease', 2, [])).toThrow('PERMISSION_DENIED');
-  for (const reason of ['DESKTOP_STOPPED', 'DESKTOP_LEASE_EXPIRED', 'INVALID_REQUEST', 'DESKTOP_INPUT_UNAVAILABLE']) {
-    h.input.mockImplementation(() => { throw new Error(reason); });
+  for (const reason of [
+    'DESKTOP_STOPPED',
+    'DESKTOP_LEASE_EXPIRED',
+    'INVALID_REQUEST',
+    'DESKTOP_INPUT_UNAVAILABLE',
+  ]) {
+    h.input.mockImplementation(() => {
+      throw new Error(reason);
+    });
     expect(() => input(event(), 'lease', 2, [])).toThrow('PERMISSION_DENIED');
   }
 });
@@ -394,7 +444,12 @@ it('revocation while fetching ICE config prevents a late credential from startin
 
 it('keeps replacement capture and its in-flight ICE exchange when revoked config arrives late', async () => {
   let finish!: (servers: any[]) => void;
-  h.iceConfig.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  h.iceConfig.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
   const pending = offer();
   const rejected = expect(pending).rejects.toThrow('DESKTOP_LEASE_EXPIRED');
   const old = h.owner;
@@ -410,7 +465,11 @@ it('keeps replacement capture and its in-flight ICE exchange when revoked config
   h.handlers.get(DESKTOP_LOCAL.REPLY)(event(), command.id, 'new-answer');
   await expect(next).resolves.toBe('new-answer');
   const ice = h.deps.ice({
-    op: 'ice', lease: 'replacement', attemptId: 'attempt', after: 0, candidates: [],
+    op: 'ice',
+    lease: 'replacement',
+    attemptId: 'attempt',
+    after: 0,
+    candidates: [],
   });
   const exchange = owner.send.mock.calls.at(-1)[1];
   finish([]);

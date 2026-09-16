@@ -1,5 +1,4 @@
 import {
-  app,
   desktopCapturer,
   ipcMain,
   nativeImage,
@@ -35,7 +34,12 @@ import { denyAppDesktopCapture } from './capturePermissions';
 import { readDeviceLinkSettings, writeDeviceLinkSetting } from '../device-link/settings-store';
 import { throwIpcError } from '../utils/ipcValidate';
 import { RemoteDesktopController } from './controller';
-import { createViewerDisplay, viewerDisplaySupported } from './viewerDisplay';
+import { onQuit } from '../lifecycle';
+import {
+  createViewerDisplay,
+  viewerDisplaySupported,
+  waitForDisplayRestore,
+} from './viewerDisplay';
 import { desktopCaptureSource, enumerateDesktopSources } from './captureSource';
 import { encodeDesktopFrame, encodeNativeRelayFrame } from './frame';
 import { transferDesktopClipboard, transferDesktopClipboardContent } from './clipboard';
@@ -401,8 +405,10 @@ export const remoteDesktop = new RemoteDesktopController({
   displayPresent: (displayId) =>
     screen.getAllDisplays().some((display) => String(display.id) === displayId),
   resolution: setDesktopDisplayMode,
-  restoreResolution: (displayId, modeId, beforeChange) =>
-    setDesktopDisplayMode(displayId, modeId, beforeChange, true),
+  restoreResolution: async (displayId, modeId, beforeChange, expected) => {
+    await setDesktopDisplayMode(displayId, modeId, beforeChange, true);
+    await waitForDisplayRestore(displayId, expected, beforeChange);
+  },
   createViewerDisplay,
   startInput: (displayId) => input.start(displayId),
   input: (events) => {
@@ -448,11 +454,12 @@ export function registerRemoteDesktopIpc(
   denyAppDesktopCapture(session.defaultSession, isVoiceInputOwner);
   const timer = setInterval(() => remoteDesktop.tick(), 1000);
   timer.unref();
-  app.on('before-quit', () => {
+  onQuit('remote-desktop-stop', () => {
     clearInterval(timer);
     permissions.dismiss();
     remoteDesktop.stop();
   });
+  onQuit('remote-desktop-restore', () => remoteDesktop.stopAndRestore(), 'async');
   screen.on('display-removed', (_event, display) => {
     if (remoteDesktop.changingDisplay) return;
     if (String(display.id) === remoteDesktop.displayId) remoteDesktop.stop();

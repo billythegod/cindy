@@ -321,6 +321,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
     if (!seg) {
       bg.style.display = "none";
       bgRects = null;
+      stopBackgroundLoop();
       return;
     }
     bg.style.display = "block";
@@ -382,6 +383,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       bgCanvas.height = bh;
     }
     scheduleBackgroundDraw();
+    startBackgroundLoop();
   }
   // One canvas, three draws: each source segment stretches into whatever bar
   // the picture leaves open. The live video feeds it once presented; until
@@ -426,32 +428,48 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
     }
   }
   function scheduleBackgroundDraw() {
-    if (bgDrawFrame !== null || bgLoopFrame !== null || !bgContext) return;
+    if (bgDrawFrame !== null || !bgRects || !bgContext) return;
     bgDrawFrame = requestAnimationFrame(() => {
       bgDrawFrame = null;
       drawBackground();
     });
   }
   function startBackgroundLoop() {
-    if (bgLoopFrame !== null || !bgContext) return;
-    const tick = () => {
+    if (
+      bgLoopFrame !== null ||
+      !bgContext ||
+      !bgRects ||
+      !videoPresented ||
+      typeof video.requestVideoFrameCallback !== "function"
+    )
+      return;
+    const frame = video.requestVideoFrameCallback(() => {
+      if (bgLoopFrame !== frame) return;
+      bgLoopFrame = null;
       drawBackground();
-      bgLoopFrame = requestAnimationFrame(tick);
-    };
-    bgLoopFrame = requestAnimationFrame(tick);
+      startBackgroundLoop();
+    });
+    bgLoopFrame = frame;
   }
   // Only the streaming loop stops here; a pending one-shot draw is harmless
   // (it re-paints the preserved frame) and must survive reconnects.
   function stopBackgroundLoop() {
-    if (bgLoopFrame !== null) cancelAnimationFrame(bgLoopFrame);
+    if (bgLoopFrame !== null) video.cancelVideoFrameCallback?.(bgLoopFrame);
     bgLoopFrame = null;
   }
   function clearBackground() {
+    stopBackgroundLoop();
     bgRects = null;
     // Resizing a canvas resets its bitmap; same-value assignment still clears.
     if (bgCanvas) bgCanvas.width = bgCanvas.width;
   }
   listen(image, "load", () => scheduleBackgroundDraw());
+  // Older WebViews update the ambient layer on media progress, never with an
+  // idle display-refresh loop. Geometry changes still get a one-shot repaint.
+  listen(video, "timeupdate", () => {
+    if (videoPresented && typeof video.requestVideoFrameCallback !== "function")
+      scheduleBackgroundDraw();
+  });
   function panBounds(r) {
     const vw = viewportWidth(),
       vh = viewportHeight();

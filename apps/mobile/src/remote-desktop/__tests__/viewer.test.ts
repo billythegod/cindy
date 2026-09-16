@@ -16,7 +16,7 @@ const desktopTransform = vm.runInNewContext(
   fillHeight?: boolean,
 ) => { x: number; y: number; width: number; height: number; scale: number };
 
-function viewer() {
+function viewer(rtc = false, frameCallback = true) {
   const messages: Array<{
     type: string;
     epoch: string;
@@ -107,13 +107,40 @@ function viewer() {
   )["image"].naturalHeight = 1080;
   const intervals: Array<() => void> = [];
   const frames = new Map<number, () => void>();
+  const videoFrames = new Map<number, () => void>();
   let id = 0;
+  const video = Object.assign(elements.video, {
+    videoWidth: 1920,
+    videoHeight: 1080,
+    readyState: 2,
+    onplaying: null as null | (() => void),
+    requestVideoFrameCallback: frameCallback
+      ? (fn: () => void) => {
+          videoFrames.set(++id, fn);
+          return id;
+        }
+      : undefined,
+    cancelVideoFrameCallback: (key: number) => videoFrames.delete(key),
+  });
+  class Peer {
+    localDescription = { sdp: "offer" };
+    createDataChannel() {
+      return { close() {} };
+    }
+    addTransceiver() {}
+    async createOffer() {
+      return { sdp: "offer" };
+    }
+    async setLocalDescription() {}
+    close() {}
+  }
   let now = 0;
   let orientation: number | undefined;
   const source = remoteDesktopViewerHtml("#fff", "#111").match(
     /<script>([\s\S]*)<\/script>/,
   )![1];
   vm.runInNewContext(source, {
+    RTCPeerConnection: Peer,
     Date: { now: () => now },
     performance: { now: () => now },
     matchMedia: () => ({ matches: false }),
@@ -126,6 +153,7 @@ function viewer() {
       documentElement: { style: { setProperty() {} } },
     },
     window: {
+      RTCPeerConnection: rtc ? Peer : undefined,
       get orientation() {
         return orientation;
       },
@@ -153,6 +181,20 @@ function viewer() {
     messages,
     elements,
     bgDraws,
+    videoFrames,
+    playVideo: () => {
+      const config = messages.findLast((m) => m.type === "iceConfig");
+      windowListeners.message({
+        data: JSON.stringify({ ...config, iceServers: [] }),
+      });
+      video.onplaying!();
+    },
+    videoFrame: () => {
+      const pending = [...videoFrames.values()];
+      videoFrames.clear();
+      pending.forEach((fn) => fn());
+    },
+    timeupdate: () => listeners["video:timeupdate"]({}),
     send: (message: object) =>
       windowListeners.message({ data: JSON.stringify(message) }),
     flush: () => intervals.forEach((fn) => fn()),
@@ -820,6 +862,75 @@ describe("remote desktop network status layer", () => {
 });
 
 describe("remote desktop three-segment backdrop", () => {
+  it.each([true, false])(
+    "only repaints live video on media progress (frame callbacks: %s)",
+    (callback) => {
+      const v = viewer(true, callback);
+      v.send({
+        type: "init",
+        epoch: "bg",
+        width: 1920,
+        height: 1080,
+        trickleIce: true,
+      });
+      v.playVideo();
+      v.videoFrame();
+      v.frame();
+      v.frame();
+      v.frame();
+      v.bgDraws.length = 0;
+      for (let i = 0; i < 120; i++) v.frame();
+      expect(v.bgDraws).toHaveLength(0);
+      if (callback) v.videoFrame();
+      else {
+        v.timeupdate();
+        v.frame();
+      }
+      expect(v.bgDraws).toHaveLength(3);
+      expect(v.bgDraws[0][0]).toBe(v.elements.video);
+      const stale = [...v.videoFrames.values()][0];
+      v.send({ type: "stop" });
+      v.frame();
+      v.bgDraws.length = 0;
+      stale?.();
+      v.timeupdate();
+      v.frame();
+      expect(v.videoFrames.size).toBe(0);
+      expect(v.bgDraws).toHaveLength(0);
+    },
+  );
+
+  it("cancels hidden background callbacks and resumes after the stage changes", () => {
+    const v = viewer(true);
+    v.send({
+      type: "init",
+      epoch: "bg",
+      width: 1920,
+      height: 1080,
+      trickleIce: true,
+    });
+    v.playVideo();
+    v.videoFrame();
+    v.frame();
+    v.frame();
+    v.frame();
+    expect(v.videoFrames.size).toBe(1);
+    const stale = [...v.videoFrames.values()][0];
+    v.elements.stage.clientWidth = 1920;
+    v.elements.stage.clientHeight = 1080;
+    v.send({ type: "viewport", fillHeight: false });
+    v.bgDraws.length = 0;
+    stale();
+    v.frame();
+    expect(v.bgDraws).toHaveLength(0);
+    expect(v.videoFrames.size).toBe(0);
+    v.elements.stage.clientWidth = 400;
+    v.send({ type: "viewport", fillHeight: false });
+    v.frame();
+    expect(v.bgDraws).toHaveLength(3);
+    expect(v.videoFrames.size).toBe(1);
+    v.send({ type: "stop" });
+  });
   function landscapeViewer() {
     const v = viewer();
     v.elements.stage.clientWidth = 874;

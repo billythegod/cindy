@@ -52,7 +52,12 @@ export interface DesktopControllerDeps {
   /** Local hardware presence; must not hide displays when remote access is revoked. */
   displayPresent?(displayId: string): boolean;
   resolution?(displayId: string, modeId: string, beforeChange: () => void): Promise<void>;
-  restoreResolution?(displayId: string, modeId: string, beforeChange: () => void): Promise<void>;
+  restoreResolution?(
+    displayId: string,
+    modeId: string,
+    beforeChange: () => void,
+    expected: { width: number; height: number },
+  ): Promise<void>;
   createViewerDisplay?(
     displayId: string,
     isCurrent: () => boolean,
@@ -267,6 +272,7 @@ export class RemoteDesktopController {
               if (this.active || this.originalResolution !== original)
                 throw new Error('DESKTOP_LEASE_EXPIRED');
             },
+            original,
           );
         if (this.originalResolution === original) this.originalResolution = null;
       }
@@ -278,6 +284,11 @@ export class RemoteDesktopController {
       })
       .catch(() => {});
     return pending;
+  }
+  /** Join the same restoration used by disconnects before the process exits. */
+  async stopAndRestore(): Promise<void> {
+    this.stop();
+    await this.restoreStoppedDisplay();
   }
   /**
    * Input injection failed while the lease is still valid. Input belongs to the
@@ -498,6 +509,7 @@ export class RemoteDesktopController {
                 () => {
                   if (!current()) throw new Error('DESKTOP_LEASE_EXPIRED');
                 },
+                original,
               );
               await this.resolutionWrite;
               if (!current()) throw new Error('DESKTOP_LEASE_EXPIRED');
