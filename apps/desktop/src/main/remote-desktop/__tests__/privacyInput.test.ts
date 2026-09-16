@@ -70,3 +70,29 @@ it.each(['exit', 'timeout', 'oversized'])(
     monitor.stop();
   },
 );
+
+it('waits for actual process close after EOF or fallback kill, including repeated stop', async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const starting = watchPrivacyInput(f.local, f.failed, f.runtime);
+  await Promise.resolve();
+  f.line('ready\n');
+  const monitor = await starting;
+  let closed = false;
+  const stopping = monitor.stop();
+  expect(monitor.stop()).toBe(stopping);
+  void stopping.then(() => {
+    closed = true;
+  });
+  expect(f.child.stdin.end).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.child.kill).toHaveBeenCalledOnce();
+  expect(closed).toBe(false);
+  f.child.emit('exit');
+  await Promise.resolve();
+  expect(closed).toBe(false);
+  f.child.emit('close');
+  await stopping;
+  expect(closed).toBe(true);
+  expect(f.failed).not.toHaveBeenCalled();
+});

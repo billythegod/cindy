@@ -4,7 +4,7 @@ import { resolveDesktopInputBinary } from './inputHost';
 export interface PrivacyInputMonitor {
   confirm(): Promise<void>;
   resume(): Promise<void>;
-  stop(): void;
+  stop(): Promise<void>;
 }
 
 /** The existing signed helper runs in a separate, mask-owned observation mode.
@@ -22,12 +22,14 @@ export async function watchPrivacyInput(
   },
 ): Promise<PrivacyInputMonitor> {
   const child = runtime.spawn(await runtime.resolveBinary());
+  // Process close proves the OS has removed its hooks, unlike merely sending EOF.
+  const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
   let stopped = false;
   let buffer = '';
   let pending: { expected: string; done(error?: Error): void } | undefined;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   const stop = () => {
-    if (stopped) return;
+    if (stopped) return closed;
     stopped = true;
     clearInterval(heartbeat);
     pending?.done(new Error('DESKTOP_PRIVACY_UNAVAILABLE'));
@@ -35,6 +37,7 @@ export async function watchPrivacyInput(
     const timer = setTimeout(() => child.kill(), 1000);
     timer.unref();
     child.once('exit', () => clearTimeout(timer));
+    return closed;
   };
   const fail = () => {
     if (stopped) return;

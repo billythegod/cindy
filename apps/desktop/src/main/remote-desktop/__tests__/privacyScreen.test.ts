@@ -107,7 +107,11 @@ function fixture() {
   const excluded = vi.fn();
   const resume = vi.fn(async () => {});
   const suspend = vi.fn(async () => resume);
-  const monitor = { confirm: vi.fn(async () => {}), resume: vi.fn(async () => {}), stop: vi.fn() };
+  const monitor = {
+    confirm: vi.fn(async () => {}),
+    resume: vi.fn(async () => {}),
+    stop: vi.fn(async () => {}),
+  };
   let local!: () => void;
   let failed!: () => void;
   const masks = new PrivacyScreen(excluded, stopped, suspend, async (onLocal, onFailed) => {
@@ -292,4 +296,50 @@ it('does not expose the confirmation if the native injection fence fails', async
   await settle();
   expect(state.confirm).not.toHaveBeenCalled();
   expect(f.stopped).toHaveBeenCalledOnce();
+});
+
+it.each(['confirmed', 'watcher', 'renderer'] as const)(
+  'waits for hook exit before locking, with masks retained: %s',
+  async (reason) => {
+    const f = fixture();
+    let unhook!: () => void;
+    f.monitor.stop.mockReturnValue(
+      new Promise<void>((resolve) => {
+        unhook = resolve;
+      }),
+    );
+    await f.masks.set(true, () => true);
+    const window = state.windows[0];
+    if (reason === 'confirmed') f.local();
+    else if (reason === 'watcher') f.failed();
+    else window.webContents.emit('render-process-gone');
+    await settle();
+    expect(f.monitor.stop).toHaveBeenCalledOnce();
+    expect(f.stopped).not.toHaveBeenCalled();
+    expect(window.destroyed).toBe(false);
+    expect(f.excluded).toHaveBeenLastCalledWith([window.id]);
+    unhook();
+    await settle();
+    expect(f.stopped).toHaveBeenCalledOnce();
+    expect(window.destroyed).toBe(true);
+  },
+);
+
+it('does not lock a replacement lease after delayed old hook teardown', async () => {
+  const f = fixture();
+  let unhook!: () => void;
+  f.monitor.stop.mockReturnValueOnce(
+    new Promise<void>((resolve) => {
+      unhook = resolve;
+    }),
+  );
+  await f.masks.set(true, () => true);
+  f.failed();
+  f.masks.stop();
+  await f.masks.set(true, () => true);
+  unhook();
+  await settle();
+  expect(f.stopped).not.toHaveBeenCalled();
+  expect(state.windows[1].destroyed).toBe(false);
+  f.masks.stop();
 });

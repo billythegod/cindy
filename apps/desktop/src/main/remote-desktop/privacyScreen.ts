@@ -28,6 +28,10 @@ export class PrivacyScreen {
     // until the controller has finished locking and ended the viewing lease.
     const ending = ++this.generation;
     try {
+      // The confirming hook rejects injected input, including our lock shortcut.
+      // Keep the masks, but wait for hook teardown before asking the OS to lock.
+      await this.monitor?.stop();
+      if (ending !== this.generation) return;
       await this.stopped();
     } catch {
       log.warn('privacy disconnect failed');
