@@ -205,6 +205,63 @@ describe('native input lifecycle', () => {
       await flush();
     }
   });
+  it.each(['ready', 'failure', 'stop'] as const)(
+    'keeps resumed input paused through preparation and handshake: %s',
+    async (outcome) => {
+      const first = childProcess();
+      const replacement = childProcess();
+      const failure = vi.fn();
+      let prepared!: (binary: string) => void;
+      const resolveBinary = vi
+        .fn()
+        .mockResolvedValueOnce('/test/helper')
+        .mockImplementationOnce(
+          () =>
+            new Promise<string>((resolve) => {
+              prepared = resolve;
+            }),
+        );
+      const spawn = vi
+        .fn()
+        .mockImplementationOnce(() => {
+          queueMicrotask(() => first.child.stdout.emit('data', Buffer.from('ready\n')));
+          return first.typed;
+        })
+        .mockReturnValueOnce(replacement.typed);
+      const host = new DesktopInputHost(failure, { platform: 'darwin', resolveBinary, spawn });
+      const events = [{ kind: 'key' as const, code: 'Enter', down: true }];
+      await host.start('1');
+      const pausing = host.pauseForPrivacy();
+      first.exit();
+      const resume = await pausing;
+      const resuming = resume();
+      expect(() => host.input(events)).not.toThrow();
+      await Promise.resolve();
+      expect(() => host.input(events)).not.toThrow();
+      prepared('/test/helper');
+      await Promise.resolve();
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(() => host.input(events)).not.toThrow();
+      expect(replacement.child.stdin.write).not.toHaveBeenCalled();
+      if (outcome === 'stop') host.stop();
+      replacement.child.stdout.emit(
+        'data',
+        Buffer.from(outcome === 'failure' ? 'permission\n' : 'ready\n'),
+      );
+      await resuming;
+      if (outcome === 'ready') {
+        host.input(events);
+        expect(replacement.child.stdin.write).toHaveBeenCalledOnce();
+      } else {
+        expect(() => host.input(events)).toThrow('DESKTOP_INPUT_UNAVAILABLE');
+        expect(replacement.child.stdin.write).not.toHaveBeenCalled();
+      }
+      expect(failure).toHaveBeenCalledTimes(outcome === 'failure' ? 1 : 0);
+      host.stop();
+      replacement.exit();
+      await expect(withAgentDesktopInput(async () => {})).resolves.toBeUndefined();
+    },
+  );
   it.each([false, true])(
     'pauses remote input while retaining ownership; disconnected=%s',
     async (disconnected) => {

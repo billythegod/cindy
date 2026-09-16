@@ -212,6 +212,10 @@ export class DesktopInputHost {
     this.stop();
     const platform = this.runtime.platform ?? process.platform;
     if (platform !== 'darwin' && platform !== 'win32') throw new Error('DESKTOP_INPUT_UNSUPPORTED');
+    // A replacement helper is not usable until its ready handshake completes.
+    // In particular, canceling a privacy confirmation must keep dropping input
+    // throughout teardown, binary preparation and startup, without losing control.
+    this.privacyPaused = true;
     const generation = this.generation;
     await this.stopping;
     if (generation !== this.generation) throw new Error('DESKTOP_LEASE_EXPIRED');
@@ -231,6 +235,7 @@ export class DesktopInputHost {
         this.windows = connection;
         this.displayId = displayId;
         this.heartbeat = setInterval(() => this.write([]), 2000);
+        this.privacyPaused = false;
         return;
       }
       const binary = await this.runtime.resolveBinary();
@@ -281,6 +286,7 @@ export class DesktopInputHost {
         }
       });
       this.heartbeat = setInterval(() => this.write([]), 2000);
+      this.privacyPaused = false;
     } catch (error) {
       if (generation !== this.generation) throw new Error('DESKTOP_LEASE_EXPIRED');
       this.stop();
