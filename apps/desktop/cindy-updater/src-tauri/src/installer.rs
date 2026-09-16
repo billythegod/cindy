@@ -1311,20 +1311,47 @@ fn remove_staging_dir(path: &Path) -> io::Result<()> {
 /// rollbacks (which we intentionally do NOT auto-delete at end-of-run).
 /// Best-effort: any IO failure is ignored — sweeping is purely housekeeping.
 pub fn sweep_stale_temp_dirs() {
-    // Broad prefixes catch:
+    // TEMP still uses the historical prefixes:
     //   - cindy-update-{ts}/           current workdir layout (2026-07 rebrand)
     //   - xdt-update-{ts}/             legacy workdir layout
     //   - xdt-update-extract-{ts}/     legacy (pre-workdir refactor)
     //   - xdt-update-rollback-{ts}/    legacy
     //   - xdt-updater-{ts}.exe         legacy standalone updater binary
-    //   - cindy-update-{ts}/ under ProgramData staging for elevated+writable
-    let prefixes = ["cindy-update", "xdt-update"];
+    // ProgramData only deletes this updater's `cindy-update-{millis}` roots.
     let now = std::time::SystemTime::now();
-    sweep_stale_under(&std::env::temp_dir(), &prefixes, now);
-    sweep_stale_under(&protected_staging_base(), &prefixes, now);
+    sweep_stale_under(&std::env::temp_dir(), SweepNameFilter::TempPrefixes, now);
+    sweep_stale_under(
+        &protected_staging_base(),
+        SweepNameFilter::ProgramDataOwned,
+        now,
+    );
 }
 
-fn sweep_stale_under(root: &Path, prefixes: &[&str], now: std::time::SystemTime) {
+#[derive(Clone, Copy)]
+enum SweepNameFilter {
+    TempPrefixes,
+    ProgramDataOwned,
+}
+
+/// Exact `cindy-update-{ascii-digits}` used as the High-IL private root.
+/// Prefix matches such as `cindy-update-service` are not this updater's.
+pub(crate) fn is_owned_program_data_staging_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("cindy-update-") else {
+        return false;
+    };
+    !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn name_matches_sweep(name: &str, filter: SweepNameFilter) -> bool {
+    match filter {
+        SweepNameFilter::TempPrefixes => {
+            name.starts_with("cindy-update") || name.starts_with("xdt-update")
+        }
+        SweepNameFilter::ProgramDataOwned => is_owned_program_data_staging_name(name),
+    }
+}
+
+fn sweep_stale_under(root: &Path, filter: SweepNameFilter, now: std::time::SystemTime) {
     const MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60; // 7 days
     let entries = match fs::read_dir(root) {
         Ok(it) => it,
@@ -1334,7 +1361,7 @@ fn sweep_stale_under(root: &Path, prefixes: &[&str], now: std::time::SystemTime)
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if !prefixes.iter().any(|p| name_str.starts_with(p)) {
+        if !name_matches_sweep(&name_str, filter) {
             continue;
         }
         let meta = match entry.metadata() {
@@ -2032,9 +2059,9 @@ mod tests {
     use super::{
         acquire_update_lock, archive_matches_digest, bind_zip_sha256, extract_error_can_retry,
         create_protected_staging_tree, elevated_private_staging_root, finalize_retry_state,
-        install_writable_for_staging, lock_owned_by_foreign_process,
-        may_relaunch_with_current_integrity, may_self_elevate, path_is_within,
-        pre_elevation_failure_can_retry, prepare_retry_archive, program_data_dir,
+        install_writable_for_staging, is_owned_program_data_staging_name,
+        lock_owned_by_foreign_process, may_relaunch_with_current_integrity, may_self_elevate,
+        path_is_within, pre_elevation_failure_can_retry, prepare_retry_archive, program_data_dir,
         release_abandoned_update_lock, release_update_lock, remove_staging_dir,
         retain_update_lock_file, retry_allowed, retry_args, retry_available, retry_cli_args,
         retry_request_allowed, rollback, run, should_relaunch_after_abandoning_retry,
@@ -2104,6 +2131,49 @@ mod tests {
         fs::write(&file, b"not a directory").expect("create conflicting staging file");
         assert!(remove_staging_dir(&file).is_err());
         assert!(file.exists());
+    }
+
+    #[test]
+    fn program_data_sweep_keeps_unrelated_cindy_update_prefix_dirs() {
+        assert!(is_owned_program_data_staging_name("cindy-update-1710000000000"));
+        assert!(
+            !is_owned_program_data_staging_name("cindy-update-ts"),
+            "workdir leftovers that are not a millisecond timestamp are not ProgramData staging"
+        );
+        assert!(
+            !is_owned_program_data_staging_name("cindy-update-service"),
+            "a ProgramData service directory is not this updater's timestamped staging root"
+        );
+        assert!(!is_owned_program_data_staging_name("cindy-update"));
+        assert!(!is_owned_program_data_staging_name("xdt-update-extract-1"));
+
+        let temp = TestDir::new();
+        let stale_staging = temp.0.join("cindy-update-1710000000000");
+        let service = temp.0.join("cindy-update-service");
+        fs::create_dir(&stale_staging).unwrap();
+        fs::write(stale_staging.join("keep-marker"), b"staging").unwrap();
+        fs::create_dir(&service).unwrap();
+        fs::write(service.join("payload"), b"unrelated").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 24 * 60 * 60);
+        fs::File::open(&stale_staging)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        fs::File::open(&service).unwrap().set_modified(old).unwrap();
+        super::sweep_stale_under(
+            &temp.0,
+            super::SweepNameFilter::ProgramDataOwned,
+            std::time::SystemTime::now(),
+        );
+        assert!(
+            !stale_staging.exists(),
+            "timestamped private staging older than seven days is still eligible"
+        );
+        assert!(
+            service.exists(),
+            "ProgramData sweep must not delete cindy-update-service"
+        );
+        assert_eq!(fs::read(service.join("payload")).unwrap(), b"unrelated");
     }
 
     #[test]

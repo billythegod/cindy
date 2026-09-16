@@ -125,7 +125,9 @@ inherited `ProgramData` environment variable. Only that per-attempt private
 root uses the High-IL create path; an install directory that happens to live
 under ProgramData still uses ordinary `create_dir_all`. A protected Program
 Files install still stages next to the app. The archive digest is verified
-after the updater window is shown, not before.
+after the updater window is shown, not before. Stale cleanup under ProgramData
+deletes only `cindy-update-{digits}` roots this updater creates; a directory
+such as `cindy-update-service` is left alone.
 Unelevated per-user installs still probe and stay in TEMP.
 Failures before replacement delete those staging directories; only a rollback
 that itself failed keeps the backup for manual recovery.
