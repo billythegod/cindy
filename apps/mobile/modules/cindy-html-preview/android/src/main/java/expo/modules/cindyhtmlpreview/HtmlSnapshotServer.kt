@@ -156,7 +156,8 @@ internal class HtmlSnapshotServer(root: String, private val entry: String, priva
         disconnectWatcher?.cancel(true)
         synchronized(requests) {
           requests.remove(id)
-          future.getNow(null)?.file?.delete()
+          // On-demand files belong to the preview until stop(); snapshot assets are not request-owned.
+          if (onRequest == null) future.getNow(null)?.file?.delete()
         }
         onClose?.invoke(id)
       }

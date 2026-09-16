@@ -133,6 +133,7 @@ export async function createHtmlPreview(args: HtmlPreviewArgs, source: PreviewSo
   const controller = new AbortController();
   const pending = new Set<Promise<void>>();
   const queue = createFileReadQueue();
+  const materialized = new Map<string, { path: string; size: number }>();
   const current = () => !closed && source.isCurrent?.() !== false;
   const close = async () => {
     closed = true;
@@ -248,17 +249,22 @@ export async function createHtmlPreview(args: HtmlPreviewArgs, source: PreviewSo
       res.once('close', () => requestController.abort());
       const signal = AbortSignal.any([controller.signal, requestController.signal]);
       const work = queue('preview', async () => {
-        const directory = await fs.mkdtemp(path.join(staging, 'request-'));
-        try {
-          const asset = await materialize(relPath, directory, signal);
-          if (res.destroyed || !current()) return;
-          res.setHeader('Content-Type', MIME[path.extname(pathname).toLowerCase()] ?? 'application/octet-stream');
-          res.setHeader('Content-Length', asset.size);
-          if (req.method === 'HEAD') { res.end(); return; }
-          await pipeline(createReadStream(asset.path), res);
-        } finally {
-          await fs.rm(directory, { recursive: true, force: true });
+        let asset = materialized.get(relPath);
+        if (!asset) {
+          const directory = await fs.mkdtemp(path.join(staging, 'request-'));
+          try {
+            asset = await materialize(relPath, directory, signal);
+            materialized.set(relPath, asset);
+          } catch (error) {
+            await fs.rm(directory, { recursive: true, force: true });
+            throw error;
+          }
         }
+        if (res.destroyed || !current()) return;
+        res.setHeader('Content-Type', MIME[path.extname(pathname).toLowerCase()] ?? 'application/octet-stream');
+        res.setHeader('Content-Length', asset.size);
+        if (req.method === 'HEAD') { res.end(); return; }
+        await pipeline(createReadStream(asset.path), res);
       }, signal);
       pending.add(work);
       void work.catch((error) => {

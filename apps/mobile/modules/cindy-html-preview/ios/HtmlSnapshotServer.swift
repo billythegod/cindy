@@ -97,7 +97,9 @@ final class HtmlSnapshotServer {
     clientTimeouts.removeValue(forKey: id)?.cancel()
     clients.removeValue(forKey: id)?.cancel()
     if requests.removeValue(forKey: id) != nil { onClose?(id.uuidString) }
-    if let file = ownedFiles.removeValue(forKey: id) { try? FileManager.default.removeItem(at: file) }
+    if let file = ownedFiles.removeValue(forKey: id), onRequest == nil {
+      try? FileManager.default.removeItem(at: file)
+    }
   }
 
   func resolve(_ requestId: String, filename: String, mime: String, status: Int) -> Bool {

@@ -242,5 +242,5 @@ it('serializes resource copies so one preview cannot overlap 2 GiB materializati
   expect(other.status).toBe(200);
   expect(repeat.status).toBe(200);
   expect(maxActive).toBe(1);
-  expect(materialize).toHaveBeenCalledTimes(3);
+  expect(materialize).toHaveBeenCalledTimes(2);
 });
