@@ -138,7 +138,7 @@ export function RunningTokenRatePopover({
           <div className="flex items-center gap-2">
             <dt className="text-[var(--text-secondary)]">{t('chat.runningStatus.observedPeak')}</dt>
             <dd className="font-medium">
-              {history.peak > 0
+              {samples.length > 0
                 ? t('chat.runningStatus.tokenRate', {
                     rate: formatRecentOutputTokenRate(history.peak),
                   })

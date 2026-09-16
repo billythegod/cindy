@@ -6,10 +6,44 @@ import {
   RunningTokenRatePopover,
   useRunningTokenRateHistory,
 } from '@/features/cc-agent/RunningTokenRatePopover';
-import { clearRateHistoryCache } from '@/features/cc-agent/lib/runningTokenRateHistory';
+import {
+  clearRateHistoryCache,
+  emptyRateHistory,
+  recordRunningTokenRate,
+} from '@/features/cc-agent/lib/runningTokenRateHistory';
 
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: { rate?: string }) =>
+      key === 'chat.runningStatus.tokenRate' ? `${options?.rate} tok/s` : key,
+  }),
+}));
 afterEach(cleanup);
+
+it('distinguishes an unobserved peak from measured zero throughput', () => {
+  const props = {
+    elapsedText: '1s',
+    rate: null,
+    rateText: null,
+    averageRate: null,
+    outputTokens: 0,
+  };
+  let history = emptyRateHistory(1);
+  const { rerender } = render(<RunningTokenRatePopover {...props} history={history} />);
+  fireEvent.click(screen.getByRole('button'));
+  const peak = () => screen.getByText('chat.runningStatus.observedPeak').nextElementSibling;
+  expect(peak()?.textContent).toBe('—');
+  for (const generationDurationMs of [0, 1000]) {
+    history = recordRunningTokenRate(history, {
+      startedAt: 1,
+      outputTokens: 0,
+      generationDurationMs,
+      generationReliable: true,
+    });
+  }
+  rerender(<RunningTokenRatePopover {...props} history={history} />);
+  expect(peak()?.textContent).toBe('0 tok/s');
+});
 
 it('keeps pinned history while its trigger falls back to tokens or elapsed-only', () => {
   const props = {
