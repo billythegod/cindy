@@ -632,7 +632,9 @@ Android supports text, HTML, HTTP(S) URLs and PNG images (not RTF), limits decod
 clipboard image reads to 4 million pixels, with 8 MiB limits on both the source
 and encoded PNG. Oversized images are rejected before unbounded encoding or
 Base64 copies; images are not downsampled. Android clipboard images
-use grant-scoped cache files, swept after one hour on a later image write.
+use grant-scoped cache files. A later successful image write removes files older
+than one hour, preserving every URI still referenced by the current clipboard;
+failed preparation/publication never removes an earlier image.
 
 ### Opt-in Mobile clipboard synchronization
 

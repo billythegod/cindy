@@ -82,6 +82,7 @@ describe("automatic clipboard synchronization", () => {
   it("skips an unsupported computer snapshot until its counter changes", async () => {
     const h = harness();
     await h.engine.tick();
+    h.request.mockClear();
     h.remote("2");
     const original = h.request.getMockImplementation()!;
     h.request.mockImplementation(async (message) => {
@@ -192,6 +193,7 @@ describe("automatic clipboard synchronization", () => {
   it("does not resend identical copies or report identical concurrent copies as a conflict", async () => {
     const h = harness();
     await h.engine.tick();
+    h.request.mockClear();
     h.local("2", '{"text":"local-1"}');
     await h.engine.tick();
     expect(
@@ -249,16 +251,43 @@ describe("automatic clipboard synchronization", () => {
       ).toHaveLength(direction === "local" ? 1 : 0);
     },
   );
-  it("does not transfer existing contents on opt-in", async () => {
+  it("reads both initial digests without writing existing contents on opt-in", async () => {
     const h = harness();
     await h.engine.tick();
     await h.engine.tick();
     expect(h.write).not.toHaveBeenCalled();
     expect(
-      h.request.mock.calls.every(
-        ([request]) => request.op === "clipboardVersion",
+      h.request.mock.calls.some(
+        ([request]) =>
+          request.op === "clipboardContent" &&
+          ["begin", "write", "commit", "paste"].includes(request.action),
       ),
-    ).toBe(true);
+    ).toBe(false);
+  });
+  it("ignores a computer counter-only rewrite immediately after opt-in", async () => {
+    const h = harness();
+    await h.engine.tick();
+    h.remote("2", JSON.stringify({ text: "remote-1" }));
+    await h.engine.tick();
+    expect(h.write).not.toHaveBeenCalled();
+    h.remote("3");
+    await h.engine.tick();
+    expect(h.write).toHaveBeenCalledTimes(1);
+  });
+  it("does not commit a baseline if local content changes during the remote read", async () => {
+    const h = harness();
+    const baseline: ClipboardSyncBaseline = { local: "", remote: "" };
+    const original = h.request.getMockImplementation()!;
+    h.request.mockImplementation(async (message) => {
+      if (message.op === "clipboardContent" && message.action === "copy")
+        h.local("2");
+      return original(message);
+    });
+    await expect(new ClipboardSync(h.deps, baseline).tick()).rejects.toThrow(
+      "CLIPBOARD_CHANGED",
+    );
+    expect(baseline.local).toBe("");
+    expect(h.write).not.toHaveBeenCalled();
   });
   it.each(["local", "remote"] as const)(
     "syncs a %s change once without echoing its own write",

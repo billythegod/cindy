@@ -8,6 +8,14 @@ import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex } from "@noble/hashes/utils";
 import { clipboardSyncErrorCode } from "./clipboardSyncFailure";
 
+function skippableContent(error: unknown): boolean {
+  return [
+    "CLIPBOARD_EMPTY",
+    "CLIPBOARD_UNSUPPORTED",
+    "CLIPBOARD_TOO_LONG",
+  ].includes(clipboardSyncErrorCode(error));
+}
+
 export interface LocalClipboardReadCache {
   version?: string;
   digest?: string;
@@ -248,19 +256,33 @@ export class ClipboardSync {
           try {
             digest = (await this.readLocal(local)).digest;
           } catch (error) {
-            if (
-              !String(error instanceof Error ? error.message : error).includes(
-                "CLIPBOARD_EMPTY",
-              )
-            )
-              throw error;
+            if (!skippableContent(error)) throw error;
+            this.deps.trace?.("content-skipped");
             if ((await this.deps.localVersion()) !== local)
               throw new Error("CLIPBOARD_CHANGED");
           }
         }
+        // Establish both content baselines without writing either clipboard.
+        // Counter-only rewrites must not import contents predating opt-in.
+        let remoteDigest: string | undefined;
+        try {
+          remoteDigest = (await this.readRemote(remote)).digest;
+        } catch (error) {
+          if (!skippableContent(error)) throw error;
+          this.deps.trace?.("content-skipped");
+          if ((await this.remoteVersion()) !== remote)
+            throw new Error("CLIPBOARD_CHANGED");
+        }
+        if ((await this.deps.localVersion()) !== local)
+          throw new Error("CLIPBOARD_CHANGED");
         this.check();
         this.rememberLocal(local, digest);
-        Object.assign(this.baseline, { local, remote, localDigest: digest });
+        Object.assign(this.baseline, {
+          local,
+          remote,
+          localDigest: digest,
+          remoteDigest,
+        });
         return;
       }
       let localChanged = local !== this.baseline.local;
@@ -334,11 +356,7 @@ export class ClipboardSync {
       if (
         local !== undefined &&
         remote !== undefined &&
-        [
-          "CLIPBOARD_EMPTY",
-          "CLIPBOARD_UNSUPPORTED",
-          "CLIPBOARD_TOO_LONG",
-        ].includes(clipboardSyncErrorCode(error))
+        skippableContent(error)
       ) {
         this.check();
         Object.assign(this.baseline, {

@@ -144,6 +144,7 @@ class CindyRemotePresentationModule : Module() {
     val uri = content.optString("url", null)?.let { Uri.parse(it) }
     val png = content.optString("png", null)
     var imageFile: File? = null
+    var expiredImages = emptyMap<File, Uri>()
     var committed = false
     try {
       val clip = when {
@@ -153,9 +154,12 @@ class CindyRemotePresentationModule : Module() {
             throw Exception("CLIPBOARD_UNSUPPORTED")
           val context = appContext.reactContext!!
           val directory = File(context.cacheDir, "remote-clipboard").apply { mkdirs() }
-          // Temporary, grant-scoped clipboard images. Keep recent URIs readable;
-          // sweep older images on the next write, outside all media libraries.
-          directory.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 3_600_000 }?.forEach { it.delete() }
+          // Enumerate on IO, but do not unlink anything before publication.
+          expiredImages = directory.listFiles()?.filter {
+            System.currentTimeMillis() - it.lastModified() > 3_600_000
+          }?.associateWith {
+            FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", it)
+          } ?: emptyMap()
           imageFile = File(directory, "${UUID.randomUUID()}.png")
           imageFile!!.writeBytes(bytes)
           val imageUri = FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", imageFile!!)
@@ -173,6 +177,14 @@ class CindyRemotePresentationModule : Module() {
         committed = true
         // Change the token before returning even if the notification is delayed.
         clipboardGeneration.incrementAndGet()
+        // No suspension between the current-URI check and metadata-only unlink:
+        // another module write cannot publish a candidate while it is deleted.
+        // Failure to inspect the current clipboard means retaining every file.
+        runCatching {
+          val current = clipboard.primaryClip ?: return@runCatching
+          val retained = (0 until current.itemCount).mapNotNull { current.getItemAt(it).uri }.toSet()
+          expiredImages.forEach { (file, uri) -> if (uri !in retained) file.delete() }
+        }
         clipboardVersion()
       }
     } finally {
