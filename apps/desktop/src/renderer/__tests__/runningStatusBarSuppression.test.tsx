@@ -73,9 +73,36 @@ const RunningStatusBar = new Function(
   tokenUsage: number;
   outputTokens: number;
   generationDurationMs: number;
+  generationReliable?: boolean;
 }>;
 
 afterEach(cleanup);
+
+it('opens measured zero history and restores fallback across reliability and turn changes', () => {
+  const props = {
+    visible: true,
+    status: 'Thinking',
+    startedAt: 1,
+    tokenUsage: 100,
+    outputTokens: 0,
+    generationDurationMs: 1000,
+    generationReliable: true,
+  };
+  const { container, rerender } = render(<RunningStatusBar {...props} />);
+  const trigger = () => container.querySelector('[data-running-status-meta] button');
+  expect(trigger()).toBeNull();
+  rerender(<RunningStatusBar {...props} generationDurationMs={2000} />);
+  expect(trigger()).not.toBeNull();
+  fireEvent.click(trigger()!);
+  expect(screen.getByRole('dialog').textContent).not.toContain('—');
+  fireEvent.click(screen.getByRole('button', { name: 'titleBar.close' }));
+  rerender(<RunningStatusBar {...props} generationDurationMs={2000} generationReliable={false} />);
+  expect(trigger()).toBeNull();
+  rerender(<RunningStatusBar {...props} startedAt={2} />);
+  expect(trigger()).toBeNull();
+  rerender(<RunningStatusBar {...props} startedAt={2} generationDurationMs={2000} />);
+  expect(trigger()).not.toBeNull();
+});
 
 it.each([true, false])(
   'plan review preserves the collapsed indicator and suppresses a pinned panel (running=%s)',

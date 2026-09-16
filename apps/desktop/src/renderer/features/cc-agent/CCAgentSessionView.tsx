@@ -5731,12 +5731,6 @@ function RunningStatusBar({
   // incrementing number. Rate does not use this: locally ticking the
   // denominator would make a paused model look like decaying speed.
   const animatedTokens = useAnimatedNumber(tokenUsage, 400);
-  const usageMeta = resolveRunningUsageMeta({
-    outputTokens,
-    generationDurationMs,
-    generationReliable,
-    tokenUsage,
-  });
   const tokenCountText = t('chat.runningStatus.tokenCount', {
     tokens: formatRunningTokenCount(animatedTokens),
   });
@@ -5752,6 +5746,13 @@ function RunningStatusBar({
       !workflowWaiting,
   });
   const latestRate = rateHistory.latestRate;
+  const usageMeta = resolveRunningUsageMeta({
+    outputTokens,
+    generationDurationMs,
+    generationReliable,
+    tokenUsage,
+    latestRate,
+  });
   const latestRateText = latestRate !== null ? formatRecentOutputTokenRate(latestRate) : null;
   const rateText =
     !isHidden && usageMeta.kind === 'rate'

@@ -27,6 +27,8 @@ export function resolveRunningUsageMeta(input: {
   generationDurationMs: number;
   generationReliable: boolean;
   tokenUsage: number;
+  /** Latest paired sample for the current turn; historical points alone are insufficient. */
+  latestRate?: number | null;
 }): RunningUsageMeta {
   const rate = formatLiveOutputTokenRate(
     input.outputTokens,
@@ -34,6 +36,14 @@ export function resolveRunningUsageMeta(input: {
     input.generationReliable,
   );
   if (rate) return { kind: 'rate', rate };
+  if (
+    input.latestRate === 0 &&
+    input.outputTokens === 0 &&
+    input.generationReliable &&
+    Number.isFinite(input.generationDurationMs) &&
+    input.generationDurationMs > 0
+  )
+    return { kind: 'rate', rate: '0' };
   if (input.tokenUsage > 0) return { kind: 'tokens' };
   return { kind: 'none' };
 }
