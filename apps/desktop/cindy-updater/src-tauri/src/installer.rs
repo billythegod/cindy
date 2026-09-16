@@ -1,6 +1,6 @@
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
@@ -154,8 +154,42 @@ fn retry_allowed(can_retry: bool, zip: &Path, expected_sha256: Option<&str>) -> 
     }
 }
 
-pub(crate) fn retry_archive(args: &CliArgs) -> std::path::PathBuf {
+pub(crate) fn retry_archive(args: &CliArgs) -> PathBuf {
     args.workdir.join("retry.zip")
+}
+
+/// Recheck the persisted retry state. The digest must come from the same
+/// `CliArgs` that Retry will spawn, not a copy that never received the bind.
+pub(crate) fn retry_request_allowed(
+    args: &CliArgs,
+    phase: Phase,
+    can_retry: bool,
+) -> Result<(), String> {
+    if phase != Phase::Failed || !can_retry {
+        return Err("unavailable".into());
+    }
+    let digest = args.zip_sha256.as_deref().unwrap_or("");
+    if digest.is_empty() || !archive_matches_digest(&retry_archive(args), digest) {
+        return Err("archive_unavailable".into());
+    }
+    Ok(())
+}
+
+/// Elevated retries copy into a UAC-protected install dir. Staging under the
+/// unelevated `%TEMP%` workdir would let a medium-integrity process replace
+/// extracted files before `copy_tree`. Keep extract/backup next to the app
+/// instead; unelevated installs stay in the temp workdir.
+pub(crate) fn staging_dirs(args: &CliArgs) -> (PathBuf, PathBuf) {
+    let ts = workdir_ts(&args.workdir);
+    let root = if args.elevated {
+        &args.app_dir
+    } else {
+        &args.workdir
+    };
+    (
+        root.join(format!("cindy-update-extract-{ts}")),
+        root.join(format!("cindy-update-rollback-{ts}")),
+    )
 }
 
 fn prepare_retry_archive(args: &CliArgs) -> bool {
@@ -339,9 +373,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
     //    attempt timestamp regardless of whether the parent context survives.
     //    A user retry reuses this workdir, so discard any partial staging from
     //    the previous attempt before rebuilding it.
-    let ts = workdir_ts(&args.workdir);
-    let extract_dir = args.workdir.join(format!("cindy-update-extract-{ts}"));
-    let backup_dir = args.workdir.join(format!("cindy-update-rollback-{ts}"));
+    let (extract_dir, backup_dir) = staging_dirs(args);
     remove_staging_dir(&extract_dir)
         .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
     remove_staging_dir(&backup_dir)
@@ -927,7 +959,8 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 mod tests {
     use super::{
         archive_matches_digest, bind_zip_sha256, path_is_within, prepare_retry_archive,
-        remove_staging_dir, retry_allowed, retry_available, retry_cli_args, rollback,
+        remove_staging_dir, retry_allowed, retry_available, retry_cli_args, retry_request_allowed,
+        rollback, staging_dirs, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use std::fs;
@@ -1109,6 +1142,58 @@ mod tests {
             bind_zip_sha256(&mut args).unwrap_err(),
             "archive_unavailable"
         );
+    }
+
+    #[test]
+    fn retry_request_uses_the_digest_stored_on_the_same_args() {
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.zip = temp.0.join("update.zip");
+        args.workdir = temp.0.join("workdir");
+        fs::create_dir(&args.workdir).unwrap();
+        fs::write(&args.zip, b"trusted-archive").unwrap();
+        let unbound = args.clone();
+        bind_zip_sha256(&mut args).expect("capture digest");
+        assert!(prepare_retry_archive(&args));
+        let retry_zip = super::retry_archive(&args);
+        assert_eq!(
+            retry_request_allowed(&unbound, Phase::Failed, true),
+            Err("archive_unavailable".into())
+        );
+        assert!(retry_request_allowed(&args, Phase::Failed, true).is_ok());
+        assert!(archive_matches_digest(
+            &retry_zip,
+            args.zip_sha256.as_deref().unwrap()
+        ));
+    }
+
+    #[test]
+    fn elevated_staging_stays_inside_the_install_directory() {
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.elevated = true;
+        args.app_dir = temp.0.join("Cindy");
+        args.workdir = temp.0.join("workdir");
+        fs::create_dir(&args.app_dir).unwrap();
+        fs::create_dir(&args.workdir).unwrap();
+        let (extract_dir, backup_dir) = staging_dirs(&args);
+        assert!(extract_dir.starts_with(&args.app_dir));
+        assert!(backup_dir.starts_with(&args.app_dir));
+        assert!(!extract_dir.starts_with(&args.workdir));
+    }
+
+    #[test]
+    fn unelevated_staging_stays_in_the_temp_workdir() {
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.elevated = false;
+        args.app_dir = temp.0.join("Cindy");
+        args.workdir = temp.0.join("workdir");
+        fs::create_dir(&args.app_dir).unwrap();
+        fs::create_dir(&args.workdir).unwrap();
+        let (extract_dir, backup_dir) = staging_dirs(&args);
+        assert!(extract_dir.starts_with(&args.workdir));
+        assert!(backup_dir.starts_with(&args.workdir));
     }
 
     #[test]

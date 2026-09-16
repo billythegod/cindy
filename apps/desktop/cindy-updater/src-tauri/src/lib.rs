@@ -65,18 +65,11 @@ fn retry_update(state: State<'_, AppState>) -> Result<(), String> {
         if *started {
             return Err("in_progress".into());
         }
-        let can_retry = {
+        let (phase, can_retry) = {
             let status = state.last_status.lock().unwrap();
-            status.phase == Phase::Failed && status.can_retry
+            (status.phase, status.can_retry)
         };
-        if !can_retry {
-            return Err("unavailable".into());
-        }
-        let archive = installer::retry_archive(&state.args);
-        let digest = state.args.zip_sha256.as_deref().unwrap_or("");
-        if digest.is_empty() || !installer::archive_matches_digest(&archive, digest) {
-            return Err("archive_unavailable".into());
-        }
+        installer::retry_request_allowed(&state.args, phase, can_retry)?;
         installer::ensure_retry_processes_closed(&state.args)?;
         *started = true;
     }
@@ -108,13 +101,16 @@ fn retry_update(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 pub fn run() {
-    let args = CliArgs::parse();
+    let mut args = CliArgs::parse();
     logger::init(&args.log);
     logger::info(format!(
         "[cindy-updater] starting, version={}, args={:?}",
         env!("CARGO_PKG_VERSION"),
         args
     ));
+    if let Err(error) = installer::bind_zip_sha256(&mut args) {
+        logger::error(format!("[cindy-updater] archive unavailable ({error})"));
+    }
     // Best-effort sweep of >7-day-old current and legacy update leftovers in %TEMP%.
     // Catches backup dirs from prior failed rollbacks that we intentionally
     // kept around for manual recovery. Bounded so disk doesn't grow forever.
