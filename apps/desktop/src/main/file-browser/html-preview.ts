@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { createFileReadQueue } from '@cindy/device-link';
 import { HTML_SNAPSHOT_CSP, withSnapshotHtmlCsp } from '@cindy/maker-shared/file-preview';
 import type { DirEntry } from '@cindy/file-browser-core';
 import { toWorkdirRel } from '../../shared/workdirPath.js';
@@ -131,6 +132,7 @@ export async function createHtmlPreview(args: HtmlPreviewArgs, source: PreviewSo
   let closed = false;
   const controller = new AbortController();
   const pending = new Set<Promise<void>>();
+  const queue = createFileReadQueue();
   const current = () => !closed && source.isCurrent?.() !== false;
   const close = async () => {
     closed = true;
@@ -245,7 +247,7 @@ export async function createHtmlPreview(args: HtmlPreviewArgs, source: PreviewSo
       const requestController = new AbortController();
       res.once('close', () => requestController.abort());
       const signal = AbortSignal.any([controller.signal, requestController.signal]);
-      const work = (async () => {
+      const work = queue('preview', async () => {
         const directory = await fs.mkdtemp(path.join(staging, 'request-'));
         try {
           const asset = await materialize(relPath, directory, signal);
@@ -257,7 +259,7 @@ export async function createHtmlPreview(args: HtmlPreviewArgs, source: PreviewSo
         } finally {
           await fs.rm(directory, { recursive: true, force: true });
         }
-      })();
+      }, signal);
       pending.add(work);
       void work.catch((error) => {
         if (res.destroyed) return;

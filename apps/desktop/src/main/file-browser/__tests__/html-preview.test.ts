@@ -214,3 +214,33 @@ it('serves metadata for a resource above 100 MiB without a preview size rejectio
   expect(response.status).toBe(200);
   expect(Number(response.headers.get('content-length'))).toBe(101 * 1024 * 1024);
 });
+
+it('serializes resource copies so one preview cannot overlap 2 GiB materializations', async () => {
+  const { dir, args, source } = await fixture();
+  await fs.writeFile(path.join(dir, 'other.bin'), 'payload');
+  let active = 0;
+  let maxActive = 0;
+  const materialize = vi.fn(async (from: string, to: string) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    active -= 1;
+    await fs.copyFile(from, to);
+    return to;
+  });
+  const preview = await createHtmlPreview(args, { ...source, materialize });
+  cleanups.push(preview.close);
+  const initial = await fetch(preview.url, { redirect: 'manual' });
+  const cookie = initial.headers.get('set-cookie')!.split(';')[0];
+  const load = (p: string) => fetch(new URL(p, preview.url), { headers: { cookie } });
+  const [html, other, repeat] = await Promise.all([
+    load('/index.html'),
+    load('/other.bin'),
+    load('/index.html?i=1'),
+  ]);
+  expect(html.status).toBe(200);
+  expect(other.status).toBe(200);
+  expect(repeat.status).toBe(200);
+  expect(maxActive).toBe(1);
+  expect(materialize).toHaveBeenCalledTimes(3);
+});
