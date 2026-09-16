@@ -267,3 +267,54 @@ it('restores speed history from the per-session cache after remounting', () => {
   expect(screen.getByRole('img').querySelectorAll('path')).toHaveLength(1);
   expect(screen.getByRole('dialog').textContent).toContain('—');
 });
+
+it('does not fabricate a rate when restoring an idle session whose next turn finished while away', () => {
+  clearRateHistoryCache();
+  function Harness({
+    sessionKey,
+    startedAt,
+    outputTokens,
+    generationDurationMs,
+  }: {
+    sessionKey: string | null;
+    startedAt: number | null;
+    outputTokens: number;
+    generationDurationMs: number;
+  }) {
+    const history = useRunningTokenRateHistory({
+      sessionKey,
+      startedAt,
+      outputTokens,
+      generationDurationMs,
+      generationReliable: true,
+    });
+    return (
+      <RunningTokenRatePopover
+        elapsedText="10s"
+        rate={history.latestRate === null ? null : String(history.latestRate)}
+        rateText="speed"
+        averageRate={null}
+        outputTokens={outputTokens}
+        history={history}
+      />
+    );
+  }
+  const first = render(
+    <Harness sessionKey="idle-a" startedAt={1} outputTokens={0} generationDurationMs={0} />,
+  );
+  first.rerender(
+    <Harness sessionKey="idle-a" startedAt={1} outputTokens={100} generationDurationMs={1000} />,
+  );
+  first.unmount();
+
+  // 切离期间会话在后台跑完新一轮；切回时已空闲，store 里是新轮的累计计数。
+  const second = render(
+    <Harness sessionKey="idle-a" startedAt={null} outputTokens={500} generationDurationMs={10000} />,
+  );
+  fireEvent.click(screen.getByRole('button'));
+  // 新轮计数减旧轮 baseline 得出的 44.4 tok/s 是伪造区间，不得追加；
+  // 图表仍只有缓存里的 1 个采样点（仅轴线），最新速度保持最后的真实测量。
+  expect(screen.getByRole('img').querySelectorAll('path')).toHaveLength(1);
+  expect(screen.getByRole('dialog').textContent).not.toContain('44.4');
+  expect(screen.getByRole('dialog').textContent).toContain('100');
+});

@@ -23,11 +23,13 @@ export function useRunningTokenRateHistory(input: {
   const { sessionKey, startedAt, outputTokens, generationDurationMs, generationReliable } = input;
   // 挂载时从按会话的进程内缓存播种：RunningStatusBar 以 sessionId 为 key，
   // 切走再切回是全新挂载，历史从缓存恢复而不是从零开始。
-  const [history, setHistory] = useState<RateHistory>(() =>
-    sessionKey
-      ? (loadCachedRateHistory(sessionKey) ?? emptyRateHistory(null))
-      : emptyRateHistory(null),
-  );
+  const [history, setHistory] = useState<RateHistory>(() => {
+    const cached = sessionKey ? loadCachedRateHistory(sessionKey) : null;
+    if (!cached) return emptyRateHistory(null);
+    // 空闲态恢复时必须丢弃 baseline：此时看不到计数属于哪一轮，若会话在
+    // 后台跑完了新一轮，用旧轮 baseline 去减新轮累计计数会伪造区间速度。
+    return startedAt === null ? { ...cached, baseline: null } : cached;
+  });
   useEffect(() => {
     setHistory((previous) =>
       recordRunningTokenRate(previous, {
