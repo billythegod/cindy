@@ -6,18 +6,28 @@ import { Tooltip } from '@/components/ui/tooltip';
 import { formatRecentOutputTokenRate, formatRunningTokenCount } from './lib/runningTokenUsage';
 import {
   emptyRateHistory,
+  loadCachedRateHistory,
   recordRunningTokenRate,
+  saveCachedRateHistory,
   type RateHistory,
 } from './lib/runningTokenRateHistory';
 
 export function useRunningTokenRateHistory(input: {
+  /** 会话身份：用于进程内缓存速度历史，切任务再切回不清零（重启应用清零）。 */
+  sessionKey: string | null;
   startedAt: number | null;
   outputTokens: number;
   generationDurationMs: number;
   generationReliable: boolean;
 }) {
-  const [history, setHistory] = useState<RateHistory>(() => emptyRateHistory(null));
-  const { startedAt, outputTokens, generationDurationMs, generationReliable } = input;
+  const { sessionKey, startedAt, outputTokens, generationDurationMs, generationReliable } = input;
+  // 挂载时从按会话的进程内缓存播种：RunningStatusBar 以 sessionId 为 key，
+  // 切走再切回是全新挂载，历史从缓存恢复而不是从零开始。
+  const [history, setHistory] = useState<RateHistory>(() =>
+    sessionKey
+      ? (loadCachedRateHistory(sessionKey) ?? emptyRateHistory(null))
+      : emptyRateHistory(null),
+  );
   useEffect(() => {
     setHistory((previous) =>
       recordRunningTokenRate(previous, {
@@ -28,6 +38,9 @@ export function useRunningTokenRateHistory(input: {
       }),
     );
   }, [startedAt, outputTokens, generationDurationMs, generationReliable]);
+  useEffect(() => {
+    if (sessionKey) saveCachedRateHistory(sessionKey, history);
+  }, [sessionKey, history]);
   return startedAt === null || history.startedAt === startedAt
     ? history
     : { ...history, startedAt, baseline: null, latestRate: null };

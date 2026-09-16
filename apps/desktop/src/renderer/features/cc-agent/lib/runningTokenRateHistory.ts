@@ -82,3 +82,37 @@ export function recordRunningTokenRate(
     latestRate: rate,
   };
 }
+
+const MAX_CACHED_SESSIONS = 20;
+
+/**
+ * 进程内按会话缓存速度历史：切到其他任务再切回同一任务时图表不清零。
+ * 刻意不落盘（磁盘持久化超出本功能边界），应用重启后自然清零。
+ */
+const rateHistoryBySession = new Map<string, RateHistory>();
+
+export function loadCachedRateHistory(sessionKey: string): RateHistory | null {
+  const cached = rateHistoryBySession.get(sessionKey);
+  if (!cached) return null;
+  // Map 按插入序迭代：读到的会话移到队尾，淘汰从队头取最久未用的。
+  rateHistoryBySession.delete(sessionKey);
+  rateHistoryBySession.set(sessionKey, cached);
+  return cached;
+}
+
+export function saveCachedRateHistory(sessionKey: string, history: RateHistory): void {
+  // 没有采样点就没有可恢复的图表，不必占缓存名额。
+  if (history.samples.length === 0) return;
+  rateHistoryBySession.delete(sessionKey);
+  rateHistoryBySession.set(sessionKey, history);
+  while (rateHistoryBySession.size > MAX_CACHED_SESSIONS) {
+    const oldestKey = rateHistoryBySession.keys().next().value;
+    if (oldestKey === undefined) break;
+    rateHistoryBySession.delete(oldestKey);
+  }
+}
+
+/** 整体清空；供测试与将来的登出/数据清理流程使用。 */
+export function clearRateHistoryCache(): void {
+  rateHistoryBySession.clear();
+}

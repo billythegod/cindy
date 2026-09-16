@@ -6,6 +6,7 @@ import {
   RunningTokenRatePopover,
   useRunningTokenRateHistory,
 } from '@/features/cc-agent/RunningTokenRatePopover';
+import { clearRateHistoryCache } from '@/features/cc-agent/lib/runningTokenRateHistory';
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 afterEach(cleanup);
@@ -131,6 +132,7 @@ it('keeps the pinned card across turns while awaiting a fresh rate', async () =>
     generationDurationMs: number;
   }) {
     const history = useRunningTokenRateHistory({
+      sessionKey: null,
       startedAt,
       outputTokens,
       generationDurationMs,
@@ -204,4 +206,64 @@ it('keeps a clicked panel open through outside clicks, focus changes and repeate
   fireEvent.click(screen.getByRole('button', { name: 'titleBar.close' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(onPinnedChange).toHaveBeenLastCalledWith(false);
+});
+
+it('restores speed history from the per-session cache after remounting', () => {
+  clearRateHistoryCache();
+  function Harness({
+    sessionKey,
+    startedAt,
+    outputTokens,
+    generationDurationMs,
+  }: {
+    sessionKey: string | null;
+    startedAt: number | null;
+    outputTokens: number;
+    generationDurationMs: number;
+  }) {
+    const history = useRunningTokenRateHistory({
+      sessionKey,
+      startedAt,
+      outputTokens,
+      generationDurationMs,
+      generationReliable: true,
+    });
+    return (
+      <RunningTokenRatePopover
+        elapsedText="10s"
+        rate={history.latestRate === null ? null : String(history.latestRate)}
+        rateText="speed"
+        averageRate={null}
+        outputTokens={outputTokens}
+        history={history}
+      />
+    );
+  }
+  const first = render(
+    <Harness sessionKey="cache-a" startedAt={1} outputTokens={0} generationDurationMs={0} />,
+  );
+  first.rerender(
+    <Harness sessionKey="cache-a" startedAt={1} outputTokens={100} generationDurationMs={1000} />,
+  );
+  first.rerender(
+    <Harness sessionKey="cache-a" startedAt={1} outputTokens={150} generationDurationMs={2000} />,
+  );
+  first.unmount();
+
+  // 切回同一会话：图表从缓存恢复，且恢复的 baseline 能继续算出新的配对速度。
+  const second = render(
+    <Harness sessionKey="cache-a" startedAt={1} outputTokens={200} generationDurationMs={3000} />,
+  );
+  fireEvent.click(screen.getByRole('button'));
+  expect(screen.getByRole('img').querySelectorAll('path')).toHaveLength(3);
+  expect(screen.getByRole('dialog').textContent).toContain('50');
+  second.unmount();
+
+  // 另一个会话没有历史：从零等待，不串会话。
+  const third = render(
+    <Harness sessionKey="cache-b" startedAt={1} outputTokens={0} generationDurationMs={0} />,
+  );
+  fireEvent.click(screen.getByRole('button'));
+  expect(screen.getByRole('img').querySelectorAll('path')).toHaveLength(1);
+  expect(screen.getByRole('dialog').textContent).toContain('—');
 });

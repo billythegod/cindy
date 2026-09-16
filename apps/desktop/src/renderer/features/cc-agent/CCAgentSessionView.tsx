@@ -4727,6 +4727,7 @@ export function CCAgentSessionView({
               ) : !pendingPlanReview || (hasControlledBanner && controlledBannerCollapsed) ? (
                 <RunningStatusBar
                   key={sessionId}
+                  sessionKey={sessionId ?? null}
                   status={composerStatus}
                   tokenUsage={agentStatus.tokenUsage}
                   outputTokens={agentStatus.outputTokens ?? 0}
@@ -5561,6 +5562,7 @@ function RunningStatusBar({
   onStopBackgroundTasks,
   rightLeadingSlot = null,
   suppressContent = false,
+  sessionKey = null,
   className,
 }: {
   status: string;
@@ -5601,6 +5603,8 @@ function RunningStatusBar({
   rightLeadingSlot?: ReactNode;
   /** 交互卡接管 composer 时立即隐藏旧运行文案/token，只保留折叠呼吸灯。 */
   suppressContent?: boolean;
+  /** 会话身份：速度历史按它做进程内缓存，切任务再切回图表不清零。 */
+  sessionKey?: string | null;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -5728,6 +5732,7 @@ function RunningStatusBar({
     tokens: formatRunningTokenCount(animatedTokens),
   });
   const rateHistory = useRunningTokenRateHistory({
+    sessionKey,
     startedAt,
     outputTokens,
     generationDurationMs,

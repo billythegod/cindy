@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clearRateHistoryCache,
   emptyRateHistory,
+  loadCachedRateHistory,
   recordRunningTokenRate,
+  saveCachedRateHistory,
 } from '@/features/cc-agent/lib/runningTokenRateHistory';
 
 const input = { startedAt: 1, outputTokens: 0, generationDurationMs: 0, generationReliable: true };
@@ -165,4 +168,37 @@ it('retains the chart while hidden or unreliable, then measures only new paired 
   });
   expect(next.samples.map((sample) => sample.rate)).toEqual([100, 50]);
   expect(next.samples.map((sample) => sample.durationMs)).toEqual([1000, 2000]);
+});
+
+describe('per-session speed history cache', () => {
+  it('round-trips a history with samples and keeps the latest entry warm', () => {
+    clearRateHistoryCache();
+    saveCachedRateHistory('s1', emptyRateHistory(null));
+    expect(loadCachedRateHistory('s1')).toBeNull();
+    const history = recordRunningTokenRate(begin(), {
+      ...input,
+      outputTokens: 100,
+      generationDurationMs: 1000,
+    });
+    saveCachedRateHistory('s1', history);
+    const restored = loadCachedRateHistory('s1');
+    expect(restored?.samples.map((sample) => sample.rate)).toEqual([100]);
+    expect(restored?.baseline).toEqual(history.baseline);
+  });
+
+  it('evicts the least recently used session beyond the cap', () => {
+    clearRateHistoryCache();
+    const history = recordRunningTokenRate(begin(), {
+      ...input,
+      outputTokens: 100,
+      generationDurationMs: 1000,
+    });
+    for (let n = 0; n < 20; n++) saveCachedRateHistory(`cap-${n}`, history);
+    // 读 s0 让它变成最近使用，下一个新会话应淘汰 s1 而不是 s0。
+    expect(loadCachedRateHistory('cap-0')).not.toBeNull();
+    saveCachedRateHistory('cap-20', history);
+    expect(loadCachedRateHistory('cap-1')).toBeNull();
+    expect(loadCachedRateHistory('cap-0')).not.toBeNull();
+    expect(loadCachedRateHistory('cap-20')).not.toBeNull();
+  });
 });
