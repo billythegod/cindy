@@ -230,6 +230,19 @@ function activeMarker(): string | undefined {
 }
 
 describe('provider catalog realm reload', () => {
+  it('keeps server-declared window variants in the settings catalog', () => {
+    try {
+      setActiveCatalog(BUNDLED_CATALOG);
+      const runtime = getActiveCatalog().providers.find(provider => provider.id === 'openai')!;
+      const variant = runtime.models['claude-code']!.find(model => model.id.endsWith('[1m]'))!;
+      expect(variant).toBeDefined();
+      const selectable = getDesktopSelectableCatalog().providers.find(provider => provider.id === 'openai')!;
+      expect(selectable.models['claude-code']).toContainEqual(variant);
+    } finally {
+      setActiveCatalog(BUNDLED_CATALOG);
+    }
+  });
+
   it('passes xAI rejection context into forced recovery and never replays the stale token', async () => {
     h.getGrokAccessToken.mockReset();
     h.recoverGrokAuthAfterRejection.mockReset();

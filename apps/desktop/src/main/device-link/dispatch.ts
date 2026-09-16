@@ -21,6 +21,7 @@
 
 import {
   computeAllowlistHash,
+  canCoalesceRemoteListing,
   INVOKE_TIMEOUT_OVERRIDES_MS,
   MAX_FRAME_BYTES,
   PROTOCOL_VERSION,
@@ -84,6 +85,7 @@ import {
 } from './remoteBotSessionBoundary.js';
 import { getControllerPlatform } from './controllerPlatform';
 import { runDeviceLinkInvokeContext } from './invoke-context';
+import { runAsBackgroundDbRpc } from '../localDb/client/rpcAdmission.js';
 import { fetchLocalMediaToOss } from './mediaFetch';
 import { transcribeRemoteVoiceInput } from './voiceTranscribe';
 import { readTelegramRemoteStatus, setTelegramRemoteOnline } from './telegramRemoteControl';
@@ -497,6 +499,34 @@ function projectModelsForController(models: unknown): unknown {
  * 模型显示 override 快照同样属于非敏感展示状态，需随目录投影给控制端。
  * 其它通道原样返回。
  */
+/** 侧栏索引过胖时裁掉最旧 run，避免 4MB 传输上限导致算完发不出去再重打 DB。 */
+function capScheduleSidebarIndexForTunnel(result: unknown): unknown {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  const record = result as { runs?: unknown };
+  if (!Array.isArray(record.runs) || record.runs.length === 0) return result;
+  const pack = (runs: unknown[]) => ({ ...record, runs });
+  const fits = (runs: unknown[]): boolean => {
+    const serialized = safeJsonStringify(pack(runs));
+    return serialized != null && encodedByteLength(serialized) <= REMOTE_SCHEDULE_INDEX_MAX_BYTES;
+  };
+  if (fits(record.runs)) return result;
+  // 存储层把未读旧 run 放前面、最新映射放最后。超限时保尾部，侧栏归属仍在。
+  let lo = 1;
+  let hi = record.runs.length;
+  let keep = 0;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (fits(record.runs.slice(record.runs.length - mid))) {
+      keep = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (keep === 0) return pack([]);
+  return pack(record.runs.slice(record.runs.length - keep));
+}
+
 function projectInvokeResultForTunnel(
   channel: string,
   result: unknown,
@@ -514,6 +544,9 @@ function projectInvokeResultForTunnel(
       const row = item as Record<string, unknown>;
       return { sessionId: row.sessionId, isTurnRunning: row.isTurnRunning };
     });
+  }
+  if (channel === 'maker:schedule:list-sidebar-index-runs') {
+    return capScheduleSidebarIndexForTunnel(result);
   }
   if (channel !== 'maker:provider:list') return result;
   const r = result as { providers?: unknown; modelVisibilityOverrides?: unknown };
@@ -606,19 +639,16 @@ type RemoteInvokeBusyChangedListener = (busy: boolean) => void;
 let onRemoteInvokeBusyChanged: RemoteInvokeBusyChangedListener | null = null;
 let inFlightRemoteInvokeCount = 0;
 const REMOTE_INVOKE_IN_FLIGHT_LIMIT = 64;
-/**
- * 控制端周期对账 / 熔断探测会用新 requestId 连打相同 listing。按 requestId 去重
- * 拦不住，16 条并发 sessions:list 会把单线程 DB worker 打到 128/512 硬顶。
- * 同一控制端、同一 channel+args 的只读 listing 合并成一次执行。
- */
-const COALESCE_REMOTE_INVOKE_CHANNELS: ReadonlySet<string> = new Set([
+/** Host DB admission is independent of whether a read can share an in-flight snapshot. */
+const BACKGROUND_REMOTE_INVOKE_CHANNELS: ReadonlySet<string> = new Set([
   'local-db:sessions:list',
-  // sessions:get 是写后权威回读（mobile 设置失败恢复会复用同一参数），
-  // 不能并进仍停在投影 await 的写前查询。
   'maker:get-capabilities',
   'maker:provider:list',
   'maker:git-safety:get',
+  'maker:schedule:list-sidebar-index-runs',
 ]);
+/** 隧道回包必须低于 4MB 传输上限与 per-controller 4MB 准入；2MB 给 envelope 留余量。 */
+const REMOTE_SCHEDULE_INDEX_MAX_BYTES = 2 * 1024 * 1024;
 /**
  * Keep one slow controller from consuming the entire target-device budget.
  * The global limit still protects the host, while this per-controller slice
@@ -2632,19 +2662,6 @@ function currentRemoteInvokeAdmissionFailure(src: string): InvokeResultPayload |
   return null;
 }
 
-function isFreshSessionListInvoke(payload: InvokePayload): boolean {
-  if (payload.channel !== 'local-db:sessions:list') return false;
-  const options = payload.args?.[2];
-  return !!(options && typeof options === 'object' && !Array.isArray(options)
-    && (options as { fresh?: unknown }).fresh === true);
-}
-
-function canCoalesceRemoteListing(payload: InvokePayload | undefined): payload is InvokePayload {
-  return !!payload
-    && COALESCE_REMOTE_INVOKE_CHANNELS.has(payload.channel)
-    && !isFreshSessionListInvoke(payload);
-}
-
 function remoteListingFlightKey(src: string, payload: InvokePayload): string {
   return `${src}\u0000${payload.channel}\u0000${JSON.stringify(payload.args ?? [])}`;
 }
@@ -3692,10 +3709,16 @@ export async function runInvoke(
         historyView,
       },
       // provider:list 的首参只承载隧道能力协商，不进入本机 IPC handler。
-      () => dispatchLocalInvoke(
-        payload.channel,
-        payload.channel === 'maker:provider:list' ? [] : args,
-      ),
+      // 对账 listing 走后台读配额，不占满写入名额。
+      () => {
+        const invoke = () => dispatchLocalInvoke(
+          payload.channel,
+          payload.channel === 'maker:provider:list' ? [] : args,
+        );
+        return BACKGROUND_REMOTE_INVOKE_CHANNELS.has(payload.channel)
+          ? runAsBackgroundDbRpc(invoke)
+          : invoke();
+      },
     );
     if (hasRemoteBotSessionLookup()) await assertRemoteBotInvocationAllowed(args, payload.channel);
     if (!broadcastTap.isDataOwnerBroadcastScopeCurrent(invocationOwner)) throw new Error('[NOT_FOUND] Session does not exist');
@@ -3834,6 +3857,9 @@ export const __testing = {
   optionalControllerCapabilities,
   sendInvokeResultSafe,
   projectInvokeResultForTunnel,
+  capScheduleSidebarIndexForTunnel,
+  remoteScheduleIndexMaxBytes: REMOTE_SCHEDULE_INDEX_MAX_BYTES,
+  canCoalesceRemoteListing,
   remoteInvokeInFlightLimit: REMOTE_INVOKE_IN_FLIGHT_LIMIT,
   remoteInvokeInFlightPerControllerLimit: REMOTE_INVOKE_IN_FLIGHT_PER_CONTROLLER_LIMIT,
   remoteInvokeOrphanTimeoutMs: REMOTE_INVOKE_ORPHAN_TIMEOUT_MS,

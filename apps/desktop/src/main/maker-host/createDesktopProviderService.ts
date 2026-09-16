@@ -1,5 +1,4 @@
 import { readProviderPresentation } from './provider-presentation-store.js';
-import { filterLegacyGptContextProfiles } from './legacy-context-profiles.js';
 import { subscriptionAccountKind, subscriptionAccountState, isXaiSubscriptionProviderId, getValidClaudeAccountOAuth, resetSubscriptionAccountCaches } from './subscription-account-auth.js';
 /**
  * createDesktopProviderService —— 桌面端目录加载落地 + provider-service 接线。
@@ -967,7 +966,7 @@ let singleton: ProviderService | null = null;
  * Cindy account session keeps the full active catalog.
  */
 export function getDesktopSelectableCatalog(): Catalog {
-  return filterProviderCatalogForAccount(filterLegacyGptContextProfiles(getActiveCatalog()), {
+  return filterProviderCatalogForAccount(getActiveCatalog(), {
     canUseCindyGateway: getAppCapabilities().canUseCindyGateway,
   });
 }
