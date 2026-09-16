@@ -1436,16 +1436,29 @@ describe('computer mcp integration', () => {
     }
   });
 
-  it('does not count an observation taken during pending remote input as a fresh target', async () => {
+  it.each(['pending', 'quiet', 'settled-before-return', 'input-during-read'] as const)(
+    'does not count an observation overlapping remote input (%s) as a fresh target', async (phase) => {
     vi.useFakeTimers();
     const human = new HumanDesktopInput();
     const context = { sessionId: 'remote-observation' };
     const target = { pid: 123, window_id: 7 };
     try {
       mcpCallToolMock.mockResolvedValue({ structuredContent: { ok: true } });
-      const batch = human.begin([{ kind: 'text', text: 'human' }]);
+      let batch: ReturnType<HumanDesktopInput['begin']> | undefined;
+      if (phase !== 'input-during-read') batch = human.begin([{ kind: 'text', text: 'human' }]);
+      if (phase === 'quiet') batch!.complete();
+      mcpCallToolMock.mockImplementation(({ name }) => {
+        if (name === 'get_window_state') {
+          if (phase === 'input-during-read' && !batch) batch = human.begin([{ kind: 'text', text: 'human' }]);
+          if (phase === 'settled-before-return' || phase === 'input-during-read' || phase === 'quiet') {
+            batch!.complete();
+            vi.advanceTimersByTime(HUMAN_INPUT_QUIET_MS);
+          }
+        }
+        return { structuredContent: { ok: true } };
+      });
       await callComputerDriverTool('get_window_state', target, context);
-      batch.complete();
+      batch!.complete();
       vi.advanceTimersByTime(HUMAN_INPUT_QUIET_MS);
       await expect(callComputerDriverTool('click', { ...target, x: 1, y: 1 }, context))
         .rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });

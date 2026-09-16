@@ -3395,8 +3395,9 @@ export async function callComputerDriverTool(
   }
   const window = `${args.pid}:${args.window_id}`;
   if (getComputerTool(name)?.readOnly === true) {
+    const startedIdle = !isHumanDesktopInputActive();
     const result = await callComputerDriverToolImpl(name, args, context);
-    if (name === 'get_window_state' && computerResultOutcome(name, result).ok
+    if (name === 'get_window_state' && startedIdle && computerResultOutcome(name, result).ok
       && revision === desktopInputRevision() && !isHumanDesktopInputActive()) {
       observations?.windows.set(window, revision);
       // App-scoped actions may omit window_id; a successful observation of
