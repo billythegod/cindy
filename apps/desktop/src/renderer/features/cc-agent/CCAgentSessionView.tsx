@@ -1,3 +1,4 @@
+import { shouldShowOpenPathError } from '../../../shared/openPathResult';
 import { shouldShowFailedScheduleNotice } from '@cindy/maker-shared/schedule-model';
 /**
  * CCAgentSessionView
@@ -284,6 +285,7 @@ import {
 import { shouldFallbackVendorModel } from './lib/vendorModelFallback';
 import { localizeAgentStatus } from './lib/localizeAgentStatus';
 import { createSessionRefreshSequence } from './lib/sessionRefreshSequence';
+import { hasInlineOverloadRetry } from './lib/inlineRetryError';
 import { createSessionSnapshotPatchBuffer } from './lib/sessionSnapshotPatchBuffer';
 import { readPanelCollapsedRecord } from '@/layout/collapsePrefs';
 import {
@@ -1105,7 +1107,7 @@ export function CCAgentSessionView({
   // 交互时,session 行天然是 startedAt > endedAt,不能把这个正常在飞窗口误判成
   // 「应用退出中断」。直接门控首帧,再锁存本次视图,避免 activity 终态与 ended patch
   // 先后到达时横幅闪现。
-  const remoteSessionActivity = useRemoteSessionActivity(sessionId ?? '');
+  const remoteSessionActivity = useRemoteSessionActivity(sessionId ?? '', remoteDeviceId);
   const remoteTurnActive = isRemoteSessionActivityActive(remoteSessionActivity);
 
   // device-link 远程会话:非选中行镜像**被控端自己的全局模型预设**。先 pull 一次,再订阅
@@ -1508,7 +1510,7 @@ export function CCAgentSessionView({
     if (isRemoteWorktreeSession) return;
     try {
       const result = await window.electronAPI.openPath(wd);
-      if (!result.success) toast.error(result.error || t('ccAgent.common.openFolderFailed'));
+      if (shouldShowOpenPathError(result)) toast.error(result.error || t('ccAgent.common.openFolderFailed'));
     } catch (err) {
       log.error('[open workingDir]', err);
       toast.error(t('ccAgent.common.openFolderFailed'));
@@ -4470,7 +4472,7 @@ export function CCAgentSessionView({
         // 伙伴对话不是用户经营的任务:它拿的是「跟谁说话 + 进 TA 的设置」,
         // 不是重命名/置顶/归档/导出那一套任务菜单。
         botChatIdentity ? (
-          <BotSessionContentHeaderRegistration bot={botChatIdentity} sessionId={sessionId} />
+          <BotSessionContentHeaderRegistration bot={botChatIdentity} />
         ) : (
           <SessionContentHeaderRegistration
             session={session}
@@ -4910,7 +4912,14 @@ export function CCAgentSessionView({
                 />
               )}
 
-            {!readOnly && error && (
+            {/* 只隐藏已有同一错误活动行的过载重试；认证、额度等操作入口照常保留。 */}
+            {!readOnly && error && !hasInlineOverloadRetry({
+              error,
+              errorReason,
+              isRecoverable: errorIsRecoverable,
+              messages,
+              continuationTurnClientId,
+            }) && (
               <ErrorBanner
                 error={error}
                 errorReason={errorReason}

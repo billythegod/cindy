@@ -804,6 +804,9 @@ function extraResourcesForTarget(targetPlatform: string): string[] {
   const base = [
     'resources/icon.png',
     'resources/cindy-source.json',
+    // Input bytes for upgrading retired preset avatars to ordinary managed images.
+    'resources/legacy-teammate-avatars',
+    'resources/teammate-portrait-gallery.png',
     'resources/tools',
     'drizzle',
     'resources/cc-manager',
@@ -1117,6 +1120,28 @@ function buildRemoteDesktopInput(platform: ForgePlatform, arch: ForgeArch): void
       if (helper === 'windows-host') fs.copyFileSync(path.join(output, 'cindy_windows_desktop_host.dll'), path.join(destDir, `${name}.node`));
     }
   }
+}
+
+function buildWindowsGamepadHelper(platform: ForgePlatform, arch: ForgeArch): void {
+  buildWindowsInputHelper('gamepad', platform, arch);
+  buildWindowsInputHelper('micro', platform, arch);
+}
+
+function buildWindowsInputHelper(kind: 'gamepad' | 'micro', platform: ForgePlatform, arch: ForgeArch): void {
+  if (process.platform !== 'win32' || platform !== 'win32') return;
+  const target = arch === 'arm64' ? 'aarch64-pc-windows-msvc' : arch === 'x64' ? 'x86_64-pc-windows-msvc' : null;
+  if (!target) throw new Error(`[forge] Unsupported Windows gamepad helper architecture: ${arch}`);
+  const group = kind === 'gamepad' ? 'xbox-gamepad' : 'worklouder';
+  const source = path.join(__dirname, 'native', group, `windows-${kind}-helper`);
+  const userCargo = process.env.USERPROFILE ? path.join(process.env.USERPROFILE, '.cargo', 'bin', 'cargo.exe') : 'cargo';
+  const result = spawnSync(fs.existsSync(userCargo) ? userCargo : 'cargo', [
+    'build', '--locked', '--release', '--target', target, '--manifest-path', path.join(source, 'Cargo.toml'),
+  ], { stdio: 'inherit', windowsHide: true });
+  if (result.error || result.status !== 0) throw new Error(`[forge] Windows gamepad helper build failed: ${result.error?.message ?? result.status}`);
+  const name = `cindy-windows-${kind}-helper.exe`;
+  const dest = path.join(__dirname, 'resources', 'tools', group);
+  fs.mkdirSync(dest, { recursive: true });
+  fs.copyFileSync(path.join(source, 'target', target, 'release', name), path.join(dest, name));
 }
 
 function buildMacXboxGamepadHelper(platform: ForgePlatform, arch: ForgeArch): void {
@@ -1644,6 +1669,7 @@ const config: ForgeConfig = {
       buildMacIOSSimulatorHelper(platform, arch);
       buildMacVoiceInputTextInsertionHelper(platform, arch);
       buildMacXboxGamepadHelper(platform, arch);
+      buildWindowsGamepadHelper(platform, arch);
       buildMacVoiceInputModifierShortcutListener(platform, arch);
       buildMacAgentIslandHelper(platform, arch);
       buildMacComputerPermissionGuideHelper(platform, arch);
@@ -1673,6 +1699,10 @@ const config: ForgeConfig = {
     // 使其在 packaged 应用中可以被 require()——asar 会阻止原生模块的 dlopen 调用。
     new AutoUnpackNativesPlugin({}),
     new VitePlugin({
+      // Dev keeps all watcher targets in one process. Build them serially at
+      // startup so the initial graph does not multiply the same high baseline;
+      // packaged builds retain Forge's normal concurrency.
+      concurrent: isDev ? false : true,
       build: [
         {
           entry: 'src/main/index.ts',
@@ -1804,6 +1834,7 @@ const config: ForgeConfig = {
           config: 'vite.preload.config.ts',
           target: 'preload',
         },
+        { entry: 'src/preload/remoteDesktopViewerPreload.ts', config: 'vite.preload.config.ts', target: 'preload' },
         {
           // 右侧栏独立子窗口专用 preload:最小权限 bridge,不加载主 preload 完整桥。
           entry: 'src/preload/sidebarWindowPreload.ts',

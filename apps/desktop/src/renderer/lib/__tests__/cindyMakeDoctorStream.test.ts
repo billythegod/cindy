@@ -8,6 +8,12 @@ const h = vi.hoisted(() => ({
   prepend: vi.fn(),
   get: vi.fn(),
   saveDraft: vi.fn(),
+  /** Main creates the per-task worktree; tests only need a deterministic path per run. */
+  prepareWorkspace: vi.fn(async (runId: string) => ({
+    path: `/Users/test/Cindy/worktrees/${runId}`,
+    branch: `cindy-make/${runId}`,
+    baseCommit: '0123456789ab',
+  })),
 }));
 vi.mock('@/lib/sessionService', () => ({
   create: h.create,
@@ -53,6 +59,7 @@ vi.mock('@/lib/makerTransport', () => ({
 
 import { buildCreateOptsForCurrentSession, makerChatStore } from '@/lib/makerChatStore';
 import * as messageService from '@/lib/messageService';
+import { tryStartCindyMakeCommand } from '../cindyMakeCommand';
 import {
   chooseMakeUpstream,
   ensureMakeTask,
@@ -161,6 +168,10 @@ beforeEach(() => {
   vi.mocked(messageService.create).mockClear();
   vi.mocked(messageService.updateContent).mockClear();
   main = mainApi();
+  h.prepareWorkspace.mockClear();
+  vi.stubGlobal('window', {
+    electronAPI: { maker: main.api, prepareCindyMakeWorkspace: h.prepareWorkspace },
+  });
   vi.spyOn(makerChatStore, 'sendMessage').mockResolvedValue(true);
 });
 afterEach(async () => {
@@ -172,6 +183,45 @@ afterEach(async () => {
 });
 
 describe('doctor cards in the message stream', () => {
+  it.each(['home', 'existing-task'])(
+    'persists the native Make command from %s as a visible card without starting an Agent',
+    async (entry) => {
+      const sessionId = sid();
+      const created = { id: sessionId, agentKind: 'codex', title: 'fix scrolling' };
+      h.create.mockResolvedValue(created);
+      h.update.mockResolvedValue(created);
+      const result = await tryStartCindyMakeCommand({
+        text: '/cindy-make fix scrolling',
+        commands: [{ name: 'cindy-make', kind: 'desktop', description: 'Make' }],
+        sessionId: entry === 'home' ? undefined : sessionId,
+        deviceId: null,
+        hasUnsupportedContent: false,
+        isCurrent: () => true,
+        createOptions: { workspaceKind: 'dialogue', agentKind: 'codex' },
+      });
+      expect(result).toEqual({ kind: 'started', sessionId });
+      const card = messages(sessionId)[0];
+      expect(card.systemCardType).toBe('cindy-make');
+      expect(card.systemCardData?.request).toBe('fix scrolling');
+      expect(card.systemCardData?.modalOnly).toBeUndefined();
+      await vi.waitFor(() => expect(messageService.create).toHaveBeenCalledOnce());
+      expect(messageService.create).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({
+          content: {
+            __cindyMakeCard: {
+              type: 'cindy-make',
+              data: expect.objectContaining({ request: 'fix scrolling' }),
+            },
+          },
+        }),
+      );
+      expect(h.create).toHaveBeenCalledTimes(entry === 'home' ? 1 : 0);
+      expect(makerChatStore.sendMessage).not.toHaveBeenCalled();
+      expect(h.prepareWorkspace).not.toHaveBeenCalled();
+    },
+  );
+
   it('restores a persisted Make card from the task history', () => {
     const [restored] = makerChatStore.__mapServerMessagesForTest([
       {
@@ -245,6 +295,9 @@ describe('doctor cards in the message stream', () => {
     makerChatStore.updateSystemCardData(id, messages(id)[0].clientId!, {
       report: { ...report(runId), upstream },
     });
+    // This card has no checkout yet; without a window the historical prepare
+    // path is inert, which keeps the assertion about the recorded choice alone.
+    vi.unstubAllGlobals();
     chooseMakeUpstream(id, runId, 'personal');
     await main.complete(runId, { upstream });
     expect(messages(id)[0].systemCardData?.decision).toBe('personal');
@@ -259,7 +312,9 @@ describe('doctor cards in the message stream', () => {
       report: { ...report(runId), upstream },
     });
 
-    vi.stubGlobal('window', { electronAPI: { maker: main.api } });
+    vi.stubGlobal('window', {
+      electronAPI: { maker: main.api, prepareCindyMakeWorkspace: h.prepareWorkspace },
+    });
     const preparation = prepareMakeSourceInStream(id, runId);
     await vi.waitFor(() => expect(main.api.executeDesktopCommand).toHaveBeenCalled());
     main.push(runId, 'running', { checks: [], platform: '', arch: '' });
@@ -471,6 +526,30 @@ describe('doctor task placement', () => {
     expect(id).toBe(created.id);
   });
 
+  it.each(['success', 'failure'])(
+    'does not publish an old-account task after title update %s',
+    async (outcome) => {
+      const created = { id: sid(), ...createOptions };
+      const pending = deferred<void>();
+      h.create.mockResolvedValue(created);
+      h.update.mockImplementation(async () => {
+        await pending.promise;
+        if (outcome === 'failure') throw new Error('title update failed');
+        return { ...created, title: 'fix scrolling' };
+      });
+      const result = ensureMakeTask({
+        createOptions,
+        title: 'fix scrolling',
+        isCurrent: () => true,
+      });
+      await vi.waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
+      setDataOwnerGeneration('different-owner');
+      pending.resolve();
+      expect(await result).toBeNull();
+      expect(h.prepend).not.toHaveBeenCalled();
+    },
+  );
+
   it('creates a code task in the prepared source directory and sends the original request', async () => {
     const origin = sid();
     const sourcePath = 'C:\\cindy-make\\source';
@@ -505,6 +584,13 @@ describe('doctor task placement', () => {
     });
     h.create.mockResolvedValue(codeTask);
     const runId = 'code-run';
+    const worktreePath = 'C:\\cindy-make\\worktrees\\code-run';
+    const prepareCindyMakeWorkspace = vi.fn(async () => ({
+      path: worktreePath,
+      branch: 'cindy-make/code-run',
+      baseCommit: '0123456789ab',
+    }));
+    vi.stubGlobal('window', { electronAPI: { maker: main.api, prepareCindyMakeWorkspace } });
     makerChatStore.insertSystemCard(origin, 'cindy-make', {
       request: '修复消息流闪烁',
       decision: 'personal',
@@ -517,9 +603,12 @@ describe('doctor task placement', () => {
     const createdId = await startMakeCodeSession(origin, runId);
 
     expect(createdId).toBe(codeTask.id);
+    // The task never works in the managed checkout: it gets its own worktree.
+    expect(prepareCindyMakeWorkspace).toHaveBeenCalledWith(runId);
     expect(h.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        workingDir: sourcePath,
+        workingDir: worktreePath,
+        source: 'cindy-make',
         workspaceKind: 'project',
         model: 'runtime-model',
         effort: 'high',
@@ -535,7 +624,7 @@ describe('doctor task placement', () => {
       'runtime-model',
       'high',
       'ask',
-      sourcePath,
+      worktreePath,
     );
     expect(
       buildCreateOptsForCurrentSession(
@@ -543,7 +632,7 @@ describe('doctor task placement', () => {
         codeTask.model,
         codeTask.effort,
         codeTask.permissionMode,
-        sourcePath,
+        worktreePath,
       ),
     ).toMatchObject({
       agentKind: 'codex',
@@ -551,7 +640,10 @@ describe('doctor task placement', () => {
       fastMode: true,
       planMode: true,
     });
-    expect(messages(origin)[0].systemCardData).toMatchObject({ codeSessionId: codeTask.id });
+    expect(messages(origin)[0].systemCardData).toMatchObject({
+      codeSessionId: codeTask.id,
+      codeWorkspace: { path: worktreePath, branch: 'cindy-make/code-run' },
+    });
   });
 
   it('does not create a task for a stale composer or report success after creation fails', async () => {
@@ -617,7 +709,7 @@ describe('personal code task handoff', () => {
       'selected-model',
       'high',
       'ask',
-      sourcePath,
+      `/Users/test/Cindy/worktrees/${workflowRun}`,
     );
     // Only the original workflow command; no follow-up prepare-source invocation.
     expect(main.api.executeDesktopCommand).toHaveBeenCalledOnce();
@@ -646,7 +738,9 @@ describe('personal code task handoff', () => {
       decision: undefined,
       report: { ...report(runId), upstream: { status: 'notFound', items: [] } },
     });
-    vi.stubGlobal('window', { electronAPI: { maker: main.api } });
+    vi.stubGlobal('window', {
+      electronAPI: { maker: main.api, prepareCindyMakeWorkspace: h.prepareWorkspace },
+    });
     const result = chooseMakeUpstream(id, runId, 'personal');
     expect(h.create).not.toHaveBeenCalled();
     await main.complete(runId, { source: { status: 'ready', path: sourcePath } });
@@ -658,7 +752,7 @@ describe('personal code task handoff', () => {
       'selected-model',
       'high',
       'ask',
-      sourcePath,
+      `/Users/test/Cindy/worktrees/${runId}`,
     );
   });
 
@@ -666,7 +760,9 @@ describe('personal code task handoff', () => {
     'does not create a task when source preparation is %s',
     async (status) => {
       const id = readyCard();
-      vi.stubGlobal('window', { electronAPI: { maker: main.api } });
+      vi.stubGlobal('window', {
+        electronAPI: { maker: main.api, prepareCindyMakeWorkspace: h.prepareWorkspace },
+      });
       const result = prepareMakeSourceInStream(id, runId);
       // A stale ready source must not be actionable while preparation is running.
       expect(await startMakeCodeSession(id, runId)).toBeNull();
