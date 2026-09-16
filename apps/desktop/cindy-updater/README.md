@@ -111,12 +111,14 @@ and the staged archive is deleted so the next Cindy launch downloads a fresh
 copy; transient archive I/O failures remain eligible. Only the archive path and
 PID change: the retry uses the isolated zip and does not wait on the original,
 potentially stale PID. The WebView cannot supply paths or commands.
-When the updater is already elevated — either via `--elevated` after UAC, or
-because it inherited a high token from an elevated Cindy spawn that omitted
-that flag — extract and backup staging live under the install directory.
-Classification does not re-probe writability with that high token: after UAC,
-Program Files would look writable and send staging back to the unelevated
-`%TEMP%` workdir. Unelevated per-user installs still probe and stay in TEMP.
+When the updater is already elevated via `--elevated` after UAC, extract and
+backup staging live under the install directory. Classification does not
+re-probe writability with that high token: after UAC, Program Files would look
+writable and send staging back to the unelevated `%TEMP%` workdir. Inherited
+elevation from an elevated Cindy spawn that omitted `--elevated` classifies
+with the linked medium-integrity token instead, so a writable per-user install
+stays in TEMP and a protected Program Files install still stages next to the
+app. Unelevated per-user installs still probe and stay in TEMP.
 Failures before replacement delete those staging directories; only a rollback
 that itself failed keeps the backup for manual recovery.
 The retry command checks for processes running from the install directory and
@@ -133,13 +135,17 @@ Cindy while Retry remains available. The exclusive `.updating` lock stays on
 disk for that window so a second updater cannot start from `%TEMP%`. Close, or
 any other abandoned Retry exit, deletes that file so the next Cindy launch does
 not wait 30 seconds, then relaunches the restored Cindy — the concurrency
-reason for keeping it closed no longer applies. Retryable failures that never
-acquired `.updating` still relaunch if this updater already stopped Cindy. A
-second updater that never owned the lock and never stopped Cindy does not
-relaunch or delete it. Close then window destroy share a one-shot abandon so
-the restored Cindy is not launched twice. Clicking Retry hides Close until the worker reports a
-terminal state, so Close cannot kill an in-flight hash/install. Retry reopens
-a retained lock only when the file still names this process.
+reason for keeping it closed no longer applies. An elevated updater does not
+relaunch a medium-writable `Cindy.exe`: Close would inherit the high token and
+a same-login process can replace that file. Protected install roots still
+relaunch. Retryable failures that never acquired `.updating` still relaunch if
+this updater already stopped Cindy. A second updater that never owned the lock
+and never stopped Cindy does not relaunch or delete it. Close then window
+destroy share a one-shot abandon so the restored Cindy is not launched twice.
+Clicking Retry hides Close until the worker reports a terminal state, and
+Alt+F4 / `CloseRequested` is ignored while that worker is running, so Close
+cannot kill an in-flight hash/install. Retry reopens a retained lock only when
+the file still names this process.
 Failures before UAC on a protected install directory do not offer Retry. A successful update still removes its zip. If rollback fails, Retry
 is unavailable and the backup directory is preserved for manual recovery. Stale
 temporary directories retain

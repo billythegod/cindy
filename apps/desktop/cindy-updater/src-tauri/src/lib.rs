@@ -107,11 +107,10 @@ fn retry_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String
             *last_status.lock().unwrap() = payload.clone();
             let _ = handle.emit("update-status", payload);
         });
+        *retry_started.lock().unwrap() = false;
         let final_phase = last_status.lock().unwrap().phase;
         if final_phase == Phase::Done {
             handle.exit(0);
-        } else {
-            *retry_started.lock().unwrap() = false;
         }
     });
     Ok(())
@@ -178,17 +177,26 @@ pub fn run() {
             if let Some(w) = win.as_ref() {
                 let handle = app.handle().clone();
                 w.on_window_event(move |event| {
-                    if matches!(event, tauri::WindowEvent::Destroyed) {
-                        let state = handle.state::<AppState>();
-                        let can_retry = state.last_status.lock().unwrap().can_retry;
-                        let retry_in_progress = *state.retry_started.lock().unwrap();
-                        let stopped_app = *state.stopped_app.lock().unwrap();
-                        installer::abandon_retry(
-                            &state.args,
-                            can_retry,
-                            retry_in_progress,
-                            stopped_app,
-                        );
+                    match event {
+                        tauri::WindowEvent::CloseRequested { api, .. } => {
+                            let state = handle.state::<AppState>();
+                            if *state.retry_started.lock().unwrap() {
+                                api.prevent_close();
+                            }
+                        }
+                        tauri::WindowEvent::Destroyed => {
+                            let state = handle.state::<AppState>();
+                            let can_retry = state.last_status.lock().unwrap().can_retry;
+                            let retry_in_progress = *state.retry_started.lock().unwrap();
+                            let stopped_app = *state.stopped_app.lock().unwrap();
+                            installer::abandon_retry(
+                                &state.args,
+                                can_retry,
+                                retry_in_progress,
+                                stopped_app,
+                            );
+                        }
+                        _ => {}
                     }
                 });
                 let resolved = match app.state::<AppState>().args.theme {
@@ -277,6 +285,30 @@ mod retry_update_contract {
                 && !body.contains("Command::new")
                 && !body.contains("process::exit"),
             "Retry must not respawn the updater from %TEMP%:\n{body}"
+        );
+    }
+
+    #[test]
+    fn close_requested_is_blocked_while_retry_is_in_progress() {
+        let source = include_str!("lib.rs");
+        let start = source
+            .find("w.on_window_event")
+            .expect("window event handler");
+        let end = source[start..]
+            .find("let resolved = match")
+            .expect("theme follows window events");
+        let body = &source[start..start + end];
+        assert!(
+            body.contains("WindowEvent::CloseRequested") && body.contains("prevent_close"),
+            "Alt+F4 must not destroy the updater while retry_started is hashing or replacing:\n{body}"
+        );
+        assert!(
+            body.contains("retry_started"),
+            "close interception must follow the in-process retry worker flag:\n{body}"
+        );
+        assert!(
+            body.contains("WindowEvent::Destroyed") && body.contains("abandon_retry"),
+            "closing the updater window must still abandon Retry after a terminal status"
         );
     }
 }

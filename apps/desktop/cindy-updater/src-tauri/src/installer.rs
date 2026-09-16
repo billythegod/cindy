@@ -235,10 +235,35 @@ pub(crate) fn restored_app_relaunch_path(args: &CliArgs) -> Option<PathBuf> {
     exe.exists().then_some(exe)
 }
 
+/// Launching Cindy.exe from this process inherits the updater token. A
+/// medium-writable per-user install can be replaced before Close; do not
+/// CreateProcess it while this process is still elevated.
+pub(crate) fn may_relaunch_with_current_integrity(
+    cli_elevated: bool,
+    process_elevated: bool,
+    install_writable: bool,
+) -> bool {
+    !(install_writable && (cli_elevated || process_elevated))
+}
+
 fn relaunch_restored_app(args: &CliArgs) {
     let Some(exe) = restored_app_relaunch_path(args) else {
         return;
     };
+    if !may_relaunch_with_current_integrity(
+        args.elevated,
+        process_is_elevated(),
+        install_writable_for_staging(
+            args.elevated,
+            medium_integrity_needs_elevation(&args.app_dir),
+        ),
+    ) {
+        logger::warn(format!(
+            "[installer] skip relaunch of writable exe {} from an elevated updater",
+            exe.display()
+        ));
+        return;
+    }
     match launch_detached(&exe) {
         Ok(()) => logger::info(format!(
             "[installer] relaunched restored exe after abandoning Retry at {}",
@@ -442,16 +467,23 @@ pub(crate) fn retry_request_allowed(
 ///
 /// Do not ask an already-elevated token whether `app_dir` is writable: after
 /// UAC, Program Files looks writable and would send extract/backup back to the
-/// unelevated `%TEMP%` workdir. `--elevated` is the pre-UAC classification;
-/// inherited high integrity is treated the same. Unelevated per-user installs
-/// still probe and stay in TEMP.
+/// unelevated `%TEMP%` workdir. `--elevated` is the pre-UAC classification of a
+/// protected install. Inherited elevation must classify with the linked
+/// medium-integrity token instead: a per-user install is still writable by the
+/// same user's medium processes, so extract/backup stay in TEMP.
+pub(crate) fn install_writable_for_staging(
+    cli_elevated: bool,
+    medium_integrity_needs_elevation: bool,
+) -> bool {
+    !cli_elevated && !medium_integrity_needs_elevation
+}
+
 pub(crate) fn staging_dirs(args: &CliArgs) -> (PathBuf, PathBuf) {
     let process_elevated = process_is_elevated();
-    let install_writable = if args.elevated || process_elevated {
-        false
-    } else {
-        !matches!(needs_elevation(&args.app_dir), Ok(true))
-    };
+    let install_writable = install_writable_for_staging(
+        args.elevated,
+        !args.elevated && medium_integrity_needs_elevation(&args.app_dir),
+    );
     staging_dirs_for(args, process_elevated, install_writable)
 }
 
@@ -513,6 +545,86 @@ fn process_is_elevated() -> bool {
 #[cfg(not(target_os = "windows"))]
 fn process_is_elevated() -> bool {
     false
+}
+
+fn medium_integrity_needs_elevation(app_dir: &Path) -> bool {
+    matches!(probe_medium_integrity_needs_elevation(app_dir), Ok(true))
+}
+
+/// Writability as a same-login medium-integrity process would see it.
+/// An elevated token makes Program Files look writable; impersonate the
+/// linked limited token so inherited elevation does not reclassify a
+/// protected install, and so per-user installs are not treated as protected.
+fn probe_medium_integrity_needs_elevation(app_dir: &Path) -> io::Result<bool> {
+    #[cfg(target_os = "windows")]
+    {
+        if process_is_elevated() {
+            return match with_medium_integrity(|| needs_elevation(app_dir)) {
+                Some(result) => result,
+                None => {
+                    logger::warn(
+                        "[probe] no linked medium token; treating install as writable for staging",
+                    );
+                    Ok(false)
+                }
+            };
+        }
+    }
+    needs_elevation(app_dir)
+}
+
+#[cfg(target_os = "windows")]
+fn with_medium_integrity<T>(f: impl FnOnce() -> T) -> Option<T> {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, ImpersonateLoggedOnUser, RevertToSelf, TokenLinkedToken,
+        TOKEN_LINKED_TOKEN, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    struct LinkedImpersonation {
+        token: HANDLE,
+    }
+    impl Drop for LinkedImpersonation {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = RevertToSelf();
+                if !self.token.is_null() {
+                    let _ = CloseHandle(self.token);
+                }
+            }
+        }
+    }
+
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return None;
+        }
+        let mut linked = TOKEN_LINKED_TOKEN {
+            LinkedToken: std::ptr::null_mut(),
+        };
+        let mut returned = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenLinkedToken,
+            (&mut linked as *mut TOKEN_LINKED_TOKEN).cast(),
+            std::mem::size_of::<TOKEN_LINKED_TOKEN>() as u32,
+            &mut returned,
+        );
+        let _ = CloseHandle(token);
+        if ok == 0 || linked.LinkedToken.is_null() {
+            return None;
+        }
+        if ImpersonateLoggedOnUser(linked.LinkedToken) == 0 {
+            let _ = CloseHandle(linked.LinkedToken);
+            return None;
+        }
+        let _impersonation = LinkedImpersonation {
+            token: linked.LinkedToken,
+        };
+        Some(f())
+    }
 }
 
 #[cfg(windows)]
@@ -1488,8 +1600,9 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 mod tests {
     use super::{
         acquire_update_lock, archive_matches_digest, bind_zip_sha256, extract_error_can_retry,
-        finalize_retry_state, may_self_elevate, path_is_within, pre_elevation_failure_can_retry,
-        prepare_retry_archive, release_abandoned_update_lock, release_update_lock, remove_staging_dir,
+        finalize_retry_state, install_writable_for_staging, may_relaunch_with_current_integrity,
+        may_self_elevate, path_is_within, pre_elevation_failure_can_retry, prepare_retry_archive,
+        release_abandoned_update_lock, release_update_lock, remove_staging_dir,
         retain_update_lock_file, retry_allowed, retry_args, retry_available, retry_cli_args,
         retry_request_allowed, rollback, run, should_relaunch_after_abandoning_retry,
         should_relaunch_after_rollback, staging_dirs, staging_dirs_for, uses_protected_staging,
@@ -2224,6 +2337,15 @@ mod tests {
             "a writable per-user install is not a UAC-protected staging root"
         );
         assert!(uses_protected_staging(true, true, false));
+        assert!(
+            install_writable_for_staging(false, false),
+            "inherited elevation must keep a medium-writable per-user install in TEMP"
+        );
+        assert!(
+            !install_writable_for_staging(true, false),
+            "--elevated is the pre-UAC protected classification; do not re-probe with the high token"
+        );
+        assert!(!install_writable_for_staging(false, true));
         let temp = TestDir::new();
         let mut args = test_args();
         args.elevated = false;
@@ -2235,6 +2357,50 @@ mod tests {
         assert!(extract_dir.starts_with(&args.workdir));
         assert!(backup_dir.starts_with(&args.workdir));
         assert!(!extract_dir.starts_with(&args.app_dir));
+
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("pub(crate) fn staging_dirs(args: &CliArgs)")
+            .expect("staging_dirs");
+        let helper = source[start..]
+            .find("pub(crate) fn uses_protected_staging")
+            .expect("uses_protected_staging");
+        let body = &source[start..start + helper];
+        assert!(
+            !body.contains("args.elevated || process_elevated"),
+            "do not force app_dir staging for every high token; writable per-user installs stay in TEMP:\n{body}"
+        );
+        assert!(
+            body.contains("install_writable_for_staging"),
+            "staging_dirs must classify writability independently of the elevated probe:\n{body}"
+        );
+    }
+
+    #[test]
+    fn elevated_abandon_does_not_relaunch_a_writable_install_with_the_high_token() {
+        assert!(
+            !may_relaunch_with_current_integrity(false, true, true),
+            "an elevated updater must not CreateProcess a medium-writable Cindy.exe"
+        );
+        assert!(!may_relaunch_with_current_integrity(true, true, true));
+        assert!(
+            may_relaunch_with_current_integrity(true, true, false),
+            "a UAC-protected install root is not plantable by a medium-integrity process"
+        );
+        assert!(may_relaunch_with_current_integrity(false, false, true));
+
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("fn relaunch_restored_app(args: &CliArgs)")
+            .expect("relaunch_restored_app");
+        let end = source[start..]
+            .find("pub(crate) fn should_relaunch_restored_app_on_abandon")
+            .expect("should_relaunch follows relaunch");
+        let body = &source[start..start + end];
+        assert!(
+            body.contains("may_relaunch_with_current_integrity"),
+            "Close/Destroyed must not launch a writable Cindy.exe from a still-elevated updater:\n{body}"
+        );
     }
 
     #[test]
