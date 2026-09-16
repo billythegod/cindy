@@ -585,6 +585,29 @@ function readSafe(key: string): string | null {
   }
 }
 
+// Startup recovery must preserve existing records, including atomic backups and
+// logout tombstones. Only definite absence permits the fresh-profile login UI;
+// checking filenames does not probe the encryption backend or decrypt anything.
+function hasPotentiallyPersistedAuthCredentials(): boolean {
+  return [
+    AUTH_SESSION_KEY,
+    AUTH_ACCOUNT_VAULT_KEY,
+    AUTH_ACCOUNT_LOGOUT_TOMBSTONES_KEY,
+    LEGACY_RESOURCE_REFRESH_TOKEN_KEY,
+    LEGACY_ACCOUNT_REFRESH_TOKEN_KEY,
+    LEGACY_REFRESH_TOKEN_KEY,
+  ].some((key) =>
+    ['', '.bak'].some((suffix) => {
+      try {
+        fs.accessSync(path.join(SAFE_STORAGE_DIR(), `${key}.enc${suffix}`), fs.constants.F_OK);
+        return true;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException)?.code !== 'ENOENT';
+      }
+    }),
+  );
+}
+
 /**
  * 区分「凭证文件确实不存在」与「暂时读不出来」。
  *
@@ -4564,7 +4587,8 @@ export async function initialize(options: AuthInitializeOptions = {}): Promise<A
       'cold-start-credential-reconcile-unavailable',
       credentialEncryptionUnavailable &&
         error instanceof AuthApiError &&
-        error.code === 'CREDENTIAL_STORE_UNAVAILABLE',
+        error.code === 'CREDENTIAL_STORE_UNAVAILABLE' &&
+        hasPotentiallyPersistedAuthCredentials(),
     );
   }
   if (!persistedSession) {

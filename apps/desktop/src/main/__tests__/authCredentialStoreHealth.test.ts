@@ -111,12 +111,56 @@ describe('authManager credential-store escalation wiring', () => {
       'credentialEncryptionUnavailable',
       'error',
       'AuthApiError',
+      'hasPotentiallyPersistedAuthCredentials',
       `return (${expression});`,
     );
     const unavailable = new AuthApiError('CREDENTIAL_STORE_UNAVAILABLE');
-    expect(classify(false, unavailable, AuthApiError)).toBe(false);
-    expect(classify(true, unavailable, AuthApiError)).toBe(true);
-    expect(classify(true, new Error('unrelated'), AuthApiError)).toBe(false);
+    expect(classify(false, unavailable, AuthApiError, () => true)).toBe(false);
+    expect(classify(true, unavailable, AuthApiError, () => true)).toBe(true);
+    expect(classify(true, unavailable, AuthApiError, () => false)).toBe(false);
+    expect(classify(true, new Error('unrelated'), AuthApiError, () => true)).toBe(false);
+  });
+
+  it('distinguishes an empty profile from records, backups, tombstones and access errors without decryption', () => {
+    const body = authSource.match(
+      /function hasPotentiallyPersistedAuthCredentials\(\): boolean \{([\s\S]*?)\n\}/,
+    )?.[1];
+    expect(body).toBeDefined();
+    const keys = [
+      'AUTH_SESSION_KEY',
+      'AUTH_ACCOUNT_VAULT_KEY',
+      'AUTH_ACCOUNT_LOGOUT_TOMBSTONES_KEY',
+      'LEGACY_RESOURCE_REFRESH_TOKEN_KEY',
+      'LEGACY_ACCOUNT_REFRESH_TOKEN_KEY',
+      'LEGACY_REFRESH_TOKEN_KEY',
+    ];
+    const check = new Function(
+      'fs',
+      'path',
+      'SAFE_STORAGE_DIR',
+      ...keys,
+      body!.replace(' as NodeJS.ErrnoException', ''),
+    );
+    const probe = (exists: string | null, errorCode = 'ENOENT') =>
+      check(
+        {
+          constants: { F_OK: 0 },
+          accessSync: (file: string) => {
+            if (file !== exists) throw Object.assign(new Error(), { code: errorCode });
+          },
+        },
+        { join: (...parts: string[]) => parts.join('/') },
+        () => '/fake',
+        ...keys,
+      );
+    expect(probe(null)).toBe(false);
+    for (const key of keys) {
+      expect(probe(`/fake/${key}.enc`)).toBe(true);
+      expect(probe(`/fake/${key}.enc.bak`)).toBe(true);
+    }
+    expect(probe(null, 'EACCES')).toBe(true);
+    expect(probe(null, 'EPERM')).toBe(true);
+    expect(probe(null, 'EIO')).toBe(true);
   });
 
   it('retains startup failure across all owner cleanup paths and exposes it before loading providers', () => {
