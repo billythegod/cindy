@@ -153,6 +153,7 @@ async function prepareOnDemand(absPath: string, deps: RemoteAbsFileFetchDeps & {
   let sequence = 0;
   const requests = new Map<string, AbortController>();
   const pending = new Set<Promise<void>>();
+  const materialized = new Map<string, { filename: string; mime: string }>();
   const queue = createFileReadQueue();
   const requestListener = server.addListener('resourceRequest', (event) => {
     if (event.token !== token || closed || requests.has(event.id)) return;
@@ -167,6 +168,11 @@ async function prepareOnDemand(absPath: string, deps: RemoteAbsFileFetchDeps & {
         const relative = event.path;
         if (!relative || /[\\:\0\r\n]/.test(relative) || relative.split('/').some((part) => !part || part.startsWith('.')))
           throw new Error('NOT_FOUND');
+        const reused = materialized.get(relative);
+        if (reused) {
+          accepted = await server.resolveRequest!(token, event.id, reused.filename, reused.mime, 200);
+          return;
+        }
         const filename = String(sequence++);
         destination = new File(dir, filename);
         const media = await fetchRemoteAbsFileOnce(deps, root.replace(/\/$/, '') + '/' + relative, deps.ssh,
@@ -203,6 +209,7 @@ async function prepareOnDemand(absPath: string, deps: RemoteAbsFileFetchDeps & {
         }
         assertHtmlSnapshotActive(controller.signal);
         accepted = await server.resolveRequest!(token, event.id, filename, mime, 200);
+        if (accepted) materialized.set(relative, { filename, mime });
       } catch (error) {
         if (!closed && !controller.signal.aborted) {
           const message = error instanceof Error ? error.message : '';

@@ -291,6 +291,17 @@ describe("on-demand mobile HTML previews", () => {
     expect(mocks.contents.size).toBe(0);
   });
 
+  it("reuses a materialized path instead of fetching cache-busted repeats", async () => {
+    const { deps } = setup();
+    const preview = await prepareMobileHtmlPreview("/site/index.html", deps, new AbortController().signal);
+    request("a", "index.html");
+    await vi.waitFor(() => expect(mocks.resolveRequest).toHaveBeenCalledWith(token, "a", "0", "text/html", 200));
+    request("b", "index.html");
+    await vi.waitFor(() => expect(mocks.resolveRequest).toHaveBeenCalledWith(token, "b", "0", "text/html", 200));
+    expect(mocks.remote).toHaveBeenCalledOnce();
+    await preview.close();
+  });
+
   it("isolates missing resources and refuses paths outside the preview root", async () => {
     const { deps } = setup();
     const preview = await prepareMobileHtmlPreview("/site/index.html", deps, new AbortController().signal);
