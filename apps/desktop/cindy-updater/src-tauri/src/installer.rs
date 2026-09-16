@@ -551,11 +551,53 @@ fn trusted_staging_ancestor() -> PathBuf {
     }
 }
 
+/// System ProgramData, independent of an inherited `ProgramData` environment
+/// variable a medium-integrity process could override.
 #[cfg(windows)]
-fn program_data_dir() -> PathBuf {
-    std::env::var_os("ProgramData")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+pub(crate) fn program_data_dir() -> PathBuf {
+    known_folder_program_data().unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+}
+
+#[cfg(not(windows))]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn program_data_dir() -> PathBuf {
+    PathBuf::from(r"C:\ProgramData")
+}
+
+#[cfg(windows)]
+fn known_folder_program_data() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
+
+    let mut path: windows_sys::core::PWSTR = std::ptr::null_mut();
+    let hr = unsafe {
+        SHGetKnownFolderPath(
+            &FOLDERID_ProgramData,
+            0,
+            std::ptr::null_mut(),
+            &mut path,
+        )
+    };
+    if hr != 0 || path.is_null() {
+        return None;
+    }
+    let wide = unsafe {
+        let mut len = 0usize;
+        while *path.add(len) != 0 {
+            len += 1;
+        }
+        std::slice::from_raw_parts(path, len)
+    };
+    let os = std::ffi::OsString::from_wide(wide);
+    unsafe {
+        CoTaskMemFree(path.cast());
+    }
+    Some(PathBuf::from(os))
+}
+
+pub(crate) fn uses_private_staging_acl(path: &Path, private_root: &Path) -> bool {
+    path.starts_with(private_root)
 }
 
 pub(crate) fn staging_dirs_for(
@@ -1054,7 +1096,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
             .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
         remove_staging_dir(&backup_dir)
             .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
-        ensure_staging_directory(&extract_dir)
+        ensure_staging_directory(&extract_dir, args)
             .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
         logger::info(format!("[installer] extract_dir={}", extract_dir.display()));
     extract_zip(&args.zip, &extract_dir, args.zip_sha256.as_deref(), |done, total| {
@@ -1085,7 +1127,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
         Phase::BackingUp,
         "备份当前版本…".into(),
     ));
-    ensure_staging_directory(&backup_dir)
+    ensure_staging_directory(&backup_dir, args)
         .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
     logger::info(format!("[installer] backup_dir={}", backup_dir.display()));
     snapshot_overwritten_files(&extract_dir, &args.app_dir, &backup_dir, |done, total| {
@@ -1543,16 +1585,13 @@ fn launch_de_elevated(exe: &Path) -> io::Result<()> {
     }
 }
 
-fn ensure_staging_directory(path: &Path) -> io::Result<()> {
-    if path.starts_with(protected_staging_base()) {
-        ensure_elevated_private_root(path)
+fn ensure_staging_directory(path: &Path, args: &CliArgs) -> io::Result<()> {
+    let private_root = elevated_private_staging_root(args);
+    if uses_private_staging_acl(path, &private_root) {
+        create_protected_staging_tree(path, &trusted_staging_ancestor())
     } else {
         fs::create_dir_all(path)
     }
-}
-
-fn ensure_elevated_private_root(root: &Path) -> io::Result<()> {
-    create_protected_staging_tree(root, &trusted_staging_ancestor())
 }
 
 static CREATED_PROTECTED_STAGING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
@@ -1995,11 +2034,12 @@ mod tests {
         create_protected_staging_tree, elevated_private_staging_root, finalize_retry_state,
         install_writable_for_staging, lock_owned_by_foreign_process,
         may_relaunch_with_current_integrity, may_self_elevate, path_is_within,
-        pre_elevation_failure_can_retry, prepare_retry_archive, release_abandoned_update_lock,
-        release_update_lock, remove_staging_dir, retain_update_lock_file, retry_allowed,
-        retry_args, retry_available, retry_cli_args, retry_request_allowed, rollback, run,
-        should_relaunch_after_abandoning_retry, should_relaunch_after_rollback, staging_dirs,
-        staging_dirs_for, uses_elevated_private_staging, uses_protected_staging, Phase,
+        pre_elevation_failure_can_retry, prepare_retry_archive, program_data_dir,
+        release_abandoned_update_lock, release_update_lock, remove_staging_dir,
+        retain_update_lock_file, retry_allowed, retry_args, retry_available, retry_cli_args,
+        retry_request_allowed, rollback, run, should_relaunch_after_abandoning_retry,
+        should_relaunch_after_rollback, staging_dirs, staging_dirs_for,
+        uses_elevated_private_staging, uses_private_staging_acl, uses_protected_staging, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
     use sha2::Digest;
@@ -2837,6 +2877,48 @@ mod tests {
     }
 
     #[test]
+    fn protected_staging_acl_is_limited_to_the_private_root() {
+        let program_data = Path::new(r"C:\ProgramData");
+        let private_root = program_data.join("cindy-update-ts");
+        let extract = private_root.join("cindy-update-extract-ts");
+        assert!(uses_private_staging_acl(&extract, &private_root));
+        let app_dir = program_data.join("Cindy");
+        let app_extract = app_dir.join("cindy-update-extract-ts");
+        assert!(
+            !uses_private_staging_acl(&app_extract, &private_root),
+            "a Program Files-style install under ProgramData must keep ordinary create_dir_all"
+        );
+
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("fn ensure_staging_directory")
+            .expect("ensure_staging_directory");
+        let body = &source[start..start + 500];
+        assert!(
+            body.contains("uses_private_staging_acl"),
+            "do not treat every ProgramData descendant as private High-IL staging:\n{body}"
+        );
+    }
+
+    #[test]
+    fn program_data_staging_does_not_trust_the_inherited_environment() {
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("fn known_folder_program_data")
+            .expect("known_folder_program_data");
+        let body = &source[start..start + 900];
+        assert!(
+            !body.contains("var_os(\"ProgramData\")") && !body.contains("var_os(\"PROGRAMDATA\")"),
+            "an overridden ProgramData env var must not become the High-IL staging ancestor:\n{body}"
+        );
+        assert!(
+            body.contains("SHGetKnownFolderPath") && body.contains("FOLDERID_ProgramData"),
+            "resolve the system ProgramData known folder, not the inherited environment:\n{body}"
+        );
+        let _ = program_data_dir();
+    }
+
+    #[test]
     fn protected_staging_is_created_with_the_security_descriptor() {
         let source = include_str!("installer.rs");
         let start = source
@@ -2851,13 +2933,13 @@ mod tests {
             body.contains("CreateDirectoryW") && body.contains("SECURITY_ATTRIBUTES"),
             "High-IL staging must be born with the DACL, not secured after create_dir:\n{body}"
         );
-        let ensure = source
-            .find("fn ensure_elevated_private_root")
-            .expect("ensure_elevated_private_root");
-        let ensure_body = &source[ensure..ensure + 700];
+        let tree = source
+            .find("pub(crate) fn create_protected_staging_tree")
+            .expect("create_protected_staging_tree");
+        let tree_body = &source[tree..tree + 900];
         assert!(
-            !ensure_body.contains("create_dir_all"),
-            "create_dir_all accepts a planted tree before the DACL is applied:\n{ensure_body}"
+            !tree_body.contains("create_dir_all"),
+            "create_dir_all accepts a planted tree before the DACL is applied:\n{tree_body}"
         );
     }
 

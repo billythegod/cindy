@@ -117,19 +117,17 @@ fn retry_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String
 }
 
 pub fn run() {
-    let mut args = CliArgs::parse();
+    let args = CliArgs::parse();
     logger::init(&args.log);
     logger::info(format!(
         "[cindy-updater] starting, version={}, args={:?}",
         env!("CARGO_PKG_VERSION"),
         args
     ));
-    if let Err(error) = installer::bind_zip_sha256(&mut args) {
-        logger::error(format!("[cindy-updater] archive unavailable ({error})"));
-    }
     // Best-effort sweep of >7-day-old current and legacy update leftovers in %TEMP%.
     // Catches backup dirs from prior failed rollbacks that we intentionally
     // kept around for manual recovery. Bounded so disk doesn't grow forever.
+    // Archive hashing runs in the installer worker after this window is shown.
     installer::sweep_stale_temp_dirs();
 
     let initial_status = StatusPayload {
@@ -309,6 +307,20 @@ mod retry_update_contract {
         assert!(
             body.contains("WindowEvent::Destroyed") && body.contains("abandon_retry"),
             "closing the updater window must still abandon Retry after a terminal status"
+        );
+    }
+
+    #[test]
+    fn run_does_not_hash_the_archive_before_showing_the_window() {
+        let source = include_str!("lib.rs");
+        let start = source.find("pub fn run()").expect("pub fn run");
+        let end = source[start..]
+            .find("tauri::Builder::default()")
+            .expect("window builder follows startup");
+        let body = &source[start..start + end];
+        assert!(
+            !body.contains("bind_zip_sha256"),
+            "hashing a large ZIP before the window is shown leaves the user with no UI:\n{body}"
         );
     }
 }

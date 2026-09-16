@@ -120,8 +120,12 @@ with the linked medium-integrity token instead. A writable per-user install
 creates `%ProgramData%\cindy-update-{ts}\` with a High integrity DACL at
 `CreateDirectoryW` time so a same-login medium process cannot pre-create or
 hold a writable handle on that tree before `copy_tree`; a planted directory
-or junction is refused. A protected Program Files install still stages next
-to the app.
+or junction is refused. ProgramData is the system known folder, not an
+inherited `ProgramData` environment variable. Only that per-attempt private
+root uses the High-IL create path; an install directory that happens to live
+under ProgramData still uses ordinary `create_dir_all`. A protected Program
+Files install still stages next to the app. The archive digest is verified
+after the updater window is shown, not before.
 Unelevated per-user installs still probe and stay in TEMP.
 Failures before replacement delete those staging directories; only a rollback
 that itself failed keeps the backup for manual recovery.
