@@ -164,8 +164,8 @@ describe('account provider readiness wiring', () => {
       /handle\.isLive\(\)\s*&&\s*accountProviderReadinessBarrier\.isCurrentAdoptable\(\)/,
     );
 
-    expect(bootstrapSource).toContain(
-      'accountProviderReadinessArm.publish(userId, startProviderReadiness, resumeIncompleteDiscovery)',
+    expect(compactBootstrapSource).toContain(
+      'accountProviderReadinessArm.publish( userId, startProviderReadiness, resumeIncompleteDiscovery, )',
     );
     expect(bootstrapSource).toContain('accountProviderReadinessArm.clear()');
     expect(bootstrapSource).toContain('startPendingAccountProviderReadiness = null');

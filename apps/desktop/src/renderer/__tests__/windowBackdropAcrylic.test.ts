@@ -58,7 +58,7 @@ describe('Windows Acrylic resize backing contract', () => {
 
   it('keeps the root material attribute in sync with runtime material changes', () => {
     expect(bootstrapSource).toContain(
-      'win.webContents.send(\n        WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,\n        config.backgroundMaterial,\n      )',
+      'win.webContents.send(WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL, config.backgroundMaterial)',
     );
     expect(secondaryWindowsSource).toContain(
       'win.webContents.send(\n          WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,\n          config.backgroundMaterial,\n        )',
