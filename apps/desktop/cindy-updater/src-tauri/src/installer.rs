@@ -200,9 +200,16 @@ pub(crate) fn retain_update_lock_file(lock: UpdateLock) {
 
 /// Close / abandon Retry must delete a retained `.updating` file. Cindy's
 /// startup lock loop cannot tell this leftover from a live updater and would
-/// otherwise wait the full 30s timeout.
+/// otherwise wait the full 30s timeout. Only delete a lock this process wrote;
+/// a second updater that lost acquisition must not remove the first instance's
+/// mutex by pathname.
 pub(crate) fn release_abandoned_update_lock(path: &Path) {
-    let _ = fs::remove_file(path);
+    let Ok(contents) = fs::read_to_string(path) else {
+        return;
+    };
+    if contents == format!("updating {}\n", std::process::id()) {
+        let _ = fs::remove_file(path);
+    }
 }
 
 /// Re-open a lock this process already created and kept during the failure
@@ -479,6 +486,9 @@ fn copy_verified_archive(src: &Path, dst: &Path, expected_sha256: Option<&str>) 
         let _ = fs::remove_file(dst);
         return false;
     }
+    // Windows opened the source with FILE_SHARE_READ only, so deletion is
+    // denied until this handle is gone.
+    drop(source);
     if let Err(error) = fs::remove_file(src) {
         logger::warn(format!(
             "[retry] isolated copy but could not remove source {}: {error}",
@@ -1660,6 +1670,28 @@ mod tests {
     }
 
     #[test]
+    fn closing_another_updater_does_not_delete_a_retained_lock() {
+        let temp = TestDir::new();
+        let lock = temp.0.join(".updating");
+        let other_pid = if std::process::id() == 1 { 2 } else { 1 };
+        fs::write(&lock, format!("updating {other_pid}\n")).unwrap();
+        release_abandoned_update_lock(&lock);
+        assert!(
+            lock.exists(),
+            "a second updater that never retained .updating must not delete the first instance's mutex"
+        );
+
+        let owned_path = temp.0.join("owned.updating");
+        let owned = acquire_update_lock(&owned_path).expect("own lock");
+        retain_update_lock_file(owned);
+        release_abandoned_update_lock(&owned_path);
+        assert!(
+            !owned_path.exists(),
+            "the updater that retained .updating must still delete it on Close"
+        );
+    }
+
+    #[test]
     fn pre_elevation_failures_are_not_retryable_when_uac_is_required() {
         assert!(!pre_elevation_failure_can_retry(true, false));
         assert!(pre_elevation_failure_can_retry(false, false));
@@ -1771,6 +1803,23 @@ mod tests {
         );
         assert_eq!(fs::read(&dst).unwrap(), b"archive");
         assert!(archive_matches_digest(&dst, &digest));
+
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("fn copy_verified_archive")
+            .expect("copy_verified_archive");
+        let end = source[start..]
+            .find("\n/// Retryable failures isolate")
+            .expect("finalize_retry_state follows copy");
+        let body = &source[start..start + end];
+        let drop_at = body.find("drop(source)").expect("close the source handle");
+        let remove_at = body
+            .find("fs::remove_file(src)")
+            .expect("delete the staged source");
+        assert!(
+            drop_at < remove_at,
+            "Windows FILE_SHARE_READ denies delete while the copy handle is still open:\n{body}"
+        );
     }
 
     #[test]
