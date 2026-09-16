@@ -313,61 +313,72 @@ it('restores speed history from the per-session cache after remounting', () => {
   second.unmount();
 
   // 另一个会话没有历史：从零等待，不串会话。
-  render(
-    <Harness sessionKey="cache-b" startedAt={1} outputTokens={0} generationDurationMs={0} />,
-  );
+  render(<Harness sessionKey="cache-b" startedAt={1} outputTokens={0} generationDurationMs={0} />);
   fireEvent.click(screen.getByRole('button'));
   expect(screen.getByRole('img').querySelectorAll('path')).toHaveLength(1);
   expect(screen.getByRole('dialog').textContent).toContain('—');
 });
 
-it('does not fabricate a rate when restoring an idle session whose next turn finished while away', () => {
-  clearRateHistoryCache();
-  function Harness({
-    sessionKey,
-    startedAt,
-    outputTokens,
-    generationDurationMs,
-  }: {
-    sessionKey: string | null;
-    startedAt: number | null;
-    outputTokens: number;
-    generationDurationMs: number;
-  }) {
-    const history = useRunningTokenRateHistory({
+it.each([
+  [500, 10000],
+  [50, 500],
+  [50, 10000],
+  [500, 500],
+])(
+  'preserves the last measured rate on idle restore with %i tokens / %i ms',
+  (outputTokens, generationDurationMs) => {
+    clearRateHistoryCache();
+    function Harness({
       sessionKey,
       startedAt,
       outputTokens,
       generationDurationMs,
-      generationReliable: true,
-    });
-    return (
-      <RunningTokenRatePopover
-        elapsedText="10s"
-        rate={history.latestRate === null ? null : String(history.latestRate)}
-        rateText="speed"
-        averageRate={null}
-        outputTokens={outputTokens}
-        history={history}
-      />
+    }: {
+      sessionKey: string | null;
+      startedAt: number | null;
+      outputTokens: number;
+      generationDurationMs: number;
+    }) {
+      const history = useRunningTokenRateHistory({
+        sessionKey,
+        startedAt,
+        outputTokens,
+        generationDurationMs,
+        generationReliable: true,
+      });
+      return (
+        <RunningTokenRatePopover
+          elapsedText="10s"
+          rate={history.latestRate === null ? null : String(history.latestRate)}
+          rateText="speed"
+          averageRate={null}
+          outputTokens={outputTokens}
+          history={history}
+        />
+      );
+    }
+    const first = render(
+      <Harness sessionKey="idle-a" startedAt={1} outputTokens={0} generationDurationMs={0} />,
     );
-  }
-  const first = render(
-    <Harness sessionKey="idle-a" startedAt={1} outputTokens={0} generationDurationMs={0} />,
-  );
-  first.rerender(
-    <Harness sessionKey="idle-a" startedAt={1} outputTokens={100} generationDurationMs={1000} />,
-  );
-  first.unmount();
+    first.rerender(
+      <Harness sessionKey="idle-a" startedAt={1} outputTokens={100} generationDurationMs={1000} />,
+    );
+    first.unmount();
 
-  // 切离期间会话在后台跑完新一轮；切回时已空闲，store 里是新轮的累计计数。
-  render(
-    <Harness sessionKey="idle-a" startedAt={null} outputTokens={500} generationDurationMs={10000} />,
-  );
-  fireEvent.click(screen.getByRole('button'));
-  // 新轮计数减旧轮 baseline 得出的 44.4 tok/s 是伪造区间，不得追加；
-  // 图表仍只有缓存里的 1 个采样点（仅轴线），最新速度保持最后的真实测量。
-  expect(screen.getByRole('img').querySelectorAll('path')).toHaveLength(1);
-  expect(screen.getByRole('dialog').textContent).not.toContain('44.4');
-  expect(screen.getByRole('dialog').textContent).toContain('100');
-});
+    // 切离期间会话在后台跑完新一轮；切回时已空闲，store 里是新轮的累计计数。
+    render(
+      <Harness
+        sessionKey="idle-a"
+        startedAt={null}
+        outputTokens={outputTokens}
+        generationDurationMs={generationDurationMs}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button'));
+    // 无论新轮计数增大还是减小，都不能与旧轮比较或追加伪造区间；
+    // 图表仍只有缓存里的 1 个采样点（仅轴线），最新速度保持最后的真实测量。
+    expect(screen.getByRole('img').querySelectorAll('path')).toHaveLength(1);
+    expect(screen.getByRole('dialog').textContent).not.toContain('44.4');
+    expect(screen.getByText('100', { selector: 'span' })).toBeTruthy();
+  },
+);
