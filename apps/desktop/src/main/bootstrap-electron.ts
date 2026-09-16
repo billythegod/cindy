@@ -1,4 +1,5 @@
 import { registerFilePeerIpc } from './device-link/filePeer';
+import { registerLoginItemIpc } from './login-item-ipc.js';
 import { retainProviderPresentationAfterAuthChange } from './maker-host/provider-presentation-store.js';
 import { codexAccountState } from './maker-host/codex-account-auth.js';
 import { syncSubscriptionAccountUsage } from './usage/subscriptionAccountUsage.js';
@@ -2451,6 +2452,7 @@ registerBrowserBackendIpc();
 // ipcMain.handle 在 app ready 前注册也有效。
 registerAppShortcutIpc();
 registerAppearanceSettingsIpc();
+registerLoginItemIpc();
 
 // ── 资源用量面板 IPC ─────────────────────────────────────────────────
 // 订阅驱动采样(面板不开不采样),interval 已 unref 不拖退出;terminate 只认
