@@ -80,7 +80,8 @@ export function recordRunningTokenRate(
   const tokenDelta = outputTokens - current.baseline.outputTokens;
   // A time-only refresh cannot close a token interval: the matching usage may
   // arrive later in a batch. Keep both counters anchored to the last sample.
-  if (outputTokens === previous?.outputTokens) return observed;
+  // An explicitly empty output stream can still measure zero throughput.
+  if (outputTokens > 0 && outputTokens === previous?.outputTokens) return observed;
   if (durationDelta === 0) {
     // A corrected count without a matching time cannot produce a rate.
     return { ...observed, baseline };
