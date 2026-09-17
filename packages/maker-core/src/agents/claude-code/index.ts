@@ -1700,6 +1700,15 @@ export class ClaudeCodeAgent extends BaseAgent {
     // Keep the policy across Claude task_notification auto-continue turns,
     // which do not call handle.send again. The next explicit send replaces it.
     let activeTurnPermissionPolicy: TurnPermissionPolicy | null = null;
+    let activeToolsDisabled = false;
+    const denyTextOnlyTool = () => ({
+      continue: true,
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse' as const,
+        permissionDecision: 'deny' as const,
+        permissionDecisionReason: 'Tools are disabled for this host-owned text-only turn.',
+      },
+    });
     let activeCapabilitySelectionText = '';
     const appendActiveCapabilitySelectionText = (text: string | undefined): void => {
       if (!text) return;
@@ -1708,6 +1717,7 @@ export class ClaudeCodeAgent extends BaseAgent {
         .join('\n');
     };
     const turnChangeCaptureHook: HookCallback = async (input) => {
+      if (input.hook_event_name === 'PreToolUse' && activeToolsDisabled) return denyTextOnlyTool();
       const captureCwd = opts.workingDir;
       const captureSessionId = opts.sessionId;
       if (!this.deps.turnChangeCapture || !captureCwd || !captureSessionId) {
@@ -1758,6 +1768,7 @@ export class ClaudeCodeAgent extends BaseAgent {
     };
     const reviewReadOnlyHook: HookCallback = async (input) => {
       if (input.hook_event_name !== 'PreToolUse') return { continue: true };
+      if (activeToolsDisabled) return denyTextOnlyTool();
       const pre = input as PreToolUseHookInput;
       const toolName = pre.tool_name;
       const updatedInput = isReadOnlyClaudeTool(toolName)
@@ -5674,6 +5685,9 @@ export class ClaudeCodeAgent extends BaseAgent {
       get model() { return mutableModel; },
 
       validateSendOptions(sendOpts: SendOptions) {
+        if (sendOpts.toolsDisabled && opts.remoteHostId) {
+          throw new Error('Host text-only turns require a local Claude runtime with execution hooks.');
+        }
         if (
           sendOpts.turnPermissionPolicy &&
           (mutablePermissionMode === 'acceptEdits' ||
@@ -5731,7 +5745,12 @@ export class ClaudeCodeAgent extends BaseAgent {
         ) {
           bridgeCompactQueued = await rebuildCancelledContinuationQuery(sendOpts?.signal);
         }
+        const nextToolsDisabled = sendOpts?.toolsDisabled === true;
+        if (turnInFlight && activeToolsDisabled !== nextToolsDisabled) {
+          throw new Error('Cannot change the tool policy while a Claude turn is active.');
+        }
         activeTurnPermissionPolicy = sendOpts?.turnPermissionPolicy ?? null;
+        activeToolsDisabled = nextToolsDisabled;
         // 仅用于诊断日志: 调用方每次 send 都可以带 logTitle (取自 storage 的最新值);
         // 缺省时保留上一次的值 (没传不等于"清空")。
         if (sendOpts?.logTitle !== undefined) lastSendTitle = sendOpts.logTitle;
