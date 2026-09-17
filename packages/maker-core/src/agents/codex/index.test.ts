@@ -13872,8 +13872,8 @@ describe('CodexAgent MCP thread context hooks', () => {
     await handlers.mcpServerElicitation({ threadId: 'start-thread-id', turnId: 'raw-turn', serverName: 'cindy', mode: 'form',
       _meta: { codex_approval_kind: 'mcp_tool_call', tool_name: 'send', tool_params: { to: 'recipient' } }, message: 'Allow tool call', requestedSchema: {},
     });
-    expect(review.mock.calls[0]?.[0].userIntent).toContain('Do not send.');
-    expect(review.mock.calls[0]?.[0].userIntent).not.toContain('SEND THE REPORT');
+    expect(JSON.stringify(review.mock.calls[0]?.[0].userIntent)).toContain('Do not send.');
+    expect(JSON.stringify(review.mock.calls[0]?.[0].userIntent)).not.toContain('SEND THE REPORT');
     await handle.close();
   });
 
@@ -20063,7 +20063,7 @@ describe('CodexAgent MCP thread context hooks', () => {
   it('keeps the originating turn auto-review intent on detached continuation', async () => {
     const seenIntents: string[] = [];
     const reviewAutoPermissionAction = vi.fn<AutoReviewDelegate>(async (request) => {
-      seenIntents.push(request.userIntent);
+      seenIntents.push(typeof request.userIntent === 'string' ? request.userIntent : JSON.stringify(request.userIntent));
       return { verdict: 'allow' as const };
     });
     const agent = new CodexAgent(createDeps({}, { reviewAutoPermissionAction }));
@@ -20371,7 +20371,7 @@ describe('CodexAgent yield continuation', () => {
   it('inherits origin capability selection and auto-review intent on the yield continuation turn', async () => {
     const seenIntents: string[] = [];
     const reviewAutoPermissionAction = vi.fn<AutoReviewDelegate>(async (request) => {
-      seenIntents.push(request.userIntent);
+      seenIntents.push(typeof request.userIntent === 'string' ? request.userIntent : JSON.stringify(request.userIntent));
       return { verdict: 'allow' as const };
     });
     const agent = new CodexAgent(createDeps({}, {

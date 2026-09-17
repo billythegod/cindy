@@ -1,3 +1,4 @@
+import type { AutoReviewUserIntent } from '@cindy/maker-core';
 import {
   CodexResumePreparationBlockedError,
   AUTO_REVIEW_SOURCE_CONTENT,
@@ -217,7 +218,7 @@ export function revokeTrustedDesktopQueuedOrigin(item: AgentInputQueuedMessage):
 type MakerSendOptions = {
   readonly [AUTO_REVIEW_SOURCE_CONTENT]?: UserMessage['content'];
   /** Main-only continuation: a restored intent is not an authored user turn. */
-  readonly [AUTO_REVIEW_USER_INTENT]?: string;
+  readonly [AUTO_REVIEW_USER_INTENT]?: AutoReviewUserIntent;
   readonly [INHERITED_CAPABILITY_SELECTION]?: string;
   readonly [MAIN_OWNED_SEND_CONTEXT]?: MainOwnedSendContext;
   messageUuid?: string;

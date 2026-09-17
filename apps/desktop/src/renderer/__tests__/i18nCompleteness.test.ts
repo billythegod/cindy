@@ -83,13 +83,14 @@ interface Scan {
   templateCount: number;
 }
 
+// A quoted prefix followed by + is dynamic, not a complete static key.
+const STATIC_KEY_RE = /\bt\(\s*['"]([A-Za-z0-9_][A-Za-z0-9_.]*)['"]\s*(?=[,)])/g;
+
 async function scanSource(): Promise<Scan> {
   const used = new Set<string>();
   const withDefault = new Set<string>();
   let templateCount = 0;
 
-  // 静态 t('a.b') / t("a.b");捕获 key 与其后是否紧跟逗号(可能是默认值)。
-  const keyRe = /\bt\(\s*['"]([A-Za-z0-9_][A-Za-z0-9_.]*)['"]\s*(,)?/g;
   // 位置参默认:t('k', '默认')
   const posDefaultRe = /\bt\(\s*['"]([A-Za-z0-9_][A-Za-z0-9_.]*)['"]\s*,\s*['"]/g;
   // 选项默认:t('k', { ... defaultValue ... })
@@ -99,7 +100,7 @@ async function scanSource(): Promise<Scan> {
   for await (const entry of glob('**/*.{ts,tsx}', { cwd: RENDERER })) {
     if (entry.includes('__tests__') || entry.startsWith('i18n/')) continue;
     const txt = readFileSync(resolve(RENDERER, entry), 'utf8');
-    for (const m of txt.matchAll(keyRe)) used.add(m[1]);
+    for (const m of txt.matchAll(STATIC_KEY_RE)) used.add(m[1]);
     for (const m of txt.matchAll(posDefaultRe)) withDefault.add(m[1]);
     for (const m of txt.matchAll(optDefaultRe)) withDefault.add(m[1]);
     templateCount += [...txt.matchAll(templateRe)].length;
@@ -108,6 +109,12 @@ async function scanSource(): Promise<Scan> {
 }
 
 describe('i18n completeness (static keys present in all locales)', () => {
+  it('checks complete static keys, including options, without treating dynamic prefixes as keys', () => {
+    const source = `t('missing.key'); t("missing.withOptions", { count: 2 }); t('phase.' + status);`;
+    expect([...source.matchAll(STATIC_KEY_RE)].map((match) => match[1]))
+      .toEqual(['missing.key', 'missing.withOptions']);
+  });
+
   it('every static t() key (no inline default) exists in all supported locales', async () => {
     const locales = localeNames();
     const trees = loadLocales();
