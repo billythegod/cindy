@@ -232,7 +232,7 @@ import {
   isDbClientNotReadyError,
 } from '../localDb/client/current.js';
 import { createBotRuntimeRestoreCoordinator } from './botRuntimeRestore.js';
-import { createWorkingDirectoryRecovery, isUnavailableFilesystemError } from './workingDirectoryRecovery.js';
+import { createWorkingDirectoryRecovery, isUnavailableFilesystemError, worktreeConversationFallbackDir } from './workingDirectoryRecovery.js';
 import { workdirDiagnosticContext, workdirDiagnosticErrorCode, workdirDiagnosticId } from '../workdirDiagnostics.js';
 import { statWorkingDirectory, mkdirWorkingDirectory, realpathWorkingDirectory, findSimilarWorkingDirectory } from '../workdir-probe-host/index.js';
 import { getMessagesForHistory } from '../localDb/chatHistoryReader.js';
@@ -1105,8 +1105,14 @@ import { installSessionTurnObserver } from './sessionTurnObserver.js';
 
 const log = createLogger('maker-ipc');
 const workdirLog = createLogger('workdir-diagnostics');
-const workingDirectoryRecovery = createWorkingDirectoryRecovery({ stat: statWorkingDirectory, mkdir: mkdirWorkingDirectory, realpath: realpathWorkingDirectory }, async (sessionId) =>
-  ensureDialogueWorkspaceDir(sessionId, Date.now()), workdirLog);
+const workingDirectoryRecovery = createWorkingDirectoryRecovery({ stat: statWorkingDirectory, mkdir: mkdirWorkingDirectory, realpath: realpathWorkingDirectory }, async (sessionId, workingDir, mode) => {
+  if (mode === 'unrestored-worktree') {
+    const fallback = worktreeConversationFallbackDir(dialogueWorkspaceRootDir(), sessionId, workingDir);
+    await fsp.mkdir(fallback, { recursive: true });
+    return fallback;
+  }
+  return ensureDialogueWorkspaceDir(sessionId, Date.now());
+}, workdirLog);
 
 function localModelWindowSwitchErrorCode(code: IpcErrorCode): IpcErrorCode {
   return isDeviceLinkInvoke() ? 'PRECONDITION_FAILED' : code;
@@ -18122,6 +18128,7 @@ async function checkWorkDirExists(
     if (getManagedWorktreeBasePath(normalizedWorkingDir) !== null) {
       const ready = await restoreMissingManagedWorktreeForSession(sessionId, workingDir);
       if (!ready) {
+        if (!suppress && await workingDirectoryRecovery.recover(sessionId, workingDir, undefined, [], 'unrestored-worktree')) return true;
         workdirLog.warn('workdir preflight rejected', { ...diagnosticContext, reason: 'managed-worktree-not-ready' });
         if (suppress) {
           log.warn('send: managed worktree not ready (broadcast suppressed, caller has fallback)', {
@@ -18168,6 +18175,12 @@ async function checkWorkDirExists(
     // A fuzzy match is a lead for the agent, not authority to switch project identity.
     const unavailable = isUnavailableFilesystemError(error);
     let similar: string | null = null;
+    if (
+      !suppress &&
+      ((error as NodeJS.ErrnoException).code === 'ENOENT' || unavailable) &&
+      getManagedWorktreeBasePath(path.resolve(workingDir).replace(/\\/g, '/')) !== null &&
+      await workingDirectoryRecovery.recover(sessionId, workingDir, undefined, [], 'unrestored-worktree')
+    ) return true;
     // A missing ordinary/dialogue cwd must not stop the conversation. Prefer a repaired
     // DB path when the caller has one; never turn a managed Git recovery into
     // an empty project, or treat permission/non-directory failures as ENOENT.

@@ -26,6 +26,8 @@ import {
 } from '../makerSendTransaction';
 import type { MakerSessionCreateOpts } from '../sessionRequest';
 import { CredentialModeSwitchBusyError } from '../../maker-host/codex-credential-switch';
+import path from 'node:path';
+import { createWorkingDirectoryRecovery } from '../workingDirectoryRecovery';
 
 function createSession(overrides: Partial<MakerSendTransactionSession> = {}): MakerSendTransactionSession {
   return {
@@ -1254,6 +1256,48 @@ describe('maker SEND transaction', () => {
     expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({ workingDir: '/conversation' }));
     expect(session.send).not.toHaveBeenCalled();
     expect(recovered.send).toHaveBeenCalledWith(expect.stringContaining('Original filesystem unavailable'), expect.anything());
+  });
+
+  it.each([false, true])('sends once after an unrestorable worktree falls back (live runtime: %s)', async (live) => {
+    const original = path.resolve('/repo/.cindy-worktrees/missing');
+    const fallback = path.resolve('/owned/dialogues/task');
+    const recovery = createWorkingDirectoryRecovery({
+      stat: vi.fn(async () => ({ isDirectory: () => true })), mkdir: vi.fn(),
+    }, async () => fallback);
+    let current = live ? createSession({ workDir: original }) : undefined;
+    const old = current;
+    const persisted = { workingDir: original, worktreePath: original, resumeSessionId: 'native-history', model: 'gpt-5.4' };
+    const { deps } = createDeps({
+      getSession: () => current,
+      readSessionWorkingDirFromDb: async () => persisted.workingDir,
+      readWorkingDirectoryRecoveryCreateOpts: async () => ({ agentKind: 'codex', ...persisted }),
+      checkWorkDirExists: async (id, dir) => recovery.isFallback(id, dir!)
+        ? recovery.recover(id, dir!)
+        : recovery.recover(id, dir!, undefined, [], 'unrestored-worktree'),
+      resolveRecoveredWorkingDir: (id, dir) => recovery.resolve(id, dir),
+      peekWorkingDirectoryRecoveryNote: (id, dir) => recovery.peek(id, dir),
+      consumeWorkingDirectoryRecoveryNote: (id, note) => recovery.consume(id, note),
+      bootstrapSession: vi.fn(async (opts) => {
+        current = createSession({ workDir: opts.workingDir });
+        return { session: current, didInjectOrcaInstructions: false, didInjectProjectContext: false };
+      }),
+    });
+    const transaction = createMakerSendTransaction(deps);
+    await expect(transaction.sendToAgentAccepted('session-1', 'continue', {
+      agentKind: 'codex', ...persisted,
+    })).resolves.toMatchObject({ accepted: true });
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({
+      workingDir: fallback, resumeSessionId: 'native-history',
+    }));
+    if (old) expect(old.send).not.toHaveBeenCalled();
+    expect(current!.send).toHaveBeenCalledOnce();
+    expect(current!.send).toHaveBeenCalledWith(expect.stringContaining('could not restore'), expect.anything());
+    expect(recovery.peek('session-1')).toBeNull();
+    expect(persisted.workingDir).toBe(original);
+    expect(persisted.worktreePath).toBe(original);
+    await transaction.sendToAgentAccepted('session-1', 'next');
+    expect(deps.bootstrapSession).toHaveBeenCalledOnce();
+    expect(current!.send).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the old runtime when Bot resource preflight fails, then resumes normally after repair', async () => {
