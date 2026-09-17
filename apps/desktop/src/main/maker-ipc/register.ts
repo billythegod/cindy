@@ -9534,6 +9534,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     resolveInteraction: resolvePendingInteraction,
     hasPendingInput: (sessionId) =>
       inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.length > 0,
+    readPendingInputClientIds: (sessionId) =>
+      inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.map(item => item.clientId),
     collectArtifacts: async (sessionId) => {
       await waitForTurnChangeSetSeal(sessionId);
       const changeSets = await listTurnChangeSets(sessionId);
@@ -13725,12 +13727,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // 可见行),理由与踩过的坑记在 helper 的注释里。
     supersedeRetriedUserTurn,
     getLastAssistantTranscriptUuid,
-    onAcceptedQueuedMessage: (sessionId, item): Promise<void> | undefined => {
+    onAcceptedQueuedMessage: async (sessionId, item): Promise<void> => {
       // 已派发 → 该项不会再走 discard,释放 scheduler 的 discard 监听防泄漏。
       schedulerQueuedPromptDiscardWatchers.delete(item.clientId);
       // 返回 promise 让 coordinator 在 onPersisted 链路里 await —— worker 运行态与
       // pending auto-bridge 副作用必须先于 turn 启动完成；失败仍吞错落日志，不拦派发。
-      return orcaInterAgentDispatcher.runQueuedOrcaInterAgentAcceptedCallback(sessionId, item);
+      await orcaInterAgentDispatcher.runQueuedOrcaInterAgentAcceptedCallback(sessionId, item);
+      await botDelegationServiceHolder?.acceptQueuedSessionInput(sessionId, item.clientId);
     },
     onUserMessagePersisting: (sessionId, item) => {
       markQueuedAttachmentPersistenceStarted(sessionId, item.clientId);

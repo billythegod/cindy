@@ -743,9 +743,19 @@ function botsFinishDelegation(
     if (p.tokensUsed !== undefined) values.push(expectNumber(p.tokensUsed, 'tokensUsed'));
     const completedAt = expectNumber(p.completedAt, 'completedAt');
     values.push(completedAt, completedAt, expectString(p.delegationId, 'delegationId'));
+    let receiptGuard = '';
+    if (p.expectedRunSequence !== undefined) {
+      receiptGuard += ' AND run_sequence = ?';
+      values.push(expectNumber(p.expectedRunSequence, 'expectedRunSequence'));
+    }
+    if (p.expectedExecution !== undefined) {
+      const receipt = asRecord(p.expectedExecution, 'expectedExecution');
+      receiptGuard += " AND json_extract(permission_snapshot_json, '$.taskExecution.runSequence') = run_sequence AND json_extract(permission_snapshot_json, '$.taskExecution.instanceId') = ? AND json_extract(permission_snapshot_json, '$.taskExecution.generation') = ?";
+      values.push(expectString(receipt.instanceId, 'instanceId'), expectNumber(receipt.generation, 'generation'));
+    }
     const row = db.prepare(`UPDATE bot_delegations SET status = ?, result_summary = ?, output_artifacts_json = ?, last_error = ?
       ${tokenSet}, pending_interaction_json = NULL, completed_at = ?, completion_delivered_at = NULL, updated_at = ?
-      WHERE id = ? AND status IN ('queued','running','waiting')
+      WHERE id = ? AND status IN ('queued','running','waiting') ${receiptGuard}
       RETURNING id, parent_session_id AS parentSessionId, child_session_id AS childSessionId, target_bot_id AS targetBotId, run_sequence AS runSequence, status`)
       .get(...values) as
       | { id: string; parentSessionId: string | null; childSessionId: string | null; targetBotId: string | null; runSequence: number; status: string }

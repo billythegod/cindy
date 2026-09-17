@@ -144,6 +144,7 @@ export interface BotDelegationServiceDeps {
   collectArtifacts?: (sessionId: string) => Promise<BotDelegationArtifact[]>;
   /** Pending follow-up input must run before this Session task can become terminal. */
   hasPendingInput?: (sessionId: string) => boolean;
+  readPendingInputClientIds?: (sessionId: string) => string[];
   /** The active Bot route may differ from its canonical row after a profile switch/fallback. */
   readCallerRuntime?: (sessionId: string) => (Pick<
     typeof sessions.$inferSelect,
@@ -406,6 +407,23 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     if (!deps.readSessionExecution) return true;
     const current = deps.readSessionExecution(sessionId);
     return !!expected && current?.instanceId === expected.instanceId && current.generation === expected.generation;
+  };
+
+  // Store only a native turn actually accepted for this delegation run. A later
+  // direct Session turn must never replace this receipt merely by becoming live.
+  const executionSnapshot = (row: DelegationRow) => {
+    const execution = row.childSessionId && deps.readSessionExecution?.(row.childSessionId);
+    return execution
+      ? sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskExecution', json(${JSON.stringify({ ...execution, runSequence: row.runSequence })}))`
+      : botDelegations.permissionSnapshotJson;
+  };
+
+  const acceptExecution = async (row: DelegationRow): Promise<void> => {
+    if (!deps.readSessionExecution) return;
+    await getDbClient().drizzle.update(botDelegations).set({
+      permissionSnapshotJson: executionSnapshot(row),
+    }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
+      inArray(botDelegations.status, ['queued', 'running', 'waiting'])));
   };
 
   const cleanupChildSession = async (
@@ -849,6 +867,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     lastError?: string | null;
     tokensUsed?: number;
     abortChild?: boolean;
+    expectedRunSequence?: number;
+    expectedExecution?: DelegationExecutionReceipt;
   }): Promise<{
     id: string;
     parentSessionId: string | null;
@@ -866,6 +886,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         lastError: params.lastError?.slice(0, 4_000) ?? null,
         ...(typeof params.tokensUsed === 'number' ? { tokensUsed: params.tokensUsed } : {}),
         completedAt: at,
+        expectedRunSequence: params.expectedRunSequence,
+        expectedExecution: params.expectedExecution,
       },
     );
     if (updated) {
@@ -897,7 +919,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     return updated;
   };
 
-  const readLatestAssistantText = async (sessionId: string): Promise<string | null> => {
+  const readLatestAssistantText = async (sessionId: string, messageClientId?: string): Promise<string | null> => {
     const db = getDbClient().drizzle;
     const [latest] = await db
       .select({ content: messages.content })
@@ -906,6 +928,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         and(
           eq(messages.sessionId, sessionId),
           eq(messages.role, 'assistant'),
+          ...(messageClientId ? [eq(messages.clientId, messageClientId)] : []),
           isNull(messages.rewindAt),
           // 任务卡锚点(空正文)与插话留痕也是 assistant 行,但它们是这个任务**自己
           // 派活**留下的注解,不是它交出的答复。嵌套委派下不排除会直接选错:上一层
@@ -1338,8 +1361,9 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         const acceptedAt = now();
         const [accepted] = await db
           .update(botDelegations)
-          .set({ status: 'running', acceptedAt, lastError: null, updatedAt: acceptedAt })
-          .where(and(eq(botDelegations.id, row.id), eq(botDelegations.status, 'queued')))
+          .set({ status: 'running', acceptedAt, lastError: null, updatedAt: acceptedAt,
+            permissionSnapshotJson: executionSnapshot(row) })
+          .where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence), eq(botDelegations.status, 'queued')))
           .returning({
             id: botDelegations.id,
             parentSessionId: botDelegations.parentSessionId,
@@ -1453,6 +1477,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     if (typeof resumedAt === 'number' && deps.taskControl) {
       await deps.taskControl.restoreInput(row.childSessionId);
       if (deps.hasPendingInput?.(row.childSessionId)) {
+        prepareQueuedResume(row);
         await deps.taskControl.resumeInput(row.childSessionId);
         return;
       }
@@ -1533,6 +1558,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       message,
       persistedContent: row.objective,
       clientId,
+      onAccepted: () => acceptExecution(row),
     });
     if (dispatched.ok) {
       clearRetryTimer(row.id);
@@ -1541,7 +1567,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         .update(botDelegations)
         .set({
           status: 'running',
-          permissionSnapshotJson: effectiveSnapshot,
+          permissionSnapshotJson: sql`json_patch(${effectiveSnapshot}, json_object('taskExecution', json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution')))`,
           pendingInteractionJson: null,
           lastError: null,
           updatedAt: resumedAt,
@@ -2277,6 +2303,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       message: [`[来自 ${requesterName} 的补充]`, trimmed].join('\n\n'),
       persistedContent: [`[来自 ${requesterName} 的补充]`, trimmed].join('\n\n'),
       clientId: BOT_DELEGATION_CLIENT_ID.interjection(delegationId, token),
+      onAccepted: () => acceptExecution(row),
     });
     if (!dispatched?.ok) {
       return {
@@ -2753,6 +2780,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const control = deps.taskControl;
     const pending = pendingInteractions.get(row.id);
     if (pending) pending.raisedAt = row.updatedAt;
+    prepareQueuedResume(row);
     holdTaskInput(row.childSessionId, false);
     if (pending?.decisionApplied) {
       // Native settlement callbacks are serialized behind this operation. Apply
@@ -2827,6 +2855,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         const dispatched = await deps.dispatch({ targetSessionId: row.childSessionId,
           message: text?.trim() || 'Continue from the existing task history after the requested pause. Check what has already completed; do not replay the original request or repeat completed actions.',
           clientId: `bot-delegation-unpause:${row.id}:${pause.token}`,
+          onAccepted: () => acceptExecution(row),
         });
         if (!dispatched.ok) throw new Error(dispatched.message);
       }
@@ -3003,6 +3032,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     outcome: 'done' | 'error';
     execution?: DelegationExecutionReceipt | null;
     expectedRunSequence?: number;
+    resultMessageClientId?: string;
+    pendingInputClientIds?: string[];
     resultText?: string;
     error?: string;
     /** Captured synchronously at the terminal boundary, before queue drain can start the next turn. */
@@ -3018,12 +3049,17 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       .orderBy(desc(botDelegations.createdAt))
       .limit(1);
     if (params.expectedRunSequence !== undefined && row?.runSequence !== params.expectedRunSequence) return;
-    if (params.execution !== undefined && (!sameExecution(params.childSessionId, params.execution) || row?.acceptedAt == null)) return;
+    const acceptedExecution = row && parseRecord(row.permissionSnapshotJson).taskExecution as
+      (DelegationExecutionReceipt & { runSequence: number }) | undefined;
+    if (params.execution !== undefined && (!params.execution || !acceptedExecution
+      || acceptedExecution.runSequence !== row?.runSequence
+      || acceptedExecution.instanceId !== params.execution.instanceId
+      || acceptedExecution.generation !== params.execution.generation || row?.acceptedAt == null)) return;
     if (row && parseRecord(row.permissionSnapshotJson).taskCancelRequested === true && isActiveDelegation(row.status as DelegationStatus)) {
       if (!deps.taskControl?.isActive(params.childSessionId)) await cancelDelegationTree(row, 'Cancelled by the requesting Bot.', true, true);
       return;
     }
-    if (params.hadPendingInputAtTerminal || deps.hasPendingInput?.(params.childSessionId)) return;
+    if (params.hadPendingInputAtTerminal) return;
     if (!row || readTaskPause(row) || !ACTIVE_DELEGATION_STATUSES.includes(row.status as (typeof ACTIVE_DELEGATION_STATUSES)[number])) return;
     const [child] = await db
       .select({ tokensUsed: sessions.totalTokenUsage })
@@ -3038,7 +3074,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     // 当成「对方什么都没说」——发起方会被叫醒,但手里是一段没 Result 的废话墙。
     const recoveredText = params.resultText?.trim()
       || (params.outcome === 'done'
-        ? ((await readLatestAssistantText(params.childSessionId))?.trim() ?? '')
+        ? ((await readLatestAssistantText(params.childSessionId, params.resultMessageClientId))?.trim() ?? '')
         : '');
     const resultSummary = recoveredText.slice(0, MAX_RESULT_CHARS) || null;
     const artifacts = params.outcome === 'done' && deps.collectArtifacts
@@ -3051,8 +3087,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
           return [];
         })).filter((artifact) => artifact.status !== 'deleted').slice(0, MAX_ARTIFACTS)
       : [];
-    // Artifact/history reads can yield while a direct user turn is reserved.
-    if (params.execution !== undefined && !sameExecution(params.childSessionId, params.execution)) return;
+    // The transaction checks the durable receipt again after asynchronous reads.
     const changed = await updateTerminal({
       delegationId: row.id,
       status,
@@ -3060,6 +3095,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       outputArtifactsJson: JSON.stringify(artifacts),
       lastError,
       tokensUsed,
+      expectedRunSequence: row.runSequence,
+      expectedExecution: params.execution ?? undefined,
     });
     if (!changed) return;
     await deliverCompletion({
@@ -3071,7 +3108,25 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     });
   };
 
+  const pendingExecutionInputs = new Map<string, {
+    execution: DelegationExecutionReceipt | null; clientIds: string[]; runSequence?: number;
+  }>();
+
+  const prepareQueuedResume = (row: DelegationRow): void => {
+    if (!row.childSessionId) return;
+    const clientIds = deps.readPendingInputClientIds?.(row.childSessionId) ?? [];
+    if (!clientIds.length) return;
+    pendingExecutionInputs.set(row.childSessionId, {
+      execution: (parseRecord(row.permissionSnapshotJson).taskExecution as DelegationExecutionReceipt | undefined) ?? null,
+      clientIds, runSequence: row.runSequence,
+    });
+  };
+
   const settleSession = async (params: Parameters<typeof settleSessionUnserialized>[0]) => {
+    if (params.execution && params.pendingInputClientIds?.length && sameExecution(params.childSessionId, params.execution)) {
+      pendingExecutionInputs.set(params.childSessionId, { execution: params.execution, clientIds: params.pendingInputClientIds });
+    }
+    params = { ...params, hadPendingInputAtTerminal: params.hadPendingInputAtTerminal ?? deps.hasPendingInput?.(params.childSessionId) };
     if (heldSessionIds.has(params.childSessionId)) {
       // Do not await an operation queued behind Stop: native abort may itself await this callback.
       const [held] = await getDbClient().drizzle.select().from(botDelegations)
@@ -3085,6 +3140,32 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const [row] = await getDbClient().drizzle.select({ id: botDelegations.id, runSequence: botDelegations.runSequence }).from(botDelegations)
       .where(eq(botDelegations.childSessionId, params.childSessionId)).limit(1);
     if (row) await withTaskOperation(row.id, () => settleSessionUnserialized({ ...params, expectedRunSequence: row.runSequence }));
+  };
+
+  // Only queue entries present at the delegated terminal boundary belong to
+  // its continuation. A direct turn arriving after that boundary is unrelated.
+  const acceptQueuedSessionInput = async (childSessionId: string, clientId: string): Promise<void> => {
+    const execution = deps.readSessionExecution?.(childSessionId);
+    if (!execution) return;
+    const db = getDbClient().drizzle;
+    const boundary = pendingExecutionInputs.get(childSessionId);
+    if (!boundary?.clientIds.includes(clientId)) return;
+    pendingExecutionInputs.delete(childSessionId);
+    const [row] = await db.select().from(botDelegations)
+      .where(eq(botDelegations.childSessionId, childSessionId)).limit(1);
+    if (!row || !isActiveDelegation(row.status as DelegationStatus)
+      || (boundary.runSequence !== undefined && boundary.runSequence !== row.runSequence)) return;
+    const receiptGuard = boundary.execution
+      ? and(
+        sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.runSequence') = ${row.runSequence}`,
+        sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.instanceId') = ${boundary.execution.instanceId}`,
+        sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.generation') = ${boundary.execution.generation}`)
+      : sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution') IS NULL`;
+    await db.update(botDelegations).set({
+      permissionSnapshotJson: sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskExecution', json(${JSON.stringify({ ...execution, runSequence: row.runSequence })}))`,
+    }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
+      receiptGuard,
+      inArray(botDelegations.status, ['running', 'waiting'])));
   };
 
   const restore = async (): Promise<void> => {
@@ -3168,6 +3249,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
 
   const dispose = (): void => {
     unregisterParentCancellation();
+    pendingExecutionInputs.clear();
     for (const timer of timers.values()) clearTimeout(timer);
     timers.clear();
     for (const timer of retryTimers.values()) clearTimeout(timer);
@@ -3202,6 +3284,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     cancelDelegationsForParentSession,
     cancelDelegationsForBot,
     settleSession,
+    acceptQueuedSessionInput,
     handleInteractionStart,
     handleInteractionEnd,
     restore,

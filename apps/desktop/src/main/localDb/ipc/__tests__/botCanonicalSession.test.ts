@@ -3350,6 +3350,7 @@ describe('Bot Session task end-to-end runtime', () => {
   }
 
   function createDelegationRuntime(options: {
+    collectArtifacts?: Parameters<typeof createBotDelegationService>[0]['collectArtifacts'];
     readSessionExecution?: Parameters<typeof createBotDelegationService>[0]['readSessionExecution'];
     withSessionLock?: Parameters<typeof createBotDelegationService>[0]['withSessionLock'];
     closeSession?: Parameters<typeof createBotDelegationService>[0]['closeSession'];
@@ -3533,7 +3534,10 @@ describe('Bot Session task end-to-end runtime', () => {
         options.onNativeStarted?.(id);
         return { kind: 'session-dispatch', source: 'fixture-native-turn', dispatched: true };
       },
-      onAcceptedQueuedMessage: async (_id, item) => { await acceptedCallbacks.get(item.clientId)?.(); },
+      onAcceptedQueuedMessage: async (id, item) => {
+        await acceptedCallbacks.get(item.clientId)?.();
+        if (options.readSessionExecution) await delegation.acceptQueuedSessionInput(id, item.clientId);
+      },
     }) : undefined;
     const dispatch = vi.fn(async (params: Parameters<typeof dispatchDirect>[0]) => {
       if (coordinator) {
@@ -3570,6 +3574,7 @@ describe('Bot Session task end-to-end runtime', () => {
     const closeSession = vi.fn(options.closeSession ?? (async () => undefined));
     const delegation = createBotDelegationService({
       readSessionExecution: options.readSessionExecution,
+      collectArtifacts: options.collectArtifacts,
       withSessionLock: options.withSessionLock,
       prepareWorktree: options.prepareWorktree,
       getWorktree: options.getWorktree,
@@ -3597,6 +3602,7 @@ describe('Bot Session task end-to-end runtime', () => {
       closeSession,
       broadcastSessionCreated: vi.fn(),
       resolveInteraction: options.resolveInteraction,
+      readPendingInputClientIds: id => coordinator?.getQueueControlSnapshot(id).pendingQueue.map(item => item.clientId) ?? [],
       hasPendingInput: (sessionId) => coordinator?.hasPendingQueuedWork(sessionId) || pendingTurns.some(
         (turn) => turn.sessionId === sessionId && turn.queued,
       ),
@@ -4111,8 +4117,8 @@ describe('Bot Session task end-to-end runtime', () => {
       if (!task.ok) throw new Error('missing task');
       const previousExecution = execution;
       await runtime.settleChild(task.childSessionId, 'First result.');
-      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Second run.' });
       execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Second run.' });
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome,
         execution: previousExecution, resultText: 'Stale result.', error: 'Stale failure.' });
       expect(await runtime.delegation.getSessionTask('session-1', task.delegationId))
@@ -4124,6 +4130,120 @@ describe('Bot Session task end-to-end runtime', () => {
       expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
         .toEqual({ status: 'completed', result_summary: 'Second result.' });
     } finally { runtime.dispose(); }
+  });
+
+  it('settles the accepted delegated receipt when a direct turn starts during artifact reads', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    let release!: () => void;
+    let entered!: () => void;
+    const collecting = new Promise<void>(resolve => { entered = resolve; });
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution,
+      collectArtifacts: async () => { entered(); await barrier; return []; } });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
+      if (!task.ok) throw new Error('missing task');
+      const original = runtime.delegation.settleSession({ childSessionId: task.childSessionId,
+        outcome: 'done', execution, resultText: 'Original result.', hadPendingInputAtTerminal: false });
+      await collecting;
+      execution = { instanceId: 'native', generation: 2 };
+      const direct = runtime.delegation.settleSession({ childSessionId: task.childSessionId,
+        outcome: 'done', execution, resultText: 'Unrelated direct result.', hadPendingInputAtTerminal: false });
+      release();
+      await Promise.all([original, direct]);
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Original result.' });
+    } finally { release(); runtime.dispose(); }
+  });
+
+  it('recovers only the terminal event assistant message after a direct next turn has replied', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Recover original result.' });
+      if (!task.ok) throw new Error('missing task');
+      const insert = h.sqlite!.prepare('INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+      insert.run('original-result-id', 'original-result-client', task.childSessionId, 'assistant', 'Original transcript.', 20000);
+      insert.run('direct-result-id', 'direct-result-client', task.childSessionId, 'assistant', 'Unrelated transcript.', 30000);
+      const originalExecution = execution;
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution: originalExecution,
+        resultMessageClientId: 'original-result-client', hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Original transcript.' });
+    } finally { runtime.dispose(); }
+  });
+
+  it('does not commit a terminal result after its durable execution receipt changes during reads', async () => {
+    await seedPair();
+    const execution = { instanceId: 'native', generation: 1 };
+    let delegationId = '';
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution,
+      collectArtifacts: async () => {
+        h.sqlite!.prepare("UPDATE bot_delegations SET permission_snapshot_json = json_set(permission_snapshot_json, '$.taskExecution.generation', 2) WHERE id = ?").run(delegationId);
+        return [];
+      } });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Changing receipt.' });
+      if (!task.ok) throw new Error('missing task');
+      delegationId = task.delegationId;
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Superseded result.', hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(delegationId))
+        .toEqual({ status: 'running', result_summary: null });
+    } finally { runtime.dispose(); }
+  });
+
+  it('adopts only input queued at the delegated terminal boundary', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Queued work.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        hadPendingInputAtTerminal: true, pendingInputClientIds: ['owned-queued-input'] });
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'unrelated-input');
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Unrelated.', hadPendingInputAtTerminal: false });
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId)).toMatchObject({ task: { status: 'running' } });
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'owned-queued-input');
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Queued result.', hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Queued result.' });
+    } finally { runtime.dispose(); }
+  });
+
+  it('binds a restored explicit resume queue to the new native execution', async () => {
+    await seedPair();
+    const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
+    const runtime = createDelegationRuntime({ taskControl: true, queueSnapshots,
+      readSessionExecution: () => ({ instanceId: 'before-restart', generation: 1 }) });
+    let restored: ReturnType<typeof createDelegationRuntime> | undefined;
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Resume exactly once.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.delegation.stopSessionTask('session-1', task.delegationId, 'pause');
+      await runtime.settleChild(task.childSessionId, 'Stopped.');
+      runtime.advance(1000);
+      const fault = loseResumeCommitReceipt(true);
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'resume' });
+      fault.mockRestore();
+      runtime.dispose();
+      const execution = { instanceId: 'after-restart', generation: 1 };
+      restored = createDelegationRuntime({ taskControl: true, queueSnapshots, startTime: 11000,
+        readSessionExecution: () => execution });
+      await restored.delegation.restore();
+      await vi.waitFor(() => expect(restored!.started).toHaveLength(1));
+      await restored.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Resumed result.', hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Resumed result.' });
+    } finally { runtime.dispose(); restored?.dispose(); }
   });
 
   it('ignores the prior terminal event while a continuation is queued before native reservation', async () => {

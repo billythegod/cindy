@@ -716,6 +716,8 @@ export interface BotsFinishRuntimeArgs {
   eventPayloadJson: string;
 }
 export interface BotsFinishDelegationArgs {
+  expectedRunSequence?: number;
+  expectedExecution?: { instanceId: string; generation: number };
   delegationId: string;
   status: 'completed' | 'failed' | 'cancelled' | 'timed-out';
   resultSummary: string | null;
