@@ -601,6 +601,34 @@ fn existing_install_files_medium_writable(app_dir: &Path, exe_name: &str) -> Opt
     }
 }
 
+/// Existing loadable inputs a medium-integrity process can replace to hijack
+/// an elevated launch: the main exe, `resources/app.asar`, and app-local DLLs.
+pub(crate) fn medium_writable_install_file_candidates(
+    app_dir: &Path,
+    exe_name: &str,
+) -> Vec<PathBuf> {
+    let mut candidates = vec![
+        app_dir.join(exe_name),
+        app_dir.join("resources").join("app.asar"),
+    ];
+    if let Ok(entries) = fs::read_dir(app_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if is_reparse_point(&path) {
+                continue;
+            }
+            let is_dll = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"));
+            if is_dll {
+                candidates.push(path);
+            }
+        }
+    }
+    candidates
+}
+
 fn directory_medium_token_can_modify(app_dir: &Path) -> Option<bool> {
     #[cfg(windows)]
     {
@@ -2078,11 +2106,20 @@ fn directory_grants_add_file(app_dir: &Path) -> Option<bool> {
 
 #[cfg(windows)]
 fn existing_install_files_medium_writable_windows(app_dir: &Path, exe_name: &str) -> Option<bool> {
-    let exe = app_dir.join(exe_name);
-    if !exe.exists() {
-        return None;
-    }
-    let check = || file_grants_generic_write(&exe);
+    let check = || {
+        let mut saw_existing = false;
+        for path in medium_writable_install_file_candidates(app_dir, exe_name) {
+            if !path.exists() || is_reparse_point(&path) {
+                continue;
+            }
+            saw_existing = true;
+            match file_grants_generic_write(&path) {
+                Some(true) => return Some(true),
+                Some(false) | None => {}
+            }
+        }
+        saw_existing.then_some(false)
+    };
     if process_is_elevated() {
         with_medium_integrity(check).flatten()
     } else {
@@ -3735,6 +3772,37 @@ mod tests {
         assert!(
             !super::install_is_medium_writable_from_file_access(Some(false), Some(false)),
             "directory and executable both denied remain protected"
+        );
+        let probe = TestDir::new();
+        let app = probe.0.join("Cindy");
+        fs::create_dir(&app).unwrap();
+        fs::write(app.join("Cindy.exe"), b"exe").unwrap();
+        fs::create_dir(app.join("resources")).unwrap();
+        fs::write(app.join("resources").join("app.asar"), b"asar").unwrap();
+        fs::write(app.join("vcruntime140.dll"), b"dll").unwrap();
+        let candidates = super::medium_writable_install_file_candidates(&app, "Cindy.exe");
+        assert!(
+            candidates.iter().any(|path| path.ends_with("Cindy.exe")),
+            "the main executable remains a classification input: {candidates:?}"
+        );
+        assert!(
+            candidates.iter().any(|path| path.ends_with("app.asar")),
+            "a writable resources/app.asar must pin the install as unprotected: {candidates:?}"
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.ends_with("vcruntime140.dll")),
+            "a writable app-local DLL must pin the install as unprotected: {candidates:?}"
+        );
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("fn existing_install_files_medium_writable_windows")
+            .expect("windows file probe");
+        let body = &source[start..start + 600];
+        assert!(
+            body.contains("medium_writable_install_file_candidates"),
+            "do not classify from Cindy.exe alone:\n{body}"
         );
         let temp = TestDir::new();
         let mut args = test_args();

@@ -149,8 +149,9 @@ deny-delete error does not hang the pre-window loop. The unelevated parent
 forwards `--install-writable true|false` across UAC so the elevated child
 does not treat `--elevated` as proof that a per-user install is protected.
 A denied write probe still pins the install as writable when the same-login
-medium token can modify the directory or an existing `Cindy.exe`, even if
-Administrators own the tree. Ownership alone is not enough. After Cindy
+medium token can modify the directory, an existing `Cindy.exe`, an app-local
+DLL, or `resources/app.asar`, even if Administrators own the tree. Ownership
+alone is not enough. After Cindy
 exits, Retry opens a non-reparse directory handle and writes backup/copy/
 rollback through that path, refusing descendant junctions so a swapped
 `resources` reparse cannot receive elevated files. Windows startup waits
