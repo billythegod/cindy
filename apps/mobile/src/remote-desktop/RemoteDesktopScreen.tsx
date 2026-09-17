@@ -2128,10 +2128,12 @@ export default function RemoteDesktopScreen() {
             top: landscape
               ? insets.top + spacing.lg
               : edgePadding.paddingTop + spacing.xs,
-            // Keep the 44pt control out of the island: follow the rail when it
-            // is on the left, otherwise start after the left safe inset.
+            // Island/notch sits mid-edge in landscape, so the top-left corner
+            // stays clear even when insets.left is large. Only honor the left
+            // inset when the top edge is also unsafe — that means a physical
+            // cutout actually occupies the corner, not a centered island.
             left: landscape
-              ? (toolbarOnLeft ? 0 : insets.left) +
+              ? (insets.top > 0 ? insets.left : 0) +
                 spacing.lg +
                 (Platform.OS === "ios" ? spacing.xs : 0)
               : edgePadding.paddingLeft + spacing.lg,
