@@ -57,10 +57,22 @@ export function simplifyBotRenderItems(
   let turn: RenderItem[] = [];
   const flushTurn = (active: boolean) => {
     let lastProse = -1;
+    let lastDelivery = -1;
     for (let index = 0; index < turn.length; index += 1) {
       const item = turn[index];
       if (isProse(item) && item.message.content.trim()) lastProse = index;
+      if ((isProse(item) && (hasAttachments(item.message)
+        || extractRenderedMarkdownImageTargets(item.message.content).length > 0))
+        || (item.type === 'tool_media' && item.items.length > 0)
+        || (item.type === 'ghost_card' && (item.settled || Boolean(item.media?.length)))) {
+        lastDelivery = index;
+      }
     }
+    // Generated-file candidates still require the card's disk/time-window checks,
+    // so their presence alone is not evidence of a visible delivery.
+    // A later attachment/card is already the result; do not resurrect its preamble.
+    // Keep later explanatory text after a partial delivery on stop/error/history.
+    const fallbackProse = !active && lastProse > lastDelivery ? lastProse : -1;
     let work: WorkGroupChildItem[] = [];
     const flushWork = () => {
       if (!work.length) return;
@@ -79,7 +91,7 @@ export function simplifyBotRenderItems(
       if (isProse(item)) {
         if (!item.message.content.trim() && !hasAttachments(item.message)) return;
         if (!isCompletedAssistantMessage(item.message) && !sealedAnswers.has(item.message)
-          && !hasAttachments(item.message) && (active || index !== lastProse)
+          && !hasAttachments(item.message) && index !== fallbackProse
           && extractRenderedMarkdownImageTargets(item.message.content).length === 0) {
           work.push(item);
           return;

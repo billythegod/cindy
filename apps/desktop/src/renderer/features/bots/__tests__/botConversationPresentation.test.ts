@@ -70,6 +70,35 @@ describe('teammate public execution disclosure', () => {
     expect(allKeys(result)).not.toContain('msg-private');
   });
 
+  it.each<RenderItem>([
+    message('file', 'assistant', '', { files: [{ name: 'report.pdf', path: '/report.pdf' }], turnCompleted: true }),
+    message('image', 'assistant', '', {
+      images: [{ url: '/picture.png', mimeType: 'image/png', originalName: 'picture.png' }], turnCompleted: true,
+    }),
+    { type: 'tool_media', key: 'media', items: [{ kind: 'image', url: '/picture.png' }] },
+    { type: 'ghost_card', key: 'card', callId: 'call', ghostId: 'plugin', tool: 'render',
+      toolCall: { clientId: 'call', role: 'tool_use', content: '' }, settled: true },
+  ])('does not restore preambles after delivery: $key', (delivery) => {
+    const input = [message('u', 'user'), message('progress', 'assistant', '正在生成'), tool('t'), delivery];
+    for (const streaming of [true, false]) {
+      const result = project(input, streaming);
+      expect(proseIds(result)).not.toContain('progress');
+      expect(result.some((item) => item.key === delivery.key)).toBe(true);
+      expect(allKeys(result)).toContain('msg-progress');
+    }
+  });
+
+  it('retains a later explanation after partial delivery and ignores unverified file candidates', () => {
+    const result = project([message('u', 'user'),
+      message('file', 'assistant', '', { files: [{ name: 'partial.pdf', path: '/partial.pdf' }] }),
+      message('explanation', 'assistant', 'Only part of the export completed'), tool('failed'),
+      { type: 'generated_files', key: 'candidates', files: [
+        { name: 'missing.pdf', path: '/missing.pdf', source: 'command' },
+      ], turnStartMs: null, turnEndMs: null }, message('error', 'error')], false);
+    expect(proseIds(result)).toEqual(['file', 'explanation']);
+    expect(allKeys(result)).toContain('msg-error');
+  });
+
   it('does not infer commentary from words, paragraph length or markdown shape', () => {
     const text = '# Report\n' + '先查市场 final result '.repeat(100);
     const input = [message('u', 'user'), message('long', 'assistant', text), tool('t'),
