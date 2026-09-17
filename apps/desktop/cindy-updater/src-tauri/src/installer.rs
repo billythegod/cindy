@@ -82,8 +82,9 @@ pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
         }
         // Electron already force-quit Cindy before this process started. This
         // path never reaches run_inner's PID wait, so Close would otherwise
-        // leave the unmodified install shut down.
-        relaunch_restored_app(&args);
+        // leave the unmodified install shut down. Always de-elevate: the root
+        // is not pinned yet, and a medium-writable parent can swap Cindy.exe.
+        relaunch_unmodified_app_after_early_failure(&args);
         emit(InstallerEvent::Failed {
             error: "更新文件已不存在或无法读取，请重新检查更新".into(),
             can_retry: false,
@@ -309,6 +310,25 @@ fn relaunch_restored_app(args: &CliArgs) {
         Ok(AppLaunch::Skipped) => {}
         Err(error) => logger::warn(format!(
             "[installer] relaunch of restored exe after abandoning Retry failed: {error}"
+        )),
+    }
+}
+
+/// Digest failure happens before `run_inner` pins `app_dir`. A medium-writable
+/// parent can replace the directory and Cindy.exe after the unelevated parent
+/// drops its handle; never inherit this process's high token.
+fn relaunch_unmodified_app_after_early_failure(args: &CliArgs) {
+    let Some(exe) = restored_app_relaunch_path(args) else {
+        return;
+    };
+    match launch_de_elevated(&exe) {
+        Ok(()) => logger::info(format!(
+            "[installer] relaunched unmodified exe after archive validation failed at {}",
+            exe.display()
+        )),
+        Err(error) => logger::warn(format!(
+            "[installer] skip elevated CreateProcess after archive validation failed {}: {error}",
+            exe.display()
         )),
     }
 }
@@ -616,8 +636,9 @@ fn existing_install_files_medium_writable(app_dir: &Path, exe_name: &str) -> Opt
 /// an elevated launch: the main exe, `resources/app.asar`, app-local native
 /// binaries, every unpacked file under `resources/app.asar.unpacked`
 /// (Forge unpacks JS such as `node-pty` that production later `require`s),
-/// and extraResource natives under `resources/tools` (the Windows desktop
-/// host `.node` is required into the main process).
+/// extraResource natives under `resources/tools` (the Windows desktop host
+/// `.node` is required into the main process), and Forge extraResource
+/// `resources/drizzle` companions that startup `require()`s.
 pub(crate) fn medium_writable_install_file_candidates(
     app_dir: &Path,
     exe_name: &str,
@@ -633,6 +654,10 @@ pub(crate) fn medium_writable_install_file_candidates(
     );
     let _ = collect_medium_writable_unpacked_files(
         &app_dir.join("resources").join("tools"),
+        &mut candidates,
+    );
+    let _ = collect_medium_writable_unpacked_files(
+        &app_dir.join("resources").join("drizzle"),
         &mut candidates,
     );
     candidates
@@ -664,11 +689,17 @@ fn runtime_trees_pin_install_writable(app_dir: &Path) -> bool {
     unpacked_walk_pins_install_writable(collect_medium_writable_root_natives(app_dir, &mut sink))
         || unpacked_walk_pins_install_writable(unpacked_tree_walk(app_dir))
         || unpacked_walk_pins_install_writable(extra_resource_tools_walk(app_dir))
+        || unpacked_walk_pins_install_writable(extra_resource_drizzle_walk(app_dir))
 }
 
 fn extra_resource_tools_walk(app_dir: &Path) -> UnpackedWalk {
     let mut sink = Vec::new();
     collect_medium_writable_unpacked_files(&app_dir.join("resources").join("tools"), &mut sink)
+}
+
+fn extra_resource_drizzle_walk(app_dir: &Path) -> UnpackedWalk {
+    let mut sink = Vec::new();
+    collect_medium_writable_unpacked_files(&app_dir.join("resources").join("drizzle"), &mut sink)
 }
 
 pub(crate) fn loadable_input_is_reparse(path: &Path) -> bool {
@@ -3602,8 +3633,12 @@ mod tests {
             .expect("run_inner follows bind");
         let bind_fail = &wrapper_body[bind_err..inner_call];
         assert!(
-            bind_fail.contains("relaunch_restored_app"),
+            bind_fail.contains("relaunch_unmodified_app_after_early_failure"),
             "Electron already force-quit Cindy; a pre-run_inner digest failure must relaunch the unmodified install:\n{bind_fail}"
+        );
+        assert!(
+            !bind_fail.contains("relaunch_restored_app("),
+            "digest-fail relaunch must not inherit a high token before the root is pinned:\n{bind_fail}"
         );
     }
 
@@ -4155,6 +4190,22 @@ mod tests {
                 .any(|path| path.ends_with("cindy-windows-desktop-host.node")),
             "Forge extraResource natives under resources/tools must pin the install as unprotected: {candidates:?}"
         );
+        fs::create_dir_all(app.join("resources").join("drizzle").join("scripts")).unwrap();
+        fs::write(
+            app.join("resources")
+                .join("drizzle")
+                .join("scripts")
+                .join("0031_add_recent_workdirs.ts"),
+            b"exports.run = () => {}",
+        )
+        .unwrap();
+        let candidates = super::medium_writable_install_file_candidates(&app, "Cindy.exe");
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.ends_with("0031_add_recent_workdirs.ts")),
+            "Forge extraResource drizzle companions required at startup must pin writable: {candidates:?}"
+        );
         assert_eq!(
             super::file_write_probe_from_os_error(std::io::ErrorKind::PermissionDenied, Some(5)),
             Some(false),
@@ -4452,6 +4503,10 @@ mod tests {
         assert!(
             body.contains("tools") || body.contains("extra_resource"),
             "resources/tools extraResource natives must be classification inputs:\n{body}"
+        );
+        assert!(
+            body.contains("drizzle"),
+            "resources/drizzle migration companions must be classification inputs:\n{body}"
         );
         let temp = TestDir::new();
         let mut args = test_args();
