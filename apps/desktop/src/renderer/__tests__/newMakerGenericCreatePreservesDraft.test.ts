@@ -6,9 +6,8 @@
  * 背景:草稿页(/cc-agent/new)的「对话或选择项目」选择由 newMakerDraft store
  * 持久化。此前展开态 SidebarTopNav.handleNew 与折叠态 CCAgentSidebarUpper.handleNewCCS
  * 都会先重置 newMakerDraft
- * 再 navigate,导致用户选好项目后切到别的会话、再点「新建」回来时选择被重置为默认、
- * 需要重新选。修复后这两个通用入口只 navigate、不清空;清空语义只保留在「新建对话」
- * 等显式入口(handleCreateDialogue)。
+ * 再 navigate,导致用户选好项目后切到别的会话、再点「新建」回来时选择被重置为默认。
+ * 通用入口通过导航请求继承当前任务电脑；同机保留项目，跨机由草稿页集中迁移。
  *
  * 静态扫描风格(renderer 测试环境无 jsdom),与 sidebarUpperSingleButton.test.ts 一致。
  */
@@ -52,7 +51,7 @@ describe('通用「新建」保留 newMakerDraft 选择', () => {
   it('折叠态 CCAgentSidebarUpper.handleNewCCS 只 navigate、不清空 workingDir', () => {
     const block = extractHandlerBlock(sidebarUpperSource, 'handleNewCCS');
     expect(block).toMatch(
-      /navigate\(['`]\/cc-agent\/new['`],\s*\{\s*state:\s*makeNewMakerRouteState\('generic'\)\s*\}\)/,
+      /navigate\(['`]\/cc-agent\/new['`],\s*\{\s*state:\s*makeGenericNewMakerRouteState\(location.pathname\)\s*\}\)/,
     );
     expect(block).not.toContain('workingDir: null');
   });

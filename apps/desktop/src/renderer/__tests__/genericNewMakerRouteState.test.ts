@@ -1,0 +1,78 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const origins = new Map<string, string>();
+vi.mock('@/features/device-link/remoteProjectsStore', () => ({
+  getSessionDeviceId: (id: string) => origins.get(id),
+  remoteProjectsStore: {
+    getDeviceList: () => [
+      { deviceId: 'computer-a', deviceName: 'Computer A', connected: false },
+      { deviceId: 'computer-b', deviceName: 'Computer B', connected: true },
+    ],
+  },
+}));
+
+import { __resetStickySessionOriginForTest } from '@/features/device-link/stickySessionOrigin';
+import { makeGenericNewMakerRouteState } from '@/features/cc-agent/lib/genericNewMakerRouteState';
+import {
+  consumeNewMakerDialogueTargetRequest,
+  readNewMakerDialogueTargetRequest,
+} from '@/features/cc-agent/lib/newMakerRouteState';
+
+beforeEach(() => {
+  origins.clear();
+  __resetStickySessionOriginForTest();
+});
+
+describe('new task inherits the current task computer', () => {
+  it.each(['/cc-agent/task-a', '/cc-agent/orca/task-a', '/cc-agent/files/task-a'])(
+    'inherits the task computer from %s, including an offline computer',
+    (path) => {
+      origins.set('task-a', 'computer-a');
+      const state = makeGenericNewMakerRouteState(path);
+      expect(state.workspacePrompt).toBe('generic');
+      expect(readNewMakerDialogueTargetRequest(state)).toMatchObject({
+        deviceId: 'computer-a',
+        deviceName: 'Computer A',
+        preserveWorkspaceIfSameDevice: true,
+      });
+    },
+  );
+
+  it('follows the newly viewed task instead of the previous draft computer', () => {
+    origins.set('task-a', 'computer-a');
+    origins.set('task-b', 'computer-b');
+    makeGenericNewMakerRouteState('/cc-agent/task-a');
+    expect(
+      readNewMakerDialogueTargetRequest(makeGenericNewMakerRouteState('/cc-agent/task-b')),
+    ).toMatchObject({ deviceId: 'computer-b', deviceName: 'Computer B' });
+  });
+
+  it('returns to this computer from a local task', () => {
+    expect(
+      readNewMakerDialogueTargetRequest(makeGenericNewMakerRouteState('/cc-agent/local-task')),
+    ).toMatchObject({ deviceId: null, deviceName: null, preserveWorkspaceIfSameDevice: true });
+  });
+
+  it('keeps remote ownership during a reconnect instead of falling back locally', () => {
+    origins.set('task-a', 'computer-a');
+    makeGenericNewMakerRouteState('/cc-agent/task-a');
+    origins.clear();
+    expect(
+      readNewMakerDialogueTargetRequest(makeGenericNewMakerRouteState('/cc-agent/task-a')),
+    ).toMatchObject({ deviceId: 'computer-a' });
+  });
+
+  it.each(['/cc-agent/new', '/cc-agent/scheduled', '/cc-agent/orca/new', '/settings', '/plugins'])(
+    'preserves the draft when no task is active at %s',
+    (path) => {
+      expect(makeGenericNewMakerRouteState(path)).toEqual({ workspacePrompt: 'generic' });
+    },
+  );
+
+  it('consumes the inherited target once so history does not override later user choices', () => {
+    origins.set('task-a', 'computer-a');
+    const state = makeGenericNewMakerRouteState('/cc-agent/task-a');
+    expect(consumeNewMakerDialogueTargetRequest(state)).toEqual({ workspacePrompt: 'generic' });
+    expect(readNewMakerDialogueTargetRequest(state)).not.toBeNull();
+  });
+});
