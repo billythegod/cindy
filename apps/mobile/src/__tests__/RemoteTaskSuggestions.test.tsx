@@ -3,7 +3,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RemoteTaskSuggestions } from "@/session/RemoteTaskSuggestions";
-import { useRemoteTaskSuggestionsPresentation } from "@/session/useRemoteTaskSuggestionsPresentation";
+import { isTaskSuggestionsSyncPending, useRemoteTaskSuggestionsPresentation } from "@/session/useRemoteTaskSuggestionsPresentation";
 import type { RemoteTaskSuggestionsMode } from "@/session/remoteTaskSuggestionsModel";
 import { i18n } from "@/i18n";
 import { REMOTE_TASK_SUGGESTION_BATCHES } from "@/session/remoteTaskSuggestionsModel";
@@ -125,6 +125,44 @@ describe("remote task recommendations", () => {
     renderPresentation(false);
     click('downloads');
     expect(select).toHaveBeenCalledWith('downloads');
+  });
+
+  it('waits before a newly selected cached device is acquired and through queued hydration', () => {
+    renderPresentation(false);
+    const owned = new Set<string>();
+    const renderDevice = (state: 'idle' | 'syncing') => renderPresentation(
+      isTaskSuggestionsSyncPending(['other'], owned, { other: state }), 'empty', 'account:other',
+    );
+    renderDevice('idle'); // Selection render, before the passive acquisition effect.
+    expect(host.textContent).toBe('loading');
+    renderDevice('syncing'); // Queued behind another peer, owner not acquired yet.
+    expect(host.textContent).toBe('loading');
+    owned.add('other');
+    renderDevice('syncing');
+    expect(host.textContent).toBe('loading');
+    renderDevice('idle');
+    expect(host.textContent).toContain('电脑已连接');
+  });
+
+  it('waits for every peer in all-tasks scope, including peers queued beyond the batch limit', () => {
+    const owned = new Set(['primary']);
+    const renderPeers = (secondary?: 'syncing' | 'idle') => renderPresentation(
+      isTaskSuggestionsSyncPending(['primary', 'secondary'], owned,
+        { primary: 'idle', ...(secondary ? { secondary } : {}) }),
+      'empty', 'account:all',
+    );
+    renderPeers(); // Primary done; secondary hydration has not started.
+    expect(host.textContent).toBe('loading');
+    owned.add('secondary');
+    renderPeers('syncing');
+    expect(host.textContent).toBe('loading');
+    renderPeers('idle');
+    expect(host.textContent).toContain('电脑已连接');
+    click('shuffle');
+    renderPeers('syncing');
+    expect(host.textContent).toContain('看看下载文件夹里有什么');
+    expect(isTaskSuggestionsSyncPending(['primary'], owned, { secondary: 'syncing' })).toBe(false);
+    expect(isTaskSuggestionsSyncPending(['secondary'], owned, { secondary: 'failed' })).toBe(false);
   });
 
   it('does not carry ready presentation into another account or device', () => {

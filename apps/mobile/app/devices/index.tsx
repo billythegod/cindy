@@ -1,5 +1,5 @@
 import { RemoteTaskSuggestions } from '@/session/RemoteTaskSuggestions';
-import { useRemoteTaskSuggestionsPresentation } from '@/session/useRemoteTaskSuggestionsPresentation';
+import { isTaskSuggestionsSyncPending, useRemoteTaskSuggestionsPresentation } from '@/session/useRemoteTaskSuggestionsPresentation';
 import { countHomeSuggestionSessions, remoteTaskSuggestionsMode, type RemoteTaskSuggestionId } from '@/session/remoteTaskSuggestionsModel';
 import { cacheRemoteResourceHome, readRemoteResourceSnapshot } from '@/device-link/remoteResourceCache';
 import { canBrowseMobileHomeDevice } from '@/session/mobileHome';
@@ -1898,8 +1898,9 @@ function HomeScreenContent() {
   // 「可用」项,但缓存设备不能当 live 设备直接开新会话——列表先画出来,新建入口等 live 数据。
   const newSessionDisabled = !home.primaryDevice || (!initialHomeSettled && !hasOpenableLiveDevice);
   const taskSuggestionsDeviceId = selectedDeviceId ?? home.primaryDevice?.deviceId ?? undefined;
-  const taskSuggestionsSyncing = !!taskSuggestionsDeviceId
-    && rawDeviceConnectionStates[taskSuggestionsDeviceId] === 'syncing';
+  const taskSuggestionsSyncing = isTaskSuggestionsSyncPending(
+    homeSyncDeviceIds, homeListOwnedDeviceIdsRef.current, rawDeviceConnectionStates,
+  );
   const taskSuggestionsCandidateMode = remoteTaskSuggestionsMode({
     sessionCount: countHomeSuggestionSessions(home,
       shouldReplaceListWithSearchResults(searchQuery, indexedSearch.status) ? indexedSearch.results : undefined),
@@ -1921,7 +1922,7 @@ function HomeScreenContent() {
     [deviceModels],
   );
   const { mode: taskSuggestionsMode, pending: taskSuggestionsPending } = useRemoteTaskSuggestionsPresentation({
-    scope: JSON.stringify([accountGeneration, selectedDeviceId, taskSuggestionsDeviceId]),
+    scope: JSON.stringify([accountGeneration, selectedDeviceId, taskSuggestionsDeviceId, [...homeSyncDeviceIds].sort()]),
     candidateMode: taskSuggestionsCandidateMode,
     syncing: taskSuggestionsSyncing,
   });

@@ -1,6 +1,15 @@
 import { useLayoutEffect, useRef } from 'react';
 import type { RemoteTaskSuggestionsMode } from './remoteTaskSuggestionsModel';
 
+/** An idle cached peer is not settled until this list scope has acquired its owner. */
+export function isTaskSuggestionsSyncPending(
+  deviceIds: readonly string[],
+  ownedDeviceIds: ReadonlySet<string>,
+  connectionStates: Readonly<Record<string, 'idle' | 'syncing' | 'failed'>>,
+): boolean {
+  return deviceIds.some((id) => !ownedDeviceIds.has(id) || connectionStates[id] === 'syncing');
+}
+
 /** Retain only an already displayed recommendation during an ordinary list refresh. */
 export function useRemoteTaskSuggestionsPresentation({
   scope,
