@@ -40,6 +40,14 @@ function extractHandlerBlock(source: string, name: string): string {
 }
 
 describe('通用「新建」保留 newMakerDraft 选择', () => {
+  it('草稿保留与目标迁移共用包含 SSH 身份的同机判据', () => {
+    expect(draftRouteSource).toContain(
+      '!isSameNewMakerDevice(dialogueTargetRequest.deviceId, getDraft())',
+    );
+    expect(draftRouteSource).toContain(
+      'const deviceChanged = !isSameNewMakerDevice(req.deviceId, {',
+    );
+  });
   it('旋钮的新建站使用与侧栏相同的当前任务设备请求', () => {
     const start = sidebarUpperSource.indexOf("if (target.kind === 'new-task')");
     const block = sidebarUpperSource.slice(start, sidebarUpperSource.indexOf('return;', start));
@@ -82,7 +90,7 @@ describe('通用「新建」保留 newMakerDraft 选择', () => {
   // 通用入口依旧不 patch store(前两条断言不受影响)。
   it('NewMakerDraftRoute mount 时清空 extraDirs(引用目录不跨草稿保留)', () => {
     expect(draftRouteSource).toContain(
-      "if (getDraft().extraDirs.length > 0 || getDraft().writableDirs.length > 0) {",
+      'if (getDraft().extraDirs.length > 0 || getDraft().writableDirs.length > 0) {',
     );
   });
 });

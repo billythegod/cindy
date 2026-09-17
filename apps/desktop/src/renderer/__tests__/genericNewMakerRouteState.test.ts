@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const origins = new Map<string, string>();
 const localSessionIds = new Set<string>();
+const botSessions = new Map<string, string>();
+vi.mock('@/features/bots/botStore', () => ({
+  getBotProfiles: () => [...botSessions.keys()].map((id) => ({ id })),
+  canonicalBotSessionId: (bot: { id: string }) => botSessions.get(bot.id),
+}));
 vi.mock('@/lib/sessionsStore', () => ({
   sessionsStore: {
     findById: (id: string) => (localSessionIds.has(id) ? { id } : null),
@@ -27,23 +32,28 @@ import {
 beforeEach(() => {
   origins.clear();
   localSessionIds.clear();
+  botSessions.clear();
   __resetStickySessionOriginForTest();
 });
 
 describe('new task inherits the current task computer', () => {
-  it.each(['/cc-agent/task-a', '/cc-agent/orca/task-a', '/cc-agent/files/task-a'])(
-    'inherits the task computer from %s, including an offline computer',
-    (path) => {
-      origins.set('task-a', 'computer-a');
-      const state = makeGenericNewMakerRouteState(path);
-      expect(state.workspacePrompt).toBe('generic');
-      expect(readNewMakerDialogueTargetRequest(state)).toMatchObject({
-        deviceId: 'computer-a',
-        deviceName: 'Computer A',
-        preserveWorkspaceIfSameDevice: true,
-      });
-    },
-  );
+  it.each([
+    '/cc-agent/task-a',
+    '/cc-agent/orca/task-a',
+    '/cc-agent/files/task-a',
+    '/bots/bot-a/session/task-a',
+    '/bots/bot-a/history/task-a',
+    '/bots/remote/computer-a/bot-a',
+  ])('inherits the task computer from %s, including an offline computer', (path) => {
+    origins.set('task-a', 'computer-a');
+    const state = makeGenericNewMakerRouteState(path);
+    expect(state.workspacePrompt).toBe('generic');
+    expect(readNewMakerDialogueTargetRequest(state)).toMatchObject({
+      deviceId: 'computer-a',
+      deviceName: 'Computer A',
+      preserveWorkspaceIfSameDevice: true,
+    });
+  });
 
   it('follows the newly viewed task instead of the previous draft computer', () => {
     origins.set('task-a', 'computer-a');
@@ -59,6 +69,35 @@ describe('new task inherits the current task computer', () => {
     expect(
       readNewMakerDialogueTargetRequest(makeGenericNewMakerRouteState('/cc-agent/local-task')),
     ).toMatchObject({ deviceId: null, deviceName: null, preserveWorkspaceIfSameDevice: true });
+  });
+
+  it('inherits explicit remote bot ownership before the session list loads', () => {
+    expect(
+      readNewMakerDialogueTargetRequest(
+        makeGenericNewMakerRouteState('/bots/remote/computer-a/bot-a'),
+      ),
+    ).toMatchObject({ deviceId: 'computer-a' });
+  });
+
+  it('follows remote bot, local canonical bot, then local history navigation', () => {
+    botSessions.set('bot-local', 'local-task');
+    expect(
+      readNewMakerDialogueTargetRequest(
+        makeGenericNewMakerRouteState('/bots/remote/computer-a/bot-a'),
+      ),
+    ).toMatchObject({ deviceId: 'computer-a' });
+    expect(
+      readNewMakerDialogueTargetRequest(makeGenericNewMakerRouteState('/bots/bot-local')),
+    ).toMatchObject({ deviceId: null });
+    localSessionIds.add('local-task');
+    for (const path of [
+      '/bots/bot-local/session/local-task',
+      '/bots/bot-local/history/local-task',
+    ]) {
+      expect(readNewMakerDialogueTargetRequest(makeGenericNewMakerRouteState(path))).toMatchObject({
+        deviceId: null,
+      });
+    }
   });
 
   it('keeps remote ownership during a reconnect instead of falling back locally', () => {
@@ -80,12 +119,20 @@ describe('new task inherits the current task computer', () => {
     ).toMatchObject({ deviceId: 'computer-a' });
   });
 
-  it.each(['/cc-agent/new', '/cc-agent/scheduled', '/cc-agent/orca/new', '/settings', '/plugins'])(
-    'preserves the draft when no task is active at %s',
-    (path) => {
-      expect(makeGenericNewMakerRouteState(path)).toEqual({ workspacePrompt: 'generic' });
-    },
-  );
+  it.each([
+    '/cc-agent/new',
+    '/cc-agent/scheduled',
+    '/cc-agent/orca/new',
+    '/settings',
+    '/plugins',
+    '/bots',
+    '/bots/roster',
+    '/bots/remote',
+    '/bots/unknown',
+    '/bots/bot-a/direct/thread-a',
+  ])('preserves the draft when no task is active at %s', (path) => {
+    expect(makeGenericNewMakerRouteState(path)).toEqual({ workspacePrompt: 'generic' });
+  });
 
   it('consumes the inherited target once so history does not override later user choices', () => {
     origins.set('task-a', 'computer-a');

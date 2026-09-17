@@ -156,6 +156,7 @@ import { crossAgentConvertService } from '@/lib/crossAgentConvertService';
 import {
   consumeNewMakerDialogueTargetRequest,
   consumeNewMakerFolderPickerRequest,
+  isSameNewMakerDevice,
   readNewMakerDialogueTargetRequest,
   readNewMakerFolderPickerRequest,
 } from './lib/newMakerRouteState';
@@ -2139,8 +2140,10 @@ export function NewMakerDraftRoute() {
    */
   const applyDraftTarget = useCallback(
     (req: DraftTargetRequest) => {
-      const prevDeviceId = effectiveDeviceLinkDeviceId ?? null;
-      const deviceChanged = req.deviceId !== prevDeviceId;
+      const deviceChanged = !isSameNewMakerDevice(req.deviceId, {
+        deviceLinkDeviceId: effectiveDeviceLinkDeviceId,
+        remoteHostId: effectiveRemoteHostId,
+      });
       const workingDirChanged = req.workingDir !== draft.workingDir;
 
       // chip 绑 workingDir;附件绑设备。两者条件不同,见各自函数的注释。
@@ -2264,6 +2267,7 @@ export function NewMakerDraftRoute() {
     },
     [
       effectiveDeviceLinkDeviceId,
+      effectiveRemoteHostId,
       draft.workingDir,
       capabilityAgentKind,
       stripProjectRelativeMentions,
@@ -2288,7 +2292,7 @@ export function NewMakerDraftRoute() {
     modePickerSelectionSeqRef.current += 1;
     if (
       !dialogueTargetRequest.preserveWorkspaceIfSameDevice ||
-      dialogueTargetRequest.deviceId !== (getDraft().deviceLinkDeviceId ?? null)
+      !isSameNewMakerDevice(dialogueTargetRequest.deviceId, getDraft())
     ) {
       patchCollab({ enabled: false });
       applyDraftTarget({
