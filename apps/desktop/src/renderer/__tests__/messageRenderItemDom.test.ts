@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { findRenderItemElement } from '../components/chat/messageViewportCompensation';
+import { pickIntersectingChildAnchor, readViewportChildAnchorClientId } from '../components/chat/MessageStream';
 
 describe('render item identity across asynchronous cards', () => {
   it('keeps the same message when an earlier card mounts or disappears', () => {
@@ -41,8 +42,8 @@ it('captures a visible row after empty rows and retains its signed viewport gap'
     row.dataset.renderItemKey = key;
     row.getBoundingClientRect = () => ({ top, bottom: top + height, height }) as DOMRect;
   }
-  const result = new Function('useCallback', 'scrollRef', 'itemsRef', 'pickIntersectingChildAnchor', code)(
-    (callback: unknown) => callback, { current: container }, { current: items }, () => null,
+  const result = new Function('useCallback', 'scrollRef', 'itemsRef', 'pickIntersectingChildAnchor', 'readViewportChildAnchorClientId', code)(
+    (callback: unknown) => callback, { current: container }, { current: items }, pickIntersectingChildAnchor, readViewportChildAnchorClientId,
   );
   expect(result).toEqual({ viewportTopKey: 'visible', offset: -14 });
 });

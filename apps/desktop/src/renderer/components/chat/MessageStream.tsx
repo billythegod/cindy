@@ -1322,6 +1322,25 @@ export function resolveSavedViewportKey(items: RenderItem[], snapshot: SessionSc
   return clientId ? renderItemKeyForClientId(items, clientId) : null;
 }
 
+/** Restore the reading viewport, not all the offscreen rows expanded before leaving. */
+export function resolveRestoredRenderWindow(snapshot: SessionScrollSnapshot | undefined): {
+  anchor: string | null;
+  forwardItems: number;
+} {
+  if (!snapshot || snapshot.isNearBottom) {
+    return { anchor: null, forwardItems: RENDER_WINDOW_FIRST_PAINT_ITEMS };
+  }
+  if (snapshot.viewportTopKey) {
+    return { anchor: snapshot.viewportTopKey, forwardItems: RENDER_WINDOW_FIRST_PAINT_ITEMS };
+  }
+  // Legacy snapshots without an exact viewport still need their original window.
+  return {
+    anchor: snapshot.windowAnchorKey,
+    forwardItems: snapshot.anchoredForwardCount && snapshot.anchoredForwardCount > 0
+      ? snapshot.anchoredForwardCount : RENDER_WINDOW_FIRST_PAINT_ITEMS,
+  };
+}
+
 /**
  * 从全量 render items 里按渲染顺序抽出会话内所有图片的 src,作为 lightbox 翻图
  * 的数据源(全量,不受渲染窗口裁剪影响)。只收**结构化、确定会渲染成图**的三类:
@@ -2667,7 +2686,7 @@ export function MessageStream({
   if (historyCleared !== initialHistoryClearedRef.current || focusMessageClientId) {
     restoreCancelledRef.current = true;
   }
-  useEffect(() => {
+  useLayoutEffect(() => {
     restoreMountedRef.current = true;
     return () => { restoreMountedRef.current = false; };
   }, []);
@@ -2720,20 +2739,11 @@ export function MessageStream({
   // 具体的 RenderItem.key,从那个 item 开始 slice 到末尾。expand 时把锚点往前挪
   // RENDER_WINDOW_GROWTH_ITEMS 个 item。
   //
-  // 还原快照是"默认窗口 + 非贴底"(windowAnchorKey=null 且 isNearBottom=false)
-  // 时,直接把窗口锚定到 viewportTopKey(视口顶端那条 item):applyRestore 需要
-  // 的锚点必然在窗口内(就是第一条),位置恢复不漂;窗口 = 视口位置 → 末尾,
-  // 必然有界(该快照态意味着用户仍在末尾 INITIAL 窗口内,≤80 条、典型只有一半)。
-  // 此前(codex review P2)这种快照走"全量 INITIAL 默认窗口"保锚点命中,几万字
-  // 会话切回要全量渲染 73+ 条、首帧 ~400ms(2026-08-09 沙盒 perf 日志实测),
-  // 锚定后回落到与贴底切换同阶。viewportTopKey 缺失(老快照)才退回全量窗口。
+  // 非贴底恢复从 viewportTopKey 附近重建，不重挂之前扩出来的全部离屏条目。
+  // 边界吸附保留上文，applyRestore 补齐定位所需的下方空间；用户继续滚动时
+  // 沿既有双向扩窗路径补齐。缺少视口锚点的旧快照仍恢复原窗口。
   const [firstVisibleItemKey, setFirstVisibleItemKey] = useState<string | null>(() => {
-    if (!restoringRef.current) return null;
-    const snap = restoreSnapshotRef.current;
-    if (!snap) return null;
-    if (snap.windowAnchorKey !== null) return snap.windowAnchorKey;
-    if (!snap.isNearBottom && snap.viewportTopKey) return snap.viewportTopKey;
-    return null;
+    return resolveRestoredRenderWindow(restoreSnapshotRef.current).anchor;
   });
   // 两段式默认窗口的当前尺寸(FIRST_PAINT → 空闲期扩到 INITIAL)。只影响
   // firstVisibleItemKey === null 的"默认窗口"分支;锚点窗口不看它。
@@ -2750,15 +2760,10 @@ export function MessageStream({
    * 锚点窗口向后的 item 上界（render-window-bidirectional 要点 1）。
    * 仅 firstVisibleItemKey !== null 时生效；null（默认窗口）时不参与 slice。
    * 锚点变化时重置为 FIRST_PAINT，expandWindow / 向下扩窗时增长。
-   * 初始化时从滚动快照恢复（P1 fix：否则扩窗后切走的浏览位置会丢失）。
+   * 重挂载从视口锚点附近开始；applyRestore 会补齐定位所需的下方空间。
    */
   const [anchoredForwardItems, setAnchoredForwardItems] = useState(() => {
-    if (!restoringRef.current) return RENDER_WINDOW_FIRST_PAINT_ITEMS;
-    const snap = restoreSnapshotRef.current;
-    if (snap?.anchoredForwardCount && snap.anchoredForwardCount > 0) {
-      return snap.anchoredForwardCount;
-    }
-    return RENDER_WINDOW_FIRST_PAINT_ITEMS;
+    return resolveRestoredRenderWindow(restoreSnapshotRef.current).forwardItems;
   });
   const [highlightMessageClientId, setHighlightMessageClientId] = useState<string | null>(null);
   const lastAppliedFocusRef = useRef<string | null>(null);
@@ -3050,52 +3055,6 @@ export function MessageStream({
     firstMountDeferred,
   ]);
 
-  // An explicit saved reading position is independent of automatic tail fill.
-  // Reuse the store's bounded, epoch-guarded local/remote history lookup.
-  useEffect(() => {
-    if (!restoringRef.current || !historyLoaded || firstMountDeferred) return;
-    if (restoreCancelledRef.current) {
-      restoringRef.current = false;
-      return;
-    }
-    const snap = restoreSnapshotRef.current;
-    if (!snap || !sessionId) return;
-    const clientId = snap.restoreClientId ?? snap.messageClientId ?? restoreClientIdFromKey(snap.viewportTopKey);
-    const restoredKey = resolveSavedViewportKey(allRenderItems, snap);
-    if (restoredKey) {
-      restoreSnapshotRef.current = { ...snap, viewportTopKey: restoredKey };
-      if (!visibleRenderItems.some((item) => item.key === restoredKey)) {
-        restoreLoadRef.current = 'loaded';
-        setFirstVisibleItemKey(restoredKey);
-        setAnchoredForwardItems(RENDER_WINDOW_FIRST_PAINT_ITEMS);
-      } else {
-        restoreLoadRef.current = applyRestoreRef.current() ? 'settled' : 'loaded';
-      }
-      return;
-    }
-    if (restoreLoadRef.current === 'pending') return;
-    if (restoreLoadRef.current === 'idle' && clientId) {
-      restoreLoadRef.current = 'pending';
-      const finish = (found: boolean) => {
-        if (!restoreMountedRef.current || !restoringRef.current || restoreCancelledRef.current) return;
-        restoreLoadRef.current = found ? 'loaded' : 'failed';
-        setRestoreRevision((value) => value + 1);
-      };
-      void makerChatStore.loadAroundMessageClientId(sessionId, clientId, { radius: 60 }).then(
-        (row) => finish(row !== null),
-        () => finish(false),
-      );
-      return;
-    }
-    // A deleted/non-displayable anchor must not leave the view stuck restoring.
-    restoreLoadRef.current = 'settled';
-    restoringRef.current = false;
-    isNearBottomRef.current = true;
-    setIsNearBottom(true);
-    setFirstVisibleItemKey(null);
-  }, [allRenderItems, visibleRenderItems, historyLoaded, historyCleared, firstMountDeferred,
-    sessionId, restoreRevision]);
-
   // 两段式默认窗口第二段:首帧(非空)提交后,空闲期把默认窗口扩回 INITIAL。
   // 只在仍钉底时扩(prepend 在视口上方,pin-to-bottom layout effect 同帧重钉,
   // 无跳动);已向上滚离底部 / 已切到锚点窗口的,交给既有 expandWindow 路径。
@@ -3154,7 +3113,7 @@ export function MessageStream({
         const itemElement = children[i] as HTMLElement;
         const childAnchor = pickIntersectingChildAnchor(
           Array.from(
-            itemElement.querySelectorAll<HTMLElement>('[data-message-client-id]'),
+            [itemElement, ...itemElement.querySelectorAll<HTMLElement>('[data-message-client-id]')],
             (element) => {
               const clientId = readViewportChildAnchorClientId(element);
               if (!clientId) return null;
@@ -3168,6 +3127,14 @@ export function MessageStream({
         if (childAnchor) {
           snapshot.messageClientId = childAnchor.clientId;
           snapshot.messageOffset = childAnchor.offset;
+        } else {
+          // A root message can start just below the viewport, in the inter-row
+          // gap. Keep its exact identity and signed gap through regrouping too.
+          const rootClientId = readViewportChildAnchorClientId(itemElement);
+          if (rootClientId) {
+            snapshot.messageClientId = rootClientId;
+            snapshot.messageOffset = snapshot.offset;
+          }
         }
         return snapshot;
       }
@@ -3754,7 +3721,12 @@ export function MessageStream({
       desiredScrollTop, container.scrollHeight, container.clientHeight, windowCoversEndRef.current,
     )) {
       restoreLoadRef.current = 'loaded';
-      const nextCount = anchoredForwardItemsRef.current + RENDER_WINDOW_GROWTH_ITEMS;
+      // Sparse/null-rendering cards must not require one synchronous commit per
+      // fixed batch all the way through a long history. Grow geometrically.
+      const nextCount = Math.max(
+        anchoredForwardItemsRef.current + RENDER_WINDOW_GROWTH_ITEMS,
+        anchoredForwardItemsRef.current * 2,
+      );
       setAnchoredForwardItems((count) => Math.max(count, nextCount));
       return false;
     }
@@ -3794,6 +3766,55 @@ export function MessageStream({
   // 流式每 token(visibleRenderItems 变)都 disconnect/reconnect。
   const applyRestoreRef = useRef(applyRestore);
   applyRestoreRef.current = applyRestore;
+
+  // An explicit saved reading position is independent of automatic tail fill.
+  // Run after intrinsic-size seeding, before paint, so a bounded remount does
+  // not first display the clamped position and then expand on a later frame.
+  // Reuse the store's bounded, epoch-guarded local/remote history lookup.
+  useLayoutEffect(() => {
+    if (!restoringRef.current || !historyLoaded || firstMountDeferred) return;
+    if (restoreCancelledRef.current) {
+      restoringRef.current = false;
+      return;
+    }
+    const snap = restoreSnapshotRef.current;
+    if (!snap || !sessionId) return;
+    const clientId = snap.restoreClientId ?? snap.messageClientId ?? restoreClientIdFromKey(snap.viewportTopKey);
+    const restoredKey = resolveSavedViewportKey(allRenderItems, snap);
+    if (restoredKey) {
+      restoreSnapshotRef.current = { ...snap, viewportTopKey: restoredKey };
+      if (!visibleRenderItems.some((item) => item.key === restoredKey)) {
+        restoreLoadRef.current = 'loaded';
+        setFirstVisibleItemKey(restoredKey);
+        setAnchoredForwardItems(RENDER_WINDOW_FIRST_PAINT_ITEMS);
+      } else {
+        restoreLoadRef.current = applyRestoreRef.current() ? 'settled' : 'loaded';
+      }
+      return;
+    }
+    if (restoreLoadRef.current === 'pending') return;
+    if (restoreLoadRef.current === 'idle' && clientId) {
+      restoreLoadRef.current = 'pending';
+      const finish = (found: boolean) => {
+        if (!restoreMountedRef.current || !restoringRef.current || restoreCancelledRef.current) return;
+        restoreLoadRef.current = found ? 'loaded' : 'failed';
+        setRestoreRevision((value) => value + 1);
+      };
+      void makerChatStore.loadAroundMessageClientId(sessionId, clientId, { radius: 60 }).then(
+        (row) => finish(row !== null),
+        () => finish(false),
+      );
+      return;
+    }
+    // A deleted/non-displayable anchor must not leave the view stuck restoring.
+    restoreLoadRef.current = 'settled';
+    restoringRef.current = false;
+    isNearBottomRef.current = true;
+    setIsNearBottom(true);
+    setFirstVisibleItemKey(null);
+  }, [allRenderItems, visibleRenderItems, historyLoaded, historyCleared, firstMountDeferred,
+    sessionId, restoreRevision]);
+
 
   // 保存当前浏览位置到 sessionScrollStore,并同步刷新删除前快照(单次量测)。用户
   // 滚动时持续调用(DOM 一定存活),unmount cleanup 兜底最后一帧;量测失败则跳过。

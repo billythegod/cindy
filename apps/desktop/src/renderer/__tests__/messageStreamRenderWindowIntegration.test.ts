@@ -32,6 +32,7 @@ import {
   groupWorkRuns,
   snapRenderWindowStartIdx,
   resolveSavedViewportKey,
+  resolveRestoredRenderWindow,
   restoreClientIdFromKey,
   restoreClientIdForItem,
   viewportRestoreNeedsMoreContent,
@@ -638,6 +639,27 @@ describe('restored reading position', () => {
     expect(resolveAnchoredWindowItemCount(0, 0, RENDER_WINDOW_FIRST_PAINT_ITEMS))
       .toBe(RENDER_WINDOW_FIRST_PAINT_ITEMS);
     expect(resolveSavedViewportKey(items.slice(1), snapshot)).toBeNull();
+  });
+
+  it('remounts around the viewport instead of the entire previously expanded history', () => {
+    const snapshot = { windowAnchorKey: items[0].key, viewportTopKey: items[70].key,
+      anchoredForwardCount: 120, offset: 18, isNearBottom: false };
+    const window = resolveRestoredRenderWindow(snapshot);
+    const anchorIndex = items.findIndex(item => item.key === window.anchor);
+    const start = snapRenderWindowStartIdx(items, anchorIndex);
+    const visible = items.slice(start, start + resolveAnchoredWindowItemCount(start, anchorIndex, window.forwardItems));
+    expect(window.forwardItems).toBe(RENDER_WINDOW_FIRST_PAINT_ITEMS);
+    expect(visible).toContain(items[70]);
+    expect(visible).not.toContain(items[0]);
+    expect(visible.length).toBeLessThan(snapshot.anchoredForwardCount);
+  });
+
+  it('retains legacy window fallback and resets near-bottom snapshots to the tail', () => {
+    const legacy = { windowAnchorKey: items[0].key, viewportTopKey: '',
+      anchoredForwardCount: 120, offset: 18, isNearBottom: false };
+    expect(resolveRestoredRenderWindow(legacy)).toEqual({ anchor: items[0].key, forwardItems: 120 });
+    expect(resolveRestoredRenderWindow({ ...legacy, isNearBottom: true }))
+      .toEqual({ anchor: null, forwardItems: RENDER_WINDOW_FIRST_PAINT_ITEMS });
   });
 
   it('prefers a saved generated-files card over its earlier source user row', () => {
