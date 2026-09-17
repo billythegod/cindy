@@ -117,14 +117,19 @@ pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
                     release_update_lock(lock);
                 }
             }
-            if failure.install_restored && should_relaunch_after_rollback(can_retry) {
+            let relaunched_restored = failure.install_restored
+                && should_relaunch_after_rollback(can_retry);
+            if relaunched_restored {
                 relaunch_restored_app(&args);
             }
             emit(InstallerEvent::Failed {
                 error: failure.message,
                 can_retry,
                 install_unmodified: failure.install_unmodified,
-                install_restored: failure.install_restored,
+                install_restored: failed_event_install_restored(
+                    failure.install_restored,
+                    relaunched_restored,
+                ),
             });
         }
     }
@@ -421,6 +426,15 @@ pub(crate) fn should_relaunch_after_rollback(can_retry: bool) -> bool {
     !can_retry
 }
 
+/// Close must not start a second Cindy after `run_with_lock` already relaunched
+/// the restored app because Retry was withdrawn.
+pub(crate) fn failed_event_install_restored(
+    install_restored: bool,
+    already_relaunched: bool,
+) -> bool {
+    install_restored && !already_relaunched
+}
+
 /// Retry cannot request UAC. Failures before the permission probe must not
 /// advertise Retry when this install still needs elevation.
 pub(crate) fn pre_elevation_failure_can_retry(needs_uac: bool, already_elevated: bool) -> bool {
@@ -548,15 +562,40 @@ pub(crate) fn install_writable_for_staging(
     !cli_elevated && (!medium_integrity_needs_elevation || user_owned)
 }
 
-/// True when `app_dir` lives under a known per-user profile root. A temporary
-/// PermissionDenied on the write probe must not pin that tree as protected:
-/// the same-login medium process can restore write access after UAC.
+/// True when `app_dir` is not under a known protected system root. Custom
+/// same-user-writable installs (including outside the profile) stay writable
+/// across a spoofed PermissionDenied probe: High-IL staging and a de-elevated
+/// launch, not protected `app_dir` staging.
 pub(crate) fn install_is_user_owned(app_dir: &Path) -> bool {
-    install_is_user_owned_for(app_dir, &user_owned_roots())
+    !install_is_protected_system_for(app_dir, &protected_system_roots())
 }
 
-pub(crate) fn install_is_user_owned_for(app_dir: &Path, roots: &[PathBuf]) -> bool {
+pub(crate) fn install_is_protected_system_for(app_dir: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|root| windows_path_is_within(app_dir, root))
+}
+
+fn protected_system_roots() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        [
+            known_folder_program_files(),
+            known_folder_program_files_x86(),
+            known_folder_windows(),
+            known_folder_program_data(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        vec![
+            PathBuf::from(r"C:\Program Files"),
+            PathBuf::from(r"C:\Program Files (x86)"),
+            PathBuf::from(r"C:\Windows"),
+            PathBuf::from(r"C:\ProgramData"),
+        ]
+    }
 }
 
 /// Case-insensitive Windows path prefix, used even when this crate is tested
@@ -569,24 +608,6 @@ fn windows_path_is_within(child: &Path, parent: &Path) -> bool {
     }
     child == parent
         || child.starts_with(&format!("{parent}\\"))
-}
-
-fn user_owned_roots() -> Vec<PathBuf> {
-    #[cfg(windows)]
-    {
-        [
-            known_folder_local_app_data(),
-            known_folder_roaming_app_data(),
-            known_folder_profile(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
-    }
-    #[cfg(not(windows))]
-    {
-        Vec::new()
-    }
 }
 
 pub(crate) fn pin_install_writable(args: &mut CliArgs) {
@@ -670,18 +691,18 @@ fn known_folder_program_data() -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-fn known_folder_local_app_data() -> Option<PathBuf> {
-    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_LocalAppData)
+fn known_folder_program_files() -> Option<PathBuf> {
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_ProgramFiles)
 }
 
 #[cfg(windows)]
-fn known_folder_roaming_app_data() -> Option<PathBuf> {
-    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_RoamingAppData)
+fn known_folder_program_files_x86() -> Option<PathBuf> {
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_ProgramFilesX86)
 }
 
 #[cfg(windows)]
-fn known_folder_profile() -> Option<PathBuf> {
-    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Profile)
+fn known_folder_windows() -> Option<PathBuf> {
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Windows)
 }
 
 #[cfg(windows)]
@@ -2541,6 +2562,14 @@ mod tests {
                 && outer.contains("install_restored"),
             "relaunch after rollback only once Retry is finally allowed or withdrawn:\n{outer}"
         );
+        assert!(
+            super::failed_event_install_restored(true, true) == false,
+            "Close must not relaunch Cindy after run_with_lock already started the restored app"
+        );
+        assert!(
+            super::failed_event_install_restored(true, false),
+            "Close still relaunches when rollback restored the app but Retry remains available until Close"
+        );
     }
 
     #[test]
@@ -3115,18 +3144,44 @@ mod tests {
             "a denied write probe on a user-owned root is not proof the install is protected"
         );
         assert!(
-            super::install_is_user_owned_for(
+            !super::install_is_protected_system_for(
                 Path::new(r"C:\Users\u\AppData\Local\Cindy"),
-                &[PathBuf::from(r"C:\Users\u\AppData\Local")],
+                &[
+                    PathBuf::from(r"C:\Program Files"),
+                    PathBuf::from(r"C:\Windows"),
+                ],
             ),
             "per-user LocalAppData installs stay user-owned across a spoofed PermissionDenied probe"
         );
         assert!(
-            !super::install_is_user_owned_for(
+            super::install_is_protected_system_for(
                 Path::new(r"C:\Program Files\Cindy"),
-                &[PathBuf::from(r"C:\Users\u\AppData\Local")],
+                &[
+                    PathBuf::from(r"C:\Program Files"),
+                    PathBuf::from(r"C:\Windows"),
+                ],
             ),
-            "Program Files is not a user-owned root"
+            "Program Files is a protected system root"
+        );
+        assert!(
+            !super::install_is_protected_system_for(
+                Path::new(r"D:\Games\Cindy"),
+                &[
+                    PathBuf::from(r"C:\Program Files"),
+                    PathBuf::from(r"C:\Windows"),
+                ],
+            ),
+            "a custom same-user-writable install outside the profile stays user-owned"
+        );
+        assert!(
+            super::install_is_protected_system_for(
+                Path::new(r"C:\Windows\System32\Cindy"),
+                &[
+                    PathBuf::from(r"C:\Program Files"),
+                    PathBuf::from(r"C:\Windows"),
+                ],
+            ),
+            "Windows system directories are protected"
         );
         let temp = TestDir::new();
         let mut args = test_args();
