@@ -3536,9 +3536,9 @@ describe('Bot Session task end-to-end runtime', () => {
         return { kind: 'session-dispatch', source: 'fixture-native-turn', dispatched: true };
       },
       onDispatchedUserTurn: async (id, item) => { delegation.confirmQueuedSessionInputDispatched(id, item.clientId); },
-      onAcceptedQueuedMessage: async (id, item) => {
+      onAcceptedQueuedMessage: async (id, item, restoredFromSnapshot) => {
         await acceptedCallbacks.get(item.clientId)?.();
-        if (options.readSessionExecution) await delegation.acceptQueuedSessionInput(id, item.clientId, item.supersedesUserClientId);
+        if (options.readSessionExecution) await delegation.acceptQueuedSessionInput(id, item.clientId, item.supersedesUserClientId, restoredFromSnapshot);
       },
     }) : undefined;
     const dispatch = vi.fn(async (params: Parameters<typeof dispatchDirect>[0]) => {
@@ -4441,7 +4441,7 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
-  it.each([false, true])('restores an owned supplement before replaying or awaiting a terminal receipt (saved: %s)', async (savedTerminal) => {
+  it.each(['missing-terminal', 'saved-terminal', 'user-before-restore'] as const)('restores an owned supplement with %s', async scenario => {
     await seedPair();
     const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
     const before = createDelegationRuntime({ taskControl: true, queueSnapshots,
@@ -4450,7 +4450,7 @@ describe('Bot Session task end-to-end runtime', () => {
     try {
       const task = await before.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
       if (!task.ok) throw new Error('missing task');
-      if (savedTerminal) {
+      if (scenario === 'saved-terminal') {
         // The native terminal receipt is durable, but settlement was interrupted.
         h.sqlite!.exec("CREATE TEMP TRIGGER fail_terminal_commit BEFORE UPDATE OF status ON bot_delegations WHEN NEW.status = 'completed' BEGIN SELECT RAISE(FAIL, 'fixture restart'); END");
         await expect(before.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done',
@@ -4464,9 +4464,15 @@ describe('Bot Session task end-to-end runtime', () => {
       const execution = { instanceId: 'after-restart', generation: 1 };
       after = createDelegationRuntime({ taskControl: true, queueSnapshots, startTime: 11000,
         readSessionExecution: () => execution });
-      await after.delegation.restore();
+      if (scenario === 'user-before-restore') {
+        await after.coordinator!.ensureQueueRestored(task.childSessionId);
+        after.coordinator!.resume(task.childSessionId);
+      } else {
+        await after.delegation.restore();
+      }
       await vi.waitFor(() => expect(after!.started).toHaveLength(1));
       expect(after.started[0].sessionId).toBe(task.childSessionId);
+      if (scenario === 'user-before-restore') await after.delegation.restore();
       expect(after.dispatch).not.toHaveBeenCalled(); // Resume the saved input, never replay initial dispatch.
       await after.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
         resultText: 'Supplement result.', hadPendingInputAtTerminal: false });

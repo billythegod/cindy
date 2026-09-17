@@ -1557,6 +1557,13 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       return;
     }
 
+    // User-released cold input may already be running before background restore.
+    // Do not enqueue another restart prompt or replay its predecessor meanwhile.
+    if (deps.readSessionExecution?.(row.childSessionId) && deps.taskControl?.isActive(row.childSessionId)) {
+      scheduleResumeRetry(row.id, attempt);
+      return;
+    }
+
     // Pending owned input supersedes even a durable terminal receipt: replaying
     // that receipt first would complete the delegation before its supplement.
     if (deps.taskControl) {
@@ -3263,8 +3270,27 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
 
   // Only delegation-owned entries from a validated terminal/resume boundary
   // can adopt a new receipt. Ordinary direct Session input remains independent.
-  const acceptQueuedSessionInput = async (childSessionId: string, clientId: string, supersedesClientId?: string): Promise<void> => {
-    const boundary = pendingExecutionInputs.get(childSessionId);
+  const acceptQueuedSessionInput = async (childSessionId: string, clientId: string, supersedesClientId?: string, restoredFromSnapshot = false): Promise<void> => {
+    let boundary = pendingExecutionInputs.get(childSessionId);
+    if (!boundary && restoredFromSnapshot) {
+      // Queue restoration can be released by the user before Bot restore runs.
+      // Only the coordinator's cold-snapshot provenance may rebuild this boundary.
+      const [restored] = await getDbClient().drizzle.select().from(botDelegations)
+        .where(eq(botDelegations.childSessionId, childSessionId)).limit(1);
+      if (!restored || !isDelegationQueuedInput(restored.id, clientId)) return;
+      const receipt = parseRecord(restored.permissionSnapshotJson).taskExecution as
+        (DelegationExecutionReceipt & { runSequence: number }) | undefined;
+      if (!isActiveDelegation(restored.status as DelegationStatus) || readTaskPause(restored)
+        || parseRecord(restored.permissionSnapshotJson).taskCancelRequested === true
+        || (receipt && receipt.runSequence !== restored.runSequence)) {
+        throw new Error('Restored delegated input no longer belongs to an executable run');
+      }
+      boundary = pendingExecutionInputs.get(childSessionId);
+      if (!boundary) {
+        boundary = { execution: receipt ?? null, clientIds: [clientId], runSequence: restored.runSequence };
+        pendingExecutionInputs.set(childSessionId, boundary);
+      }
+    }
     if (!boundary || (!boundary.clientIds.includes(clientId)
       && (!supersedesClientId || !boundary.clientIds.includes(supersedesClientId)))) return;
     const execution = deps.readSessionExecution?.(childSessionId);

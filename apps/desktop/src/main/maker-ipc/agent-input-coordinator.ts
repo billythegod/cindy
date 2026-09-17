@@ -494,6 +494,7 @@ export interface AgentInputCoordinatorDeps {
   onAcceptedQueuedMessage?: (
     sessionId: string,
     item: AgentInputQueuedMessage,
+    restoredFromSnapshot?: boolean,
   ) => void | Promise<void>;
   /**
    * Awaited only after vendor dispatch is irreversible (`accepted=true`).
@@ -1037,6 +1038,7 @@ export class AgentInputCoordinator {
    * emit 会因"未恢复"跳过持久化,旧快照删不掉,下次打开会话又诈尸。
    */
   private readonly restoredQueueSessions = new Set<string>();
+  private readonly restoredQueueItems = new WeakSet<AgentInputQueuedMessage>();
   private readonly restoreAttempted = new Set<string>();
   private readonly queueRestorePromises = new Map<string, Promise<void>>();
   private readonly lastQueueSnapshotJson = new Map<string, string>();
@@ -1348,6 +1350,7 @@ export class AgentInputCoordinator {
       state.activeTurn === null &&
       state.steeringQueueClientIds.length === 0 &&
       !this.deps.isTurnRunning(sessionId);
+    for (const item of restored) this.restoredQueueItems.add(item);
     state.pendingQueue = [...restored, ...state.pendingQueue];
     if (wasQuiet) {
       state.queuePaused = true;
@@ -4503,7 +4506,11 @@ export class AgentInputCoordinator {
             // host 把排队 orca 消息的 accepted 副作用挂在这个 hook 上(置 running /
             // autoBridgePending), 必须 await 完才能放行 vendor turn —— fire-and-forget
             // 会让快 worker 在状态可见前结束 turn, 桥接被 turn-end handler 误跳过。
-            await this.deps.onAcceptedQueuedMessage?.(sessionId, head);
+            if (this.restoredQueueItems.has(head)) {
+              await this.deps.onAcceptedQueuedMessage?.(sessionId, head, true);
+            } else {
+              await this.deps.onAcceptedQueuedMessage?.(sessionId, head);
+            }
             if (!this.isActiveTurnCurrent(sessionId, active)) {
               throw new Error(
                 '[SEND_CANCELLED_BEFORE_DISPATCH] User turn was cancelled before vendor dispatch',
