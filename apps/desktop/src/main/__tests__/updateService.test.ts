@@ -213,6 +213,10 @@ afterAll(() => {
   fs.rmSync(TEST_ROOT, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 beforeEach(() => {
+  // Own every startup/background timer so afterEach can cancel it before the
+  // app.getPath mock starts pointing at the next test's isolated fixture.
+  // stopUpdateService clears intervals but not the initial 10-second check.
+  vi.useFakeTimers();
   syncWindowsVersionAfterUpdate.mockClear();
   browserWindowGetAllWindows.mockReset();
   browserWindowGetAllWindows.mockReturnValue([]);
