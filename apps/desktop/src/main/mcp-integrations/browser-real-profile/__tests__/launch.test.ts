@@ -142,6 +142,112 @@ describe('wrapRuntimeWithRealProfile', () => {
     });
   });
 
+  it.each(['open', 'tabs', 'snapshot'] as const)(
+    'publishes snapshot state when %s fails after the managed browser is already live',
+    async (action) => {
+      const warnings = [{ database: 'Login Data' as const, reason: 'locked' as const }];
+      let live = false;
+      const snapshot = vi.fn().mockResolvedValue({
+        destDir: '/runtime/browser/Cindy-real/user-data',
+        sourceKind: 'chrome',
+        sourceProfile: 'Default',
+        filesCopied: ['Cookies'],
+        warnings,
+      });
+      const wrapped = wrapRuntimeWithRealProfile(
+        {
+          async call(request) {
+            if (request.action === 'status') {
+              return result(
+                'status',
+                live
+                  ? {
+                      running: true,
+                      pid: 4321,
+                      userDataDir: '/runtime/browser/Cindy-real/user-data',
+                    }
+                  : { running: false },
+              );
+            }
+            if (request.action === action) {
+              live = true;
+              return result(request.action, {}, false);
+            }
+            return result(request.action, {});
+          },
+        },
+        {
+          isEnabled: () => true,
+          getRuntimeDir: () => '/runtime',
+          applyConfig: vi.fn(),
+          resolveSource: () => chrome,
+          snapshot,
+          cleanup: vi.fn(),
+          pickCdpPort: pick18800,
+        },
+      );
+      expect((await wrapped.call({ action })).ok).toBe(false);
+      expect((await wrapped.call({ action: 'status' })).data).toMatchObject({
+        realProfile: { applied: true, source: 'chrome', warnings },
+      });
+      expect((await wrapped.call({ action: 'start' })).ok).toBe(true);
+      expect(snapshot).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['open', 'tabs'] as const)(
+    'publishes snapshot state when %s throws after the managed browser is already live',
+    async (action) => {
+      const warnings = [{ database: 'Web Data' as const, reason: 'copy-failed' as const }];
+      let live = false;
+      const snapshot = vi.fn().mockResolvedValue({
+        destDir: '/runtime/browser/Cindy-real/user-data',
+        sourceKind: 'chrome',
+        sourceProfile: 'Default',
+        filesCopied: ['Cookies'],
+        warnings,
+      });
+      const wrapped = wrapRuntimeWithRealProfile(
+        {
+          async call(request) {
+            if (request.action === 'status') {
+              return result(
+                'status',
+                live
+                  ? {
+                      running: true,
+                      pid: 4321,
+                      userDataDir: '/runtime/browser/Cindy-real/user-data',
+                    }
+                  : { running: false },
+              );
+            }
+            if (request.action === action) {
+              live = true;
+              throw new Error('page action failed');
+            }
+            return result(request.action, {});
+          },
+        },
+        {
+          isEnabled: () => true,
+          getRuntimeDir: () => '/runtime',
+          applyConfig: vi.fn(),
+          resolveSource: () => chrome,
+          snapshot,
+          cleanup: vi.fn(),
+          pickCdpPort: pick18800,
+        },
+      );
+      await expect(wrapped.call({ action })).rejects.toThrow('page action failed');
+      expect((await wrapped.call({ action: 'status' })).data).toMatchObject({
+        realProfile: { applied: true, source: 'chrome', warnings },
+      });
+      expect((await wrapped.call({ action: 'start' })).ok).toBe(true);
+      expect(snapshot).toHaveBeenCalledOnce();
+    },
+  );
+
   it('clears optional warnings after a later cookie copy failure and when disabled', async () => {
     let enabled = true;
     const snapshot = vi

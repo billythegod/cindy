@@ -361,11 +361,40 @@ async function startWithSnapshot(
   if (!deps.isEnabled()) {
     return revertToIsolated();
   }
-  const launched = await inner.call(withActiveBrowserProfile(request, true));
-  if (launched.ok && deps.isEnabled()) {
-    deps.setLastApplied(preparedSnapshot.sourceKind, preparedSnapshot.warnings);
+
+  // Snapshot state tracks this Cindy's live managed browser, not the original
+  // action result. Implicit open/tabs/snapshot can spawn Chrome and then fail;
+  // ExternalChromeBackend keeps that process. Publishing only on `launched.ok`
+  // would leave applied=false for the rest of the browser lifetime, so later
+  // calls reuse the live pid without restoring diagnostics.
+  const publishIfOwnLive = async () => {
+    if (!deps.isEnabled() || !runtimeDir) return;
+    const after = await inner.call({ action: 'status', profile: managedProfile });
+    if (isOwnLiveManagedBrowser(after.data, runtimeDir)) {
+      deps.setLastApplied(preparedSnapshot.sourceKind, preparedSnapshot.warnings);
+    }
+  };
+
+  try {
+    const launched = await inner.call(withActiveBrowserProfile(request, true));
+    if (launched.ok && deps.isEnabled()) {
+      deps.setLastApplied(preparedSnapshot.sourceKind, preparedSnapshot.warnings);
+    } else if (!launched.ok) {
+      try {
+        await publishIfOwnLive();
+      } catch {
+        // Keep the original action failure.
+      }
+    }
+    return launched;
+  } catch (err) {
+    try {
+      await publishIfOwnLive();
+    } catch {
+      // Keep the original launch error.
+    }
+    throw err;
   }
-  return launched;
 }
 
 function failure(
