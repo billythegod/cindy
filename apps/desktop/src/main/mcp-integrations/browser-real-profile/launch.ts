@@ -214,9 +214,25 @@ export function wrapRuntimeWithRealProfile(
       }
 
       const result = await inner.call(withActiveBrowserProfile(request, deps.isEnabled()));
-      if (request.action === 'stop' && result.ok) {
-        lastApplied = null;
-        lastWarnings = [];
+      if (request.action === 'stop') {
+        // Snapshot state follows this Cindy's live managed browser, not inner
+        // stop.ok. Vendored stop can return success before Chrome exits;
+        // ExternalChromeBackend then fails the stop as unverified. Clearing
+        // on ok would drop applied/warnings while the copied profile is still
+        // serving. Drop diagnostics only once we no longer own a live process.
+        let stillLive = false;
+        try {
+          const after = await inner.call(
+            withActiveBrowserProfile({ action: 'status' }, deps.isEnabled()),
+          );
+          stillLive = isOwnLiveManagedBrowser(after.data, deps.getRuntimeDir());
+        } catch {
+          // Keep snapshot state unless we can prove the browser is gone.
+        }
+        if (!stillLive) {
+          lastApplied = null;
+          lastWarnings = [];
+        }
       }
       if (request.action === 'status' && result.ok) {
         return {
