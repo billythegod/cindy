@@ -321,7 +321,9 @@ describe("cindy_helper MCP server", () => {
       wakeKind: "queued" as const,
     }));
     const server = createXdtHelperMcpServer(
-      { resolveSurface: async () => "bot", botMessaging: { messageAgent } },
+      { resolveSurface: async () => "bot", botMessaging: { messageAgent,
+        listAgents: async () => ({ ok: true as const, agents: [{ id: 'studio::bot-b', name: 'Mimi', deviceName: 'Studio' }], unavailableDevices: [] }),
+      } },
       {
         agentKind: "claude-code",
         workingDir: "/repo",
@@ -342,7 +344,9 @@ describe("cindy_helper MCP server", () => {
       expect(notified).toMatchObject({
         ok: true,
         action: "send_to_agent",
-        delivered: true,
+        accepted: true,
+        delivered: false,
+        replied: false,
       });
       expect(messageAgent).toHaveBeenCalledWith({
         callerSessionId: "bot-a-main",
@@ -355,6 +359,8 @@ describe("cindy_helper MCP server", () => {
       );
       expect(discovered).toMatchObject({ ok: true, category: "bots" });
       expect((discovered.tools as unknown[]).length).toBeGreaterThan(0);
+      const roster = parsePayload(await client.callTool({ name: 'list_agents', arguments: {} }));
+      expect(roster).toMatchObject({ ok: true, agents: [{ id: 'studio::bot-b', name: 'Mimi', deviceName: 'Studio' }] });
     } finally {
       await client.close();
       await server.close();

@@ -1,14 +1,16 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   db: null as ReturnType<typeof drizzle> | null,
+  resolveDb: null as (() => ReturnType<typeof drizzle> | undefined) | null,
   createMessage: vi.fn(async () => ({ id: 'anchor' })),
 }));
 
 vi.mock('../../localDb/client/current.js', () => ({
-  getDbClient: () => ({ drizzle: h.db }),
+  getDbClient: () => ({ drizzle: h.resolveDb?.() ?? h.db }),
 }));
 
 vi.mock('../../localDb/ipc/messages.js', () => ({
@@ -29,7 +31,8 @@ function createDatabase(): Database.Database {
       id TEXT PRIMARY KEY,
       display_name TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      hidden_at INTEGER
     );
     CREATE TABLE bot_session_links (
       id TEXT PRIMARY KEY,
@@ -61,6 +64,8 @@ function createDatabase(): Database.Database {
       sender_session_id TEXT,
       recipient_session_id TEXT,
       delivery_status TEXT NOT NULL DEFAULT 'pending',
+      sender_name TEXT,
+      recipient_name TEXT,
       content TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       UNIQUE(thread_id, sequence)
@@ -71,7 +76,7 @@ function createDatabase(): Database.Database {
       client_id TEXT,
       rewind_at INTEGER
     );
-    INSERT INTO bot_profiles VALUES
+    INSERT INTO bot_profiles (id, display_name, status, updated_at) VALUES
       ('bot-a', '总控', 'active', 3),
       ('bot-b', 'Dash Bot', 'active', 2),
       ('bot-paused', '暂停伙伴', 'paused', 1),
@@ -521,4 +526,153 @@ describe('botDirectMessageService', () => {
     },
   );
 
+});
+
+/** Two independent device databases connected only through the transport contract. */
+describe('cross-device teammate messages', () => {
+  const scope = new AsyncLocalStorage<ReturnType<typeof drizzle>>();
+  let leftDb: Database.Database;
+  let rightDb: Database.Database;
+  let left: ReturnType<typeof createBotDirectMessageService>;
+  let right: ReturnType<typeof createBotDirectMessageService>;
+  let leftSql: ReturnType<typeof drizzle>;
+  let rightSql: ReturnType<typeof drizzle>;
+  let leftDispatch: ReturnType<typeof vi.fn>;
+  let rightDispatch: ReturnType<typeof vi.fn>;
+  let failResponse = false;
+  const atLeft = <T>(run: () => T) => scope.run(leftSql, run);
+  const atRight = <T>(run: () => T) => scope.run(rightSql, run);
+
+  beforeEach(() => {
+    leftDb = createDatabase(); rightDb = createDatabase();
+    leftSql = drizzle(leftDb); rightSql = drizzle(rightDb);
+    h.resolveDb = () => scope.getStore();
+    h.createMessage.mockReset().mockResolvedValue({ id: 'anchor' });
+    failResponse = false;
+    const dispatch = () => vi.fn(async (params: { targetSessionId: string; onAccepted?: () => Promise<void> }) => {
+      await params.onAccepted?.();
+      return { ok: true as const, targetSessionId: params.targetSessionId, wakeKind: 'queued' as const };
+    });
+    leftDispatch = dispatch(); rightDispatch = dispatch();
+    const resolve = async (id: string) => ({ id, name: id.endsWith('bot-a') ? 'Cindy' : 'Mimi' });
+    const list = async () => ({ agents: [{ id: 'right::bot-b', name: 'Mimi', deviceId: 'right', deviceName: 'Studio' }], unavailableDevices: [] });
+    left = createBotDirectMessageService({ dispatch: leftDispatch, transport: {
+      selfDeviceId: () => 'left', resolve, list,
+      verifySender: input => atRight(() => right.verifyRemoteMessage({ ...input, controllerDeviceId: 'left' })),
+      send: async (input, assertCurrent) => {
+        assertCurrent();
+        const result = await atRight(() => right.receiveRemote({ controllerDeviceId: 'left', senderBotId: input.senderBotId,
+          targetBotId: 'bot-b', message: input.message, messageId: input.messageId }));
+        if (failResponse) throw new Error('response lost');
+        return result;
+      },
+    } });
+    right = createBotDirectMessageService({ dispatch: rightDispatch, transport: {
+      selfDeviceId: () => 'right', resolve, list,
+      verifySender: input => atLeft(() => left.verifyRemoteMessage({ ...input, controllerDeviceId: 'right' })),
+      send: async (input, assertCurrent) => {
+        assertCurrent();
+        return atLeft(() => left.receiveRemote({ controllerDeviceId: 'right', senderBotId: input.senderBotId,
+          targetBotId: 'bot-a', message: input.message, messageId: input.messageId }));
+      },
+    } });
+  });
+  afterEach(() => { h.resolveDb = null; leftDb.close(); rightDb.close(); });
+
+  it('discovers a remote peer and routes a roundtrip by stable identity into both canonical timelines', async () => {
+    expect(await atLeft(() => left.listAgents('a-main'))).toMatchObject({ ok: true,
+      agents: expect.arrayContaining([{ id: 'right::bot-b', name: 'Mimi', deviceId: 'right', deviceName: 'Studio', local: false }]) });
+    const sent = await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: 'unique-marker' }));
+    expect(sent).toMatchObject({ ok: true, accepted: true, delivered: false, targetBotId: 'right::bot-b' });
+    expect(rightDispatch.mock.calls[0][0].message).toContain('target_id="left::bot-a"');
+    expect(rightDispatch.mock.calls[0][0].message).toContain('unique-marker');
+    const reply = await atRight(() => right.messageAgent({ callerSessionId: 'b-main', targetBotId: 'left::bot-a', message: 'reply unique-marker' }));
+    expect(reply.ok).toBe(true);
+    expect(leftDispatch.mock.calls[0][0].message).toContain('reply unique-marker');
+    if (!sent.ok) throw new Error('send failed');
+    const thread = await atLeft(() => left.getThread(sent.threadId, 'bot-a'));
+    expect(thread).toMatchObject({ ok: true, thread: { messageCount: 2,
+      messages: [expect.objectContaining({ recipientBotName: 'Mimi' }), expect.objectContaining({ senderBotName: 'Mimi' })] } });
+    expect(h.createMessage).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not deadlock when both devices send concurrently', async () => {
+    const result = await Promise.all([
+      atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: 'one' })),
+      atRight(() => right.messageAgent({ callerSessionId: 'b-main', targetBotId: 'left::bot-a', message: 'two' })),
+    ]);
+    expect(result.every(item => item.ok)).toBe(true);
+    expect(leftDispatch).toHaveBeenCalledOnce(); expect(rightDispatch).toHaveBeenCalledOnce();
+  });
+
+  it('keeps an uncertain remote delivery reserved across recovery and deduplicates receipt retries', async () => {
+    failResponse = true;
+    const result = await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: 'one' }));
+    expect(result).toMatchObject({ ok: false, errorCode: 'DELIVERY_UNKNOWN' });
+    await atLeft(() => left.restore());
+    expect(leftDb.prepare('SELECT delivery_status FROM bot_direct_messages').get()).toEqual({ delivery_status: 'pending' });
+    const again = await atRight(() => right.receiveRemote({ controllerDeviceId: 'left', senderBotId: 'bot-a',
+      targetBotId: 'bot-b', message: 'one', messageId: result.messageId! }));
+    expect(again).toMatchObject({ ok: true, accepted: true });
+    expect(rightDispatch).toHaveBeenCalledOnce();
+    expect(await atRight(() => right.receiveRemote({ controllerDeviceId: 'left', senderBotId: 'bot-a',
+      targetBotId: 'bot-b', message: 'changed', messageId: result.messageId! }))).toMatchObject({ ok: false, errorCode: 'PERMISSION_DENIED' });
+  });
+
+  it('enforces the existing twelve-message limit across both devices', async () => {
+    for (let n = 0; n < 12; n++) {
+      const result = n % 2 === 0
+        ? await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: String(n) }))
+        : await atRight(() => right.messageAgent({ callerSessionId: 'b-main', targetBotId: 'left::bot-a', message: String(n) }));
+      expect(result.ok).toBe(true);
+    }
+    expect(await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: '13' })))
+      .toMatchObject({ ok: false, errorCode: 'CONVERSATION_LIMIT_REACHED' });
+  });
+
+  it('rejects a forged sender or receipt from another device without dispatching', async () => {
+    const inbound = { controllerDeviceId: 'left', senderBotId: 'bot-a',
+      targetBotId: 'bot-b', message: 'one', messageId: 'invented' };
+    expect(await atRight(() => right.receiveRemote(inbound)))
+      .toMatchObject({ ok: false, errorCode: 'PERMISSION_DENIED' });
+    expect(rightDispatch).not.toHaveBeenCalled();
+    const sent = await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: 'one' }));
+    const proof = { controllerDeviceId: 'right', senderBotId: 'bot-a', targetBotId: 'bot-b',
+      message: 'one', messageId: sent.messageId! };
+    expect(await atLeft(() => left.verifyRemoteMessage(proof))).toBe(true);
+    expect(await atLeft(() => left.verifyRemoteMessage({ ...proof, controllerDeviceId: 'third' }))).toBe(false);
+    leftDb.prepare("UPDATE bot_profiles SET status='paused' WHERE id='bot-a'").run();
+    expect(await atLeft(() => left.verifyRemoteMessage(proof))).toBe(false);
+    expect(rightDispatch).toHaveBeenCalledOnce();
+  });
+
+  it('does not send message content for verification after an account switch', async () => {
+    const owner = {};
+    let current = true;
+    const verifySender = vi.fn(async () => true);
+    const receiver = createBotDirectMessageService({ dispatch: rightDispatch,
+      captureOwnerScope: () => owner, isOwnerScopeCurrent: () => current,
+      transport: {
+        selfDeviceId: () => 'right', verifySender,
+        resolve: async id => { current = false; return { id, name: 'Source' }; },
+        list: async () => ({ agents: [], unavailableDevices: [] }),
+        send: async () => { throw new Error('unused'); },
+      },
+    });
+    expect(await atRight(() => receiver.receiveRemote({ controllerDeviceId: 'left', senderBotId: 'bot-a',
+      targetBotId: 'bot-b', message: 'private content', messageId: 'delivery' })))
+      .toMatchObject({ ok: false, errorCode: 'OWNER_CHANGED' });
+    expect(verifySender).not.toHaveBeenCalled();
+    expect(rightDispatch).not.toHaveBeenCalled();
+  });
+
+  it('rejects ordinary sessions and paused peers without invoking the remote model', async () => {
+    expect(await atLeft(() => left.listAgents('ordinary'))).toMatchObject({ ok: false, errorCode: 'NOT_A_BOT_SESSION' });
+    expect(await atLeft(() => left.messageAgent({ callerSessionId: 'ordinary', targetBotId: 'right::bot-b', message: 'one' })))
+      .toMatchObject({ ok: false, errorCode: 'NOT_A_BOT_SESSION' });
+    rightDb.prepare("UPDATE bot_profiles SET status='paused' WHERE id='bot-b'").run();
+    expect(await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: 'one' })))
+      .toMatchObject({ ok: false, errorCode: 'TARGET_BOT_INACTIVE' });
+    expect(rightDispatch).not.toHaveBeenCalled();
+  });
 });
