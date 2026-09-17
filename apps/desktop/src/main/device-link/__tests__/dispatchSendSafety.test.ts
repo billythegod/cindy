@@ -1023,14 +1023,96 @@ describe('background database admission covers the complete remote list lifecycl
 });
 
 
-it('reports DB overload during replay as backpressure without sending unchecked data', async () => {
+it.each(['local-db:sessions:list', 'local-db:sessions:get'])('reports DB overload during %s replay as backpressure without sending unchecked data', async (channel) => {
   const client = mkClient({ sendInvokeResult: vi.fn().mockImplementationOnce(() => { throw new DeviceLinkError('BACKPRESSURE', 'full'); }) });
   __testing.setActiveClient(client as never);
-  __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'overloaded-list', { ok: true, result: [{ id: 'private' }] }, 'local-db:sessions:list', []);
+  __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'overloaded-list', { ok: true, result: [{ id: 'private' }] }, channel, ['s1']);
   setRemoteBotSessionLookup(async () => { throw new Error('db worker RPC queue overloaded: op="rawAll"'); });
   __testing.flushRemoteInvokeResultOutbox();
   await vi.waitFor(() => expect(__testing.remoteInvokeResultOutboxSize()).toBe(0));
   expect(client.sendInvokeResult.mock.calls.at(-1)![2]).toEqual({
     ok: false, error: { code: 'BACKPRESSURE', message: 'db worker RPC queue overloaded: op="rawAll"' },
   });
+});
+
+it.each(['maker:send', 'maker:input:enqueue'])(
+  'never marks a completed %s as safely retryable when outbox authorization overloads', async (channel) => {
+    const client = mkClient({ sendInvokeResult: vi.fn().mockImplementationOnce(() => { throw new DeviceLinkError('BACKPRESSURE', 'full'); }) });
+    __testing.setActiveClient(client as never);
+    __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'completed-send', { ok: true, result: { privateReceipt: 'accepted' } }, channel, ['s1']);
+    expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
+    setRemoteBotSessionLookup(async () => { throw new Error('db worker RPC queue overloaded: op="rawAll"'); });
+    __testing.flushRemoteInvokeResultOutbox();
+    await vi.waitFor(() => expect(__testing.remoteInvokeResultOutboxSize()).toBe(0));
+    expect(client.sendInvokeResult.mock.calls.at(-1)![2]).toEqual({
+      ok: false, error: { code: 'IPC_ERROR', message: '[NOT_FOUND] Session does not exist' },
+    });
+  },
+);
+
+it('does not reexecute a cached send after authorization overloads and another controller stays usable', async () => {
+  let overloaded = false;
+  setRemoteBotSessionLookup(async (id) => {
+    if (overloaded && id === 's1') throw new Error('db worker RPC queue overloaded: op="rawAll"');
+    return 'ordinary';
+  });
+  const handler = vi.fn(() => ({ accepted: true }));
+  registry.register('maker:send', handler);
+  const client = mkClient();
+  wireInboundDispatch(client as never);
+  const frame = client.onFrame.mock.calls[0][0];
+  const request = { v: PROTOCOL_VERSION, kind: 'invoke', src: 'ctrl-1', id: 'cached-send', payload: { channel: 'maker:send', args: ['s1', { text: 'hello' }] } };
+  frame(request);
+  await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(1));
+  expect(client.sendInvokeResult.mock.calls[0][2]).toMatchObject({ ok: true });
+  overloaded = true;
+  frame(request);
+  await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(2));
+  expect(client.sendInvokeResult.mock.calls[1][2]).toMatchObject({ ok: false, error: { code: 'IPC_ERROR' } });
+  expect(handler).toHaveBeenCalledTimes(1);
+  frame({ ...request, src: 'ctrl-2', id: 'other-send', payload: { ...request.payload, args: ['s2', { text: 'other' }] } });
+  await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(3));
+  expect(client.sendInvokeResult.mock.calls[2]).toEqual(['ctrl-2', 'other-send', { ok: true, result: { accepted: true } }]);
+  expect(handler).toHaveBeenCalledTimes(2);
+  expect(client.closeLink).not.toHaveBeenCalled();
+});
+
+it.each(['maker:send', 'maker:input:enqueue'])('does not advertise retry after %s succeeds and post-handler authorization overloads', async (channel) => {
+  const handler = vi.fn(() => ({ accepted: true }));
+  registry.register(channel, handler);
+  setRemoteBotSessionLookup(async () => {
+    if (handler.mock.calls.length) throw new Error('db worker RPC queue overloaded: op="rawAll"');
+    return 'ordinary';
+  });
+  expect(await runInvoke('ctrl-1', { channel, args: ['s1', { text: 'hello' }] })).toMatchObject({ ok: false, error: { code: 'IPC_ERROR' } });
+  expect(handler).toHaveBeenCalledTimes(1);
+});
+
+it('keeps pre-handler overload safely retryable without executing the mutation', async () => {
+  const handler = vi.fn();
+  registry.register('maker:send', handler);
+  setRemoteBotSessionLookup(async () => { throw new Error('db worker RPC queue overloaded: op="rawAll"'); });
+  expect(await runInvoke('ctrl-1', { channel: 'maker:send', args: ['s1', { text: 'hello' }] })).toMatchObject({ ok: false, error: { code: 'BACKPRESSURE' } });
+  expect(handler).not.toHaveBeenCalled();
+});
+
+it('isolates an unresponsive peer with an overloaded mutation replay from another peer', async () => {
+  const client = mkClient({ sendInvokeResult: vi.fn((dst) => {
+    if (dst === 'ctrl-1') throw new DeviceLinkError('BACKPRESSURE', 'peer stopped acknowledging');
+  }) });
+  wireInboundDispatch(client as never);
+  __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'completed-send', { ok: true, result: { accepted: true } }, 'maker:send', ['s1']);
+  setRemoteBotSessionLookup(async (id) => {
+    if (id === 's1') throw new Error('db worker RPC queue overloaded: op="rawAll"');
+    return 'ordinary';
+  });
+  const handler = vi.fn(() => ({ accepted: true }));
+  registry.register('maker:send', handler);
+  __testing.flushRemoteInvokeResultOutbox();
+  client.onFrame.mock.calls[0][0]({ v: PROTOCOL_VERSION, kind: 'invoke', src: 'ctrl-2', id: 'other-send', payload: { channel: 'maker:send', args: ['s2', { text: 'other' }] } });
+  await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledWith('ctrl-2', 'other-send', { ok: true, result: { accepted: true } }));
+  expect(client.sendInvokeResult.mock.calls.filter(([dst]) => dst === 'ctrl-1').at(-1)![2]).toMatchObject({ ok: false, error: { code: 'IPC_ERROR' } });
+  expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
+  expect(handler).toHaveBeenCalledTimes(1);
+  expect(client.closeLink).not.toHaveBeenCalled();
 });

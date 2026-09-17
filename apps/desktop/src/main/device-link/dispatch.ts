@@ -24,6 +24,7 @@ import { requestFilePeer, stopFilePeers } from './filePeer';
 import {
   computeAllowlistHash,
   canCoalesceRemoteListing,
+  isPeerResetRetryableReadChannel,
   INVOKE_TIMEOUT_OVERRIDES_MS,
   MAX_FRAME_BYTES,
   PROTOCOL_VERSION,
@@ -656,6 +657,10 @@ const BACKGROUND_REMOTE_INVOKE_CHANNELS: ReadonlySet<string> = new Set([
 /** Include pre/post authorization and cached delivery, not only the IPC handler. */
 function withRemoteDbAdmission<T>(channel: string | undefined, fn: () => T): T {
   return channel && BACKGROUND_REMOTE_INVOKE_CHANNELS.has(channel) ? runAsBackgroundDbRpc(fn) : fn();
+}
+/** Completed mutations must never acquire the controller's safe-to-resend signal. */
+function canRetryCompletedRemoteRead(channel: string | undefined): boolean {
+  return !!channel && (isPeerResetRetryableReadChannel(channel) || BACKGROUND_REMOTE_INVOKE_CHANNELS.has(channel));
 }
 /** 隧道回包必须低于 4MB 传输上限与 per-controller 4MB 准入；2MB 给 envelope 留余量。 */
 const REMOTE_SCHEDULE_INDEX_MAX_BYTES = 2 * 1024 * 1024;
@@ -2839,7 +2844,7 @@ async function authorizeRemoteBotResult(
       return { ok: true, result: await projectRemoteSessionResult(channel ?? '', result.result) };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (isDbWorkerOverloadedError(message)) {
+      if (isDbWorkerOverloadedError(message) && canRetryCompletedRemoteRead(channel)) {
         return { ok: false, error: { code: 'BACKPRESSURE', message } };
       }
       return { ok: false, error: { code: 'IPC_ERROR', message: '[NOT_FOUND] Session does not exist' } };
@@ -3719,6 +3724,7 @@ async function executeRemoteInvoke(src: string, payload: InvokePayload | undefin
     }
   }
 
+  let handlerCompleted = false;
   try {
     const args = payload.args ?? [];
     const invocationOwner = broadcastTap.captureDataOwnerBroadcastScope();
@@ -3743,6 +3749,7 @@ async function executeRemoteInvoke(src: string, payload: InvokePayload | undefin
         payload.channel === 'maker:provider:list' ? [] : args,
       ),
     );
+    handlerCompleted = true;
     if (hasRemoteBotSessionLookup()) await assertRemoteBotInvocationAllowed(args, payload.channel);
     if (!broadcastTap.isDataOwnerBroadcastScopeCurrent(invocationOwner)) throw new Error('[NOT_FOUND] Session does not exist');
     // 远程 set-* 回流:被控端 set-* runtime-only,补一次 DB 持久化 + 广播 patched,让控制端
@@ -3765,7 +3772,7 @@ async function executeRemoteInvoke(src: string, payload: InvokePayload | undefin
     // 被控端 handler 的 throwIpcError `[CODE] message` 原样透传,
     // 控制端 renderer 继续用 extractIpcError 解码
     const message = err instanceof Error ? err.message : String(err);
-    if (isDbWorkerOverloadedError(message)) {
+    if (isDbWorkerOverloadedError(message) && (!handlerCompleted || canRetryCompletedRemoteRead(payload.channel))) {
       return { ok: false, error: { code: 'BACKPRESSURE', message } };
     }
     return { ok: false, error: { code: 'IPC_ERROR', message } };
