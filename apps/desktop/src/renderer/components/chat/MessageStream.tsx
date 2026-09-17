@@ -31,6 +31,7 @@ import {
 } from 'react';
 import { HistoryViewHandoff, renderHistoryView, historyPrefetchThreshold } from '@cindy/maker-shared/message-window';
 import { getRemoteHistoryView, makerChatStore, type HistoryChatMessage } from '@/lib/makerChatStore';
+import { getDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 import { createPortal } from 'react-dom';
 import { GitFork } from 'lucide-react';
 import { SelectionQuoteButton } from './SelectionQuoteButton';
@@ -2289,6 +2290,52 @@ export function buildRenderItems(
   return { items, singleResultMap };
 }
 
+type RenderProjection = ReturnType<typeof buildRenderItems>;
+const recentRenderProjections: {
+  dependencies: readonly unknown[];
+  projection: RenderProjection;
+  characters: number;
+}[] = [];
+let renderProjectionOwner = getDataOwnerGeneration();
+
+/**
+ * Reuse pure history projection across keyed MessageStream mounts. Retain at
+ * most three inputs and 32M source characters; no DOM, hooks or subscriptions.
+ * Dependencies mirror every semantic input to buildRenderItems. In particular
+ * ghost snapshots (not their mutable byCallId Map) invalidate card decisions.
+ */
+export function buildCachedRenderItems(...args: Parameters<typeof buildRenderItems>): RenderProjection {
+  const [messages, taskUpdates, ghostCards, opts] = args;
+  const owner = getDataOwnerGeneration();
+  if (owner !== renderProjectionOwner) {
+    recentRenderProjections.length = 0;
+    renderProjectionOwner = owner;
+  }
+  const dependencies = [messages, taskUpdates, ghostCards, ghostCards?.version,
+    opts?.historyWindowIncomplete, opts?.turnChangeSets, opts?.workingDir, opts?.botSessionId];
+  const index = recentRenderProjections.findIndex((entry) =>
+    entry.dependencies.every((value, i) => Object.is(value, dependencies[i])));
+  if (index >= 0) {
+    const [entry] = recentRenderProjections.splice(index, 1);
+    recentRenderProjections.push(entry);
+    return entry.projection;
+  }
+  const projection = buildRenderItems(...args);
+  const characters = messages.reduce((sum, message) => sum + message.content.length, 0);
+  const maxCharacters = 32 * 1024 * 1024;
+  if (characters <= maxCharacters) {
+    // Keep only the latest dependencies for a given source array.
+    const old = recentRenderProjections.findIndex((entry) => entry.dependencies[0] === messages);
+    if (old >= 0) recentRenderProjections.splice(old, 1);
+    recentRenderProjections.push({ dependencies, projection, characters });
+    while (recentRenderProjections.length > 3 ||
+      recentRenderProjections.reduce((sum, entry) => sum + entry.characters, 0) > maxCharacters) {
+      recentRenderProjections.shift();
+    }
+  }
+  return projection;
+}
+
 type GeneratedFilesRenderItemRef = Extract<RenderItem, { type: 'generated_files' }>;
 
 /**
@@ -2758,7 +2805,7 @@ export function MessageStream({
   }, [sessionId]);
   useEffect(() => {
     for (const m of messages) {
-      if (m.role === 'tool_result' && m.content.includes('xdt_card_id')) {
+      if (m.role === 'tool_result') {
         const cardId = extractGhostCardId(m.content);
         if (cardId) ensureCard(cardId);
       }
@@ -2786,7 +2833,7 @@ export function MessageStream({
   // parsed image targets without retaining state beyond the session mount.
   const markdownImageTargetCacheRef = useRef<MarkdownImageTargetCache>(new Map());
   const { items: ungroupedRenderItems, singleResultMap } = useMemo(() => {
-    const built = buildRenderItems(messages, taskUpdates, ghostCardSnapshot, {
+    const built = buildCachedRenderItems(messages, taskUpdates, ghostCardSnapshot, {
       historyWindowIncomplete: !historyLoaded || Boolean(hasMoreMessages) || historyWindowHasIsland,
       turnChangeSets,
       workingDir,
@@ -2801,6 +2848,7 @@ export function MessageStream({
         pendingHandoff: handoff?.pending,
         isLocalUser: (row) => row.role === 'user' && (row.isPendingPersist === true || !!row.blockedByGhost),
         build: (rows) => {
+          // History chunks are freshly assembled arrays, not reusable source snapshots.
           const chunk = buildRenderItems([...rows], taskUpdates, ghostCardSnapshot, {
             historyWindowIncomplete: true, workingDir,
             botSessionId: simplifiedBotConversation ? sessionId : undefined,
