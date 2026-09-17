@@ -12171,8 +12171,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     checkWorkDirExists,
     resolveRecoveredWorkingDir: (sessionId, dir) => workingDirectoryRecovery.resolve(sessionId, dir),
-    isPersistedWorktreeFallback: (sessionId, dir, dbDir) => path.resolve(dir) ===
-      worktreeConversationFallbackDir(dialogueWorkspaceRootDir(), sessionId, dbDir),
+    isPersistedWorktreeFallback: (dir) => path.dirname(path.resolve(dir)) ===
+      path.join(dialogueWorkspaceRootDir(), 'worktree-recovery'),
     preflightBotRuntimeResources: async (opts) => { await preflightBotRuntimeResources(opts); },
     readWorkingDirectoryRecoveryCreateOpts: async (sessionId) => {
       const [row] = await getDbClient().drizzle.select().from(sessions)

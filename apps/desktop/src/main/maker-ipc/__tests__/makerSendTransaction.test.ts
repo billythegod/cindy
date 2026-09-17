@@ -1258,6 +1258,30 @@ describe('maker SEND transaction', () => {
     expect(recovered.send).toHaveBeenCalledWith(expect.stringContaining('Original filesystem unavailable'), expect.anything());
   });
 
+  it.each(['error', 'missing'] as const)('does not bootstrap a queued fallback without the DB binding (%s)', async (failure) => {
+    const fallback = '/owned/dialogues/worktree-recovery/key';
+    const original = '/repo/.cindy-worktrees/task';
+    let dbReady = false;
+    const { deps } = createDeps({
+      getSession: () => undefined,
+      readSessionWorkingDirFromDb: async () => {
+        if (dbReady) return original;
+        if (failure === 'error') throw new Error('DB unavailable');
+        return null;
+      },
+      isPersistedWorktreeFallback: (dir) => dir === fallback,
+    });
+    const transaction = createMakerSendTransaction(deps);
+    const opts = { agentKind: 'codex' as const, workingDir: fallback };
+    await expect(transaction.sendToAgentAccepted('session-1', 'queued', opts))
+      .resolves.toMatchObject({ accepted: false, reason: 'WORKDIR_MISSING' });
+    expect(deps.checkWorkDirExists).not.toHaveBeenCalled();
+    expect(deps.bootstrapSession).not.toHaveBeenCalled();
+    dbReady = true;
+    await transaction.sendToAgentAccepted('session-1', 'retry', opts);
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({ workingDir: original }));
+  });
+
   it.each([true, false])('rechecks the DB worktree after restarting with a queued fallback (restored: %s)', async (restored) => {
     const original = '/repo/.cindy-worktrees/task';
     const fallback = '/owned/dialogues/worktree-recovery/key';
@@ -1266,7 +1290,7 @@ describe('maker SEND transaction', () => {
     const { deps } = createDeps({
       getSession: () => current,
       readSessionWorkingDirFromDb: async () => original,
-      isPersistedWorktreeFallback: (_id, dir, dbDir) => dir === fallback && dbDir === original,
+      isPersistedWorktreeFallback: (dir) => dir === fallback,
       checkWorkDirExists: check,
       resolveRecoveredWorkingDir: (_id, dir) => restored ? dir : fallback,
       peekWorkingDirectoryRecoveryNote: () => restored ? null : 'worktree still unavailable after restart',
