@@ -48,7 +48,8 @@ describe('remote desktop authority and lifecycle', () => {
     );
     const register = vi.fn();
     const pending = new Promise<void>(() => {});
-    const stop = vi.fn(() => pending);
+    const stop = vi.fn();
+    const stopAndRestore = vi.fn(() => pending);
     const dismiss = vi.fn();
     const clear = vi.fn();
     new Function('onQuit', 'clearInterval', 'timer', 'permissions', 'remoteDesktop', registration)(
@@ -56,33 +57,259 @@ describe('remote desktop authority and lifecycle', () => {
       clear,
       1,
       { dismiss },
-      { stop },
+      { stop, stopAndRestore },
     );
-    expect(register).toHaveBeenCalledWith('remote-desktop', expect.any(Function), 'async');
-    expect(register.mock.calls[0][1]()).toBe(pending);
+    expect(register).toHaveBeenCalledWith('remote-desktop-restore', expect.any(Function), 'async');
+    register.mock.calls[0][1]();
+    expect(stop).toHaveBeenCalledOnce();
+    expect(register.mock.calls[1][1]()).toBe(pending);
     expect(clear).toHaveBeenCalledWith(1);
     expect(dismiss).toHaveBeenCalledOnce();
   });
-  it('stops input immediately but keeps the quit promise pending until audio restoration finishes', async () => {
-    const h = harness();
-    await h.start();
-    let finish!: () => void;
-    h.deps.stopHostMute = () =>
-      new Promise<void>((resolve) => {
+  it.each(['stop', 'stopAndRestore'] as const)(
+    'keeps %s pending until audio restoration finishes',
+    async (method) => {
+      const h = harness();
+      await h.start();
+      let finish!: () => void;
+      h.deps.stopHostMute = () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      let settled = false;
+      const stopped = h.controller[method]().then(() => {
+        settled = true;
+      });
+      expect(h.controller.state).toBeNull();
+      expect(h.deps.stopInput).toHaveBeenCalledOnce();
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      finish();
+      await stopped;
+      expect(settled).toBe(true);
+    },
+  );
+  it.each([false, true])(
+    'clears safety before a temporary resolution change, interrupted=%s',
+    async (interrupted) => {
+      const h = harness();
+      h.deps.displayModes = vi.fn(async () => [
+        { id: '1', width: 1920, height: 1080, current: true },
+        { id: '2', width: 3840, height: 2160, current: false },
+      ]);
+      h.deps.resolution = vi.fn(async (_display, _mode, before) => before());
+      h.deps.stopPrivacyScreen = vi.fn();
+      let finish!: () => void;
+      const safety = new Promise<void>((resolve) => {
         finish = resolve;
       });
-    let settled = false;
-    const stopped = h.controller.stop().then(() => {
-      settled = true;
+      h.deps.stopHostMute = vi.fn(() => safety);
+      const { lease } = await h.start();
+      await h.controller.request('phone', { op: 'control', lease, enabled: true });
+      const pending = h.controller.request('phone', {
+        op: 'resolution',
+        lease,
+        modeId: '2',
+        temporary: true,
+      });
+      const rejected = interrupted
+        ? expect(pending).rejects.toThrow('DESKTOP_LEASE_EXPIRED')
+        : undefined;
+      expect(h.deps.stopInput).toHaveBeenCalled();
+      expect(h.deps.stopPrivacyScreen).toHaveBeenCalledOnce();
+      expect(h.deps.displayModes).not.toHaveBeenCalled();
+      if (interrupted) void h.controller.stop();
+      finish();
+      if (interrupted) {
+        await rejected;
+        expect(h.deps.resolution).not.toHaveBeenCalled();
+      } else {
+        await pending;
+        expect(h.deps.resolution).toHaveBeenCalledOnce();
+      }
+    },
+  );
+  it('does not publish selected geometry or resume control before it is observed', async () => {
+    const h = harness();
+    h.deps.displayModes = async () => [
+      { id: '1', width: 1920, height: 1080, current: true },
+      { id: '2', width: 3840, height: 2160, current: false },
+    ];
+    let projected!: () => void;
+    h.deps.resolution = vi.fn(async (_display, _mode, beforeChange, expected) => {
+      beforeChange();
+      expect(expected).toMatchObject({ width: 3840, height: 2160 });
+      await new Promise<void>((resolve) => {
+        projected = resolve;
+      });
+      beforeChange();
     });
-    expect(h.controller.state).toBeNull();
-    expect(h.deps.stopInput).toHaveBeenCalledOnce();
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    finish();
-    await stopped;
-    expect(settled).toBe(true);
+    const { lease } = await h.start();
+    await h.controller.request('phone', { op: 'control', lease, enabled: true });
+    const settled = vi.fn();
+    const changing = h.controller
+      .request('phone', {
+        op: 'resolution',
+        lease,
+        modeId: '2',
+        temporary: true,
+      })
+      .then(settled);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(projected).toBeTypeOf('function');
+    expect(settled).not.toHaveBeenCalled();
+    await expect(
+      h.controller.request('phone', { op: 'control', lease, enabled: true }),
+    ).rejects.toThrow();
+    projected();
+    await changing;
+    expect(settled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        controlling: false,
+        display: expect.objectContaining({ width: 3840, height: 2160 }),
+      }),
+    );
   });
+
+  it('keeps shutdown pending until resolution restoration finishes', async () => {
+    const h = harness();
+    h.deps.displayModes = async () => [
+      { id: '1', width: 1920, height: 1080, current: true },
+      { id: '2', width: 3840, height: 2160, current: false },
+    ];
+    h.deps.resolution = async (_display, _mode, beforeChange) => beforeChange();
+    let finish!: () => void;
+    h.deps.restoreResolution = vi.fn(async (_display, _mode, beforeChange) => {
+      beforeChange();
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    const { lease } = await h.start();
+    await h.controller.request('phone', { op: 'control', lease, enabled: true });
+    await h.controller.request('phone', { op: 'resolution', lease, modeId: '2', temporary: true });
+    const settled = vi.fn();
+    const quitting = h.controller.stopAndRestore().then(settled);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(h.controller.state).toBeNull();
+    expect(settled).not.toHaveBeenCalled();
+    expect(h.deps.restoreResolution).toHaveBeenCalledWith(
+      '1',
+      '1',
+      expect.any(Function),
+      expect.objectContaining({ width: 1920, height: 1080 }),
+    );
+    finish();
+    await quitting;
+    expect(settled).toHaveBeenCalledOnce();
+    expect(h.deps.restoreResolution).toHaveBeenCalledOnce();
+  });
+  it('waits for an in-flight mode change before restoring after disconnect', async () => {
+    const h = harness();
+    let finish!: () => void;
+    let began!: () => void;
+    const started = new Promise<void>((resolve) => {
+      began = resolve;
+    });
+    const order: string[] = [];
+    h.deps.displayModes = async () => [
+      { id: '1', width: 1920, height: 1080, current: true },
+      { id: '2', width: 3840, height: 2160, current: false },
+    ];
+    h.deps.resolution = async (_display, mode, beforeChange) => {
+      beforeChange();
+      if (mode === '2') {
+        began();
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      }
+      order.push(mode);
+    };
+    const { lease } = await h.start();
+    await h.controller.request('phone', { op: 'control', lease, enabled: true });
+    const change = h.controller.request('phone', {
+      op: 'resolution',
+      lease,
+      modeId: '2',
+      temporary: true,
+    });
+    const rejected = expect(change).rejects.toThrow('DESKTOP_LEASE_EXPIRED');
+    await started;
+    await h.controller.request('phone', { op: 'stop', lease });
+    await expect(h.start()).rejects.toThrow('DESKTOP_BUSY');
+    expect(order).toEqual([]);
+    finish();
+    await rejected;
+    await h.start();
+    expect(order).toEqual(['2', '1']);
+  });
+  it('retains the original mode after a failed restore and retries before a new lease', async () => {
+    const h = harness();
+    h.deps.displayModes = async () => [
+      { id: '1', width: 1920, height: 1080, current: true },
+      { id: '2', width: 3840, height: 2160, current: false },
+    ];
+    let fail = true;
+    h.deps.resolution = vi.fn(async (_display, mode, beforeChange) => {
+      beforeChange();
+      if (mode === '1' && fail) throw new Error('restore failed');
+    });
+    const { lease } = await h.start();
+    await h.controller.request('phone', { op: 'control', lease, enabled: true });
+    await h.controller.request('phone', { op: 'resolution', lease, modeId: '2', temporary: true });
+    await h.controller.request('phone', { op: 'stop', lease });
+    await expect(h.start()).rejects.toThrow('restore failed');
+    fail = false;
+    await h.start();
+    expect(h.deps.resolution).toHaveBeenLastCalledWith(
+      '1',
+      '1',
+      expect.any(Function),
+      expect.objectContaining({ width: 1920, height: 1080 }),
+    );
+  });
+  it.each(['stop', 'timeout', 'takeover', 'revoke'] as const)(
+    'restores the first system mode after multiple changes on %s',
+    async (ending) => {
+      const h = harness();
+      let modeId = '1';
+      h.deps.displayModes = async () => [
+        { id: '1', width: 1920, height: 1080, current: modeId === '1' },
+        { id: '2', width: 3840, height: 2160, current: modeId === '2' },
+        { id: '3', width: 1280, height: 720, current: modeId === '3' },
+      ];
+      h.deps.resolution = vi.fn(async (_display, mode, beforeChange) => {
+        beforeChange();
+        modeId = mode;
+      });
+      const { lease } = await h.start();
+      for (const mode of ['2', '3']) {
+        await h.controller.request('phone', { op: 'control', lease, enabled: true });
+        const next = await h.controller.request('phone', {
+          op: 'resolution',
+          lease,
+          modeId: mode,
+          temporary: true,
+        });
+        expect(next).toMatchObject({ lease, controlling: false });
+        expect(h.controller.hasLease(lease)).toBe(true);
+        expect(modeId).toBe(mode);
+      }
+      if (ending === 'stop') await h.controller.request('phone', { op: 'stop', lease });
+      else if (ending === 'timeout') {
+        h.advance(60000);
+        h.controller.tick();
+      } else if (ending === 'revoke') {
+        h.revoke();
+        h.controller.tick();
+      } else await h.controller.request('other', { op: 'start', displayId: '1', takeover: true });
+      if (ending === 'revoke') await vi.waitFor(() => expect(modeId).toBe('1'));
+      else if (ending !== 'takeover') await h.start(); // Starting waits for restoration.
+      expect(modeId).toBe('1');
+      expect(h.deps.resolution).toHaveBeenCalledTimes(3);
+    },
+  );
   it('keeps viewing and peer isolation after native input fails, and allows explicit control recovery', async () => {
     const h = harness(),
       lease = await h.start();
