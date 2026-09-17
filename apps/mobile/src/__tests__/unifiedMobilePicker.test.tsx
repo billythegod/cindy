@@ -4,10 +4,10 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { UnifiedModelPickerSheet } from '@/session/UnifiedModelPickerSheet';
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'test-uuid' }));
-const test = vi.hoisted(() => ({ view: null as any, quotas:{} as any, syncError:null as unknown, prefs: {favorites:[],engines:{}} as any, save: vi.fn(), entries: [] as any[] }));
+const test = vi.hoisted(() => ({ view: null as any, favoritesReady:true, quotas:{} as any, syncError:null as unknown, prefs: {favorites:[],engines:{}} as any, save: vi.fn(), entries: [] as any[] }));
 vi.mock('@/session/UnifiedModelPickerView', () => ({ UnifiedModelPickerView: (p:any) => {test.view=p;return null;} }));
 vi.mock('@/session/useMobileModelQuotas',()=>({useMobileModelQuotas:()=>({quotas:test.quotas,now:0})}));
-vi.mock('@/session/mobileModelPreferences', () => ({useMobileModelPreferences:()=>({ready:true,error:test.syncError,value:test.prefs,save:test.save})}));
+vi.mock('@/session/mobileModelPreferences', () => ({useMobileModelPreferences:()=>({ready:true,favoritesReady:test.favoritesReady,error:test.syncError,value:test.prefs,save:test.save})}));
 vi.mock('@/session/providerModelSections', () => ({buildMobileModelSections:()=>({activeSourceId:'account'})}));
 vi.mock('@/session/draftModelMemory',()=>({useDraftModelMemoryVersion:()=>0}));
 vi.mock('@/session/sessionModelMirror',()=>({useSessionModelMirrorVersion:()=>0}));
@@ -16,7 +16,7 @@ vi.mock('@/session/unifiedMobileModels',async importOriginal=>({...await importO
 vi.mock('react-i18next',()=>({useTranslation:()=>({t:(key:string)=>key})}));
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
 let root:ReturnType<typeof createRoot>;
-beforeEach(()=>{test.syncError=null;test.quotas={};test.save.mockReset();test.prefs={favorites:[],engines:{}};test.entries=[{
+beforeEach(()=>{test.favoritesReady=true;test.syncError=null;test.quotas={};test.save.mockReset();test.prefs={favorites:[],engines:{}};test.entries=[{
   providerId:'account',modelId:'model',displayName:'Model',candidates:['codex','claude-code'],recommended:'codex',nativeAgent:'codex',
   capabilities:{codex:{wireModelId:'codex/model',efforts:['medium','high'],defaultEffort:'medium',supportsFastMode:true,contextWindow:200000},
   'claude-code':{wireModelId:'model',efforts:['medium','high'],defaultEffort:'medium',supportsFastMode:false,contextWindow:200000}},
@@ -103,4 +103,21 @@ it('puts only a compact countdown and remaining percentage in the model quota li
   const row=test.view.groups[0].rows[0];
   expect(row.quotaLabel).toBe('4models.unified.timeUnit.day · 40%');
   expect(row.effortLabel).toBe('models.options.effortLevels.medium');
+});
+
+it('keeps model selection and settings usable when an old host lacks favorites',async()=>{
+  test.favoritesReady=false;
+  test.syncError=new Error('CHANNEL_NOT_ALLOWED');
+  const {onSelect,onClose}=await mount();
+  expect(test.view.busy).toBe(false);
+  expect(test.view.filters.some((f:any)=>f.id==='favorites')).toBe(false);
+  await act(async()=>test.view.onOptions(test.view.groups[0].rows[0]));
+  expect(test.view.options.favoritesDisabled).toBe(true);
+  await act(async()=>test.view.options.onFavorite());
+  expect(test.save).not.toHaveBeenCalled();
+  await act(async()=>test.view.options.onChange({...test.view.options.row.config,effort:'high'}));
+  expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({effort:'high'}));
+  await act(async()=>test.view.onSelect(test.view.options.row));
+  expect(onClose).toHaveBeenCalled();
+  expect(test.view.error).toBeNull();
 });

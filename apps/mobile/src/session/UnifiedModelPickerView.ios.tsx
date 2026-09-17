@@ -331,7 +331,7 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
                   : "models.unified.addFavorite",
               )}
               leading={mark(Star, !!options.row.favorite)}
-              disabled={p.busy}
+              disabled={p.busy || options.favoritesDisabled}
               onPress={options.onFavorite}
               testID={`${p.testID}.favorite`}
             />

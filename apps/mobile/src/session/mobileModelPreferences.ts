@@ -34,7 +34,7 @@ export function useMobileModelPreferences(scope: string, visible = true) {
     return () => { disposed = true; };
   }, [scope, key]);
   const ready = state?.scope === scope;
-  return { ready, error: error ?? remote.error, value: {favorites:remote.items, engines:ready ? state.value.engines : {} } as MobileModelPreferences,
+  return { ready, favoritesReady: remote.ready, error: error ?? remote.error, value: {favorites:remote.items, engines:ready ? state.value.engines : {} } as MobileModelPreferences,
     save: async (value: MobileModelPreferences) => {
       await remote.save(value.favorites);
       if (state?.scope === scope && JSON.stringify(state.value.engines) === JSON.stringify(value.engines)) return;

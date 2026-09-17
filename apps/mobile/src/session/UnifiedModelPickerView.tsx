@@ -33,14 +33,16 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
     onPress: () => void,
     selected = false,
     icon?: ReactNode,
+    disabled = false,
   ) => (
     <Pressable
       key={label}
       accessibilityRole="button"
       accessibilityLabel={label}
-      disabled={p.busy}
+      disabled={p.busy || disabled}
       onPress={onPress}
       style={{
+        opacity: disabled ? 0.4 : 1,
         flexDirection: "row",
         alignItems: "center",
         gap: spacing.sm,
@@ -138,6 +140,7 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
                 color={colors.textSecondary}
                 fill={o.row.favorite ? colors.textSecondary : "none"}
               />,
+              o.favoritesDisabled,
             )}
             {!o.row.favorite
               ? button(t("models.unified.restoreRecommended"), o.onReset)
@@ -267,6 +270,11 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
                             />
                           ) : null}
                         </View>
+                        {row.subtitle ? (
+                          <Text numberOfLines={1} style={{ color: colors.textSecondary }}>
+                            {row.subtitle}
+                          </Text>
+                        ) : null}
                         {row.quotaLabel ? (
                           <Text style={{ color: colors.textSecondary }}>
                             {row.quotaLabel}

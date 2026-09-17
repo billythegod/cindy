@@ -116,6 +116,7 @@ export function useRemoteMobileFavorites(scope: string, visible: boolean) {
   }, [binding, invoke, subscribe, unsubscribe, unavailable]);
   const items = state?.binding === binding ? state.items : [];
   return {
+    ready: state?.binding === binding && status === "online" && !unavailable,
     items: items.map(mobileFavorite),
     error,
     save: async (next: MobileModelFavorite[]) => {

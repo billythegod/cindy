@@ -98,6 +98,7 @@ export interface UnifiedMobilePickerViewProps {
     agents: AgentKind[];
     fastCapable: boolean;
     onChange(config: MobileModelConfiguration): void;
+    favoritesDisabled: boolean;
     onFavorite(): void;
     onReset(): void;
     context: string;
@@ -470,7 +471,7 @@ export function UnifiedModelPickerSheet(
       onFilter={setFilter}
       filters={[
         { id: "all", label: t("models.unified.all") },
-        { id: "favorites", label: t("models.unified.favorites") },
+        ...(prefs.favoritesReady ? [{ id: "favorites", label: t("models.unified.favorites") }] : []),
         ...p.providers
           .filter((provider) =>
             entries.some((e) => e.providerId === provider.id),
@@ -541,7 +542,9 @@ export function UnifiedModelPickerSheet(
                 .filter(Boolean)
                 .join(" · "),
               price: price ? `${price.title}\n${price.amountsLine}` : null,
+              favoritesDisabled: !prefs.favoritesReady,
               onFavorite: () => {
+                if (!prefs.favoritesReady) return;
                 void transact(async () => {
                   if (row.favorite) {
                     if (sameConfiguration(row.config, live)) {

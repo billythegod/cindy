@@ -60,6 +60,7 @@ it.each(['peer', 'unresponsive'])('retains favorites and refreshes after %s reco
   await act(async () => root.render(createElement(Probe, {})));
   h.invoke.mockRejectedValueOnce(new Error('temporarily offline'));
   await act(async () => h.push?.('a'));
+  expect(h.view.ready).toBe(true);
   expect(h.view.items).toEqual([mobileFavorite(item)]);
   const devices = kind === 'peer' ? h.context.recoveringDeviceIds : h.unresponsive;
   devices.add('a');
@@ -142,6 +143,8 @@ it("old hosts do not fall back to local favorites or claim successful saves", as
   await act(async () => root.render(createElement(Probe, {})));
   expect(h.view.items).toEqual([]);
   expect(h.view.error).toBeTruthy();
+  expect(h.view.ready).toBe(false);
+  await expect(h.view.save([])).resolves.toBeUndefined();
   await expect(h.view.save([mobileFavorite(item)])).rejects.toThrow(
     "not ready",
   );
