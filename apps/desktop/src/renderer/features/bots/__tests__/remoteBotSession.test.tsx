@@ -70,7 +70,10 @@ it('resolves the latest canonical task and pins its host before mounting writabl
     expect.objectContaining({ id: 'new-canonical' }),
   ]);
   expect(h.view).toHaveBeenLastCalledWith(
-    expect.objectContaining({ sessionIdProp: 'new-canonical', routeOwner: true, readOnly: false }),
+    expect.objectContaining({
+      sessionIdProp: 'new-canonical', routeOwner: true, readOnly: false,
+      botIdentity: expect.objectContaining({ id: 'writer', sessionId: 'new-canonical' }),
+    }),
   );
   h.online = false;
   rerender(<RemoteBotSessionView />);
