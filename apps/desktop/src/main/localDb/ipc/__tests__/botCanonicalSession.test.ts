@@ -212,7 +212,7 @@ import {
 } from '../../../maker-ipc/botProfileRuntime';
 import { createBotLifecycleService } from '../../../maker-ipc/botLifecycleService';
 import { createBotDirectMessageService } from '../../../maker-ipc/botDirectMessageService';
-import { createBotDelegationService } from '../../../maker-ipc/botDelegationService';
+import { createBotDelegationService, discardDelegationQueuedInputs } from '../../../maker-ipc/botDelegationService';
 import {
   BOT_DELEGATION_MAX_DISPATCH_ATTEMPTS,
 } from '../../../maker-ipc/botDelegationDispatchOutcome';
@@ -3350,6 +3350,7 @@ describe('Bot Session task end-to-end runtime', () => {
   }
 
   function createDelegationRuntime(options: {
+    discardDelegationQueuedInputs?: Parameters<typeof createBotDelegationService>[0]['discardDelegationQueuedInputs'];
     collectArtifacts?: Parameters<typeof createBotDelegationService>[0]['collectArtifacts'];
     readSessionExecution?: Parameters<typeof createBotDelegationService>[0]['readSessionExecution'];
     withSessionLock?: Parameters<typeof createBotDelegationService>[0]['withSessionLock'];
@@ -3575,6 +3576,9 @@ describe('Bot Session task end-to-end runtime', () => {
     const delegation = createBotDelegationService({
       readSessionExecution: options.readSessionExecution,
       collectArtifacts: options.collectArtifacts,
+      discardDelegationQueuedInputs: options.discardDelegationQueuedInputs ?? (coordinator
+        ? (id, delegationId) => discardDelegationQueuedInputs(coordinator, id, delegationId, async () => undefined)
+        : undefined),
       withSessionLock: options.withSessionLock,
       prepareWorktree: options.prepareWorktree,
       getWorktree: options.getWorktree,
@@ -4129,6 +4133,79 @@ describe('Bot Session task end-to-end runtime', () => {
         execution, resultText: 'Second result.' });
       expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
         .toEqual({ status: 'completed', result_summary: 'Second result.' });
+    } finally { runtime.dispose(); }
+  });
+
+  it.each(['new-turn', 'no-instance', 'never-accepted'] as const)('timeout cleanup preserves unrelated work with %s', async replacement => {
+    await seedPair();
+    vi.useFakeTimers();
+    let execution: { instanceId: string; generation: number } | null = { instanceId: 'native', generation: 1 };
+    const discardDelegationQueuedInputs = vi.fn(async () => undefined);
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution, discardDelegationQueuedInputs,
+      transientUnavailable: () => replacement === 'never-accepted' });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Deadline work.', timeoutMs: 1000 });
+      if (!task.ok) throw new Error('missing task');
+      execution = replacement === 'new-turn' ? { instanceId: 'native', generation: 2 } : null;
+      runtime.advance(1000);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId)).toMatchObject({ task: { status: 'timed-out', session_status: 'active' } });
+      expect(discardDelegationQueuedInputs).toHaveBeenCalledExactlyOnceWith(task.childSessionId, task.delegationId);
+      expect(runtime.abortSession).not.toHaveBeenCalled();
+      expect(runtime.closeSession).not.toHaveBeenCalled();
+    } finally { runtime.dispose(); vi.useRealTimers(); }
+  });
+
+  it('removes timed-out delegation queue entries without dropping unrelated queued input when native state is absent', async () => {
+    await seedPair();
+    vi.useFakeTimers();
+    let execution: { instanceId: string; generation: number } | null = { instanceId: 'native', generation: 1 };
+    const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution, queueSnapshots });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Expire queued work.', timeoutMs: 1000 });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Delegated follow-up.' });
+      await runtime.dispatch({ targetSessionId: task.childSessionId, message: 'Keep direct user input.', clientId: 'direct-user-input' });
+      expect(runtime.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue).toHaveLength(2);
+      execution = null;
+      runtime.advance(1000);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(runtime.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue.map(item => item.clientId))
+        .toEqual(['direct-user-input']);
+      expect(queueSnapshots.get(task.childSessionId)?.map(item => item.clientId)).toEqual(['direct-user-input']);
+      expect(runtime.abortSession).not.toHaveBeenCalled();
+      expect(runtime.closeSession).not.toHaveBeenCalled();
+    } finally { runtime.dispose(); vi.useRealTimers(); }
+  });
+
+  it('timeout still aborts the native execution bound to the delegation receipt', async () => {
+    await seedPair();
+    vi.useFakeTimers();
+    const runtime = createDelegationRuntime({ readSessionExecution: () => ({ instanceId: 'native', generation: 1 }) });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Stop on deadline.', timeoutMs: 1000 });
+      if (!task.ok) throw new Error('missing task');
+      runtime.advance(1000);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(runtime.abortSession).toHaveBeenCalledExactlyOnceWith(task.childSessionId);
+      expect(runtime.closeSession).toHaveBeenCalledExactlyOnceWith(task.childSessionId);
+    } finally { runtime.dispose(); vi.useRealTimers(); }
+  });
+
+  it('does not reuse the prior answer for a tool-only continuation without an assistant message', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'First answer.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.settleChild(task.childSessionId, 'Previous answer must not be repeated.');
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Tool-only continuation.' });
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution, resultText: '', hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: null });
     } finally { runtime.dispose(); }
   });
 

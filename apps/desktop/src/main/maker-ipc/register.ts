@@ -408,6 +408,7 @@ import {
 import { createAgentResourceSettingsIpc } from './agent-resource-settings-ipc.js';
 import {
   createBotDelegationService,
+  discardDelegationQueuedInputs,
   type BotDelegationService,
 } from './botDelegationService.js';
 import {
@@ -9518,6 +9519,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         onAccepted,
         dispatcherSessionId,
       }),
+    discardDelegationQueuedInputs: (sessionId, delegationId) =>
+      discardDelegationQueuedInputs(inputCoordinator, sessionId, delegationId, awaitAgentInputQueueSnapshotPersistence),
     abortSession: (async (sessionId) => {
       await inputCoordinator.ensureQueueRestored(sessionId);
       resetAutomaticRecoveryForExplicitStop(sessionId);

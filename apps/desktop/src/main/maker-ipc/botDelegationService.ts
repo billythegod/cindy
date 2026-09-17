@@ -1,4 +1,5 @@
 import { existsSync, statSync } from 'node:fs';
+import type { AgentInputCoordinator } from './agent-input-coordinator.js';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -80,6 +81,24 @@ export interface DelegationExecutionReceipt {
   generation: number;
 }
 
+/** Withdraw only the expired delegation's pending messages, including cold queues. */
+export async function discardDelegationQueuedInputs(
+  queue: Pick<AgentInputCoordinator, 'ensureQueueRestored' | 'getQueueControlSnapshot' | 'remove'>,
+  sessionId: string,
+  delegationId: string,
+  flush: (sessionId: string) => Promise<void>,
+): Promise<void> {
+  await queue.ensureQueueRestored(sessionId);
+  const prefixes = ['bot-delegation-start', 'bot-delegation-resume',
+    'bot-delegation-unpause', 'bot-delegation-interject'].map(kind => `${kind}:${delegationId}`);
+  for (const item of queue.getQueueControlSnapshot(sessionId).pendingQueue) {
+    if (prefixes.some(prefix => item.clientId === prefix || item.clientId.startsWith(`${prefix}:`))) {
+      queue.remove(sessionId, item.clientId);
+    }
+  }
+  await flush(sessionId);
+}
+
 export interface BotDelegationServiceDeps {
   /** Native reservation identity, including replacement Session instances. */
   readSessionExecution?: (sessionId: string) => DelegationExecutionReceipt | null;
@@ -94,6 +113,7 @@ export interface BotDelegationServiceDeps {
     dispatcherSessionId?: string;
   }) => Promise<DispatchResult>;
   abortSession: (sessionId: string) => Promise<void>;
+  discardDelegationQueuedInputs?: (sessionId: string, delegationId: string) => Promise<void>;
   taskControl?: {
     steer(params: { callerSessionId: string; targetSessionId: string; message: string; queuedMessageId?: string }): Promise<SessionSteerResult>;
     stop(params: { targetSessionId: string }): Promise<SessionStopResult>;
@@ -431,16 +451,29 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     childSessionId: string,
     abortChild: boolean,
     runSequence: number,
-    execution = deps.readSessionExecution?.(childSessionId),
+    execution?: DelegationExecutionReceipt | null,
     attempt = 0,
   ): Promise<void> => {
     try {
-      const [current] = await getDbClient().drizzle.select({ completedAt: botDelegations.completedAt, runSequence: botDelegations.runSequence })
+      const [current] = await getDbClient().drizzle.select({ completedAt: botDelegations.completedAt, runSequence: botDelegations.runSequence,
+        permissionSnapshotJson: botDelegations.permissionSnapshotJson, targetBotId: botDelegations.targetBotId })
         .from(botDelegations).where(and(eq(botDelegations.id, delegationId),
           eq(botDelegations.childSessionId, childSessionId))).limit(1);
       if (current?.completedAt == null || current.runSequence !== runSequence) return;
+      const receipt = parseRecord(current.permissionSnapshotJson).taskExecution as
+        (DelegationExecutionReceipt & { runSequence: number }) | undefined;
+      execution = execution === undefined
+        ? (receipt?.runSequence === runSequence ? receipt
+          : current.targetBotId !== null ? deps.readSessionExecution?.(childSessionId) ?? null : null)
+        : execution;
+      // Queue ownership does not require a live native instance. Remove only this
+      // delegation's inputs, even if a direct turn now owns the Session.
+      await deps.discardDelegationQueuedInputs?.(childSessionId, delegationId);
       // Stale retries must not even acquire the close fence: it rejects queued sends.
-      if (!sameExecution(childSessionId, execution)) return;
+      if (!sameExecution(childSessionId, execution)) {
+        clearCleanupRetryTimer(delegationId);
+        return;
+      }
       const cleanup = async () => {
         if (!sameExecution(childSessionId, execution)) return;
         if (abortChild) await deps.abortSession(childSessionId);
@@ -919,7 +952,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     return updated;
   };
 
-  const readLatestAssistantText = async (sessionId: string, messageClientId?: string): Promise<string | null> => {
+  const readLatestAssistantText = async (sessionId: string, messageClientId?: string, startedAt?: number): Promise<string | null> => {
     const db = getDbClient().drizzle;
     const [latest] = await db
       .select({ content: messages.content })
@@ -929,6 +962,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
           eq(messages.sessionId, sessionId),
           eq(messages.role, 'assistant'),
           ...(messageClientId ? [eq(messages.clientId, messageClientId)] : []),
+          ...(startedAt !== undefined ? [sql`${messages.createdAt} >= ${startedAt}`] : []),
           isNull(messages.rewindAt),
           // 任务卡锚点(空正文)与插话留痕也是 assistant 行,但它们是这个任务**自己
           // 派活**留下的注解,不是它交出的答复。嵌套委派下不排除会直接选错:上一层
@@ -1509,7 +1543,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       && child.lastTurnEndedAt !== null
       && child.lastTurnEndedAt >= Math.max(child.activeTurnStartedAt, typeof resumedAt === 'number' ? resumedAt : 0)
     ) {
-      const resultText = await readLatestAssistantText(row.childSessionId);
+      const resultText = await readLatestAssistantText(row.childSessionId, undefined, child.activeTurnStartedAt);
       if (resultText) {
         await settleSessionUnserialized({
           childSessionId: row.childSessionId,
@@ -3073,7 +3107,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     // done.result 不是字符串时(部分 Pi / 订阅档位只把终答写进消息行)不能把空结果
     // 当成「对方什么都没说」——发起方会被叫醒,但手里是一段没 Result 的废话墙。
     const recoveredText = params.resultText?.trim()
-      || (params.outcome === 'done'
+      || (params.outcome === 'done' && (params.execution === undefined || params.resultMessageClientId)
         ? ((await readLatestAssistantText(params.childSessionId, params.resultMessageClientId))?.trim() ?? '')
         : '');
     const resultSummary = recoveredText.slice(0, MAX_RESULT_CHARS) || null;
