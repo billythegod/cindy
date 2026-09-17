@@ -3133,16 +3133,18 @@ export function MessageStream({
     const cTop = container.getBoundingClientRect().top;
     const children = items.children;
     for (let i = 0; i < children.length; i++) {
-      const rect = (children[i] as HTMLElement).getBoundingClientRect();
+      const itemElement = children[i] as HTMLElement;
+      const rect = itemElement.getBoundingClientRect();
       // 第一条「底边还在容器顶边下方」的 item = 正好跨过视口顶边的那条。
       if (rect.height > 0 && rect.bottom - cTop > 0) {
         const key = children[i].getAttribute('data-render-item-key');
         if (!key) return null;
         const snapshot: ViewportTopSnapshot = {
           viewportTopKey: key,
+          // Negative offsets retain top padding or a gap above the first visible
+          // row; clamping to zero pulls that row to the viewport edge on prepend.
           offset: cTop - rect.top,
         };
-        const itemElement = children[i] as HTMLElement;
         const childAnchor = pickIntersectingChildAnchor(
           Array.from(
             [itemElement, ...itemElement.querySelectorAll<HTMLElement>('[data-message-client-id]')],
@@ -3175,7 +3177,25 @@ export function MessageStream({
   }, []);
   // 量测并写入「删除前快照」，返回结果供同帧复用。用户滚动、非贴底程序化跳转与
   // focus 落定经它刷新；贴底态由 auto-follow 接管，无需快照。
-  const refreshViewportAnchor = useCallback((): ViewportTopSnapshot | null => {
+  const refreshViewportAnchor = useCallback((preserveAligned = false): ViewportTopSnapshot | null => {
+    const previous = lastViewportTopRef.current;
+    const container = scrollRef.current;
+    if (preserveAligned && previous && container) {
+      const index = visibleRenderItemsRef.current.findIndex((item) => item.key === previous.viewportTopKey);
+      const target = previous.messageClientId
+        ? queryMessageElement(container, previous.messageClientId)
+        : index >= 0 ? itemsRef.current?.children[index] : null;
+      const rect = target?.getBoundingClientRect();
+      const viewport = container.getBoundingClientRect();
+      const offset = previous.messageClientId ? previous.messageOffset ?? 0 : previous.offset;
+      // Native anchoring also emits scroll events during prepend/size settling.
+      // An already aligned reading row must not be replaced by a new offscreen
+      // row whose content-visibility estimate temporarily crosses the top edge.
+      if (
+        rect && rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom
+        && viewportAnchorCorrection(viewport.top, rect.top, offset) === 0
+      ) return previous;
+    }
     const measured = measureViewportTop();
     if (measured) lastViewportTopRef.current = measured;
     return measured;
@@ -3878,7 +3898,7 @@ export function MessageStream({
     (includeHeights = false) => {
       // Do not overwrite the reading position with the temporary tail while loading it.
       if (restoringRef.current && restoreLoadRef.current !== 'settled') return;
-      const measured = refreshViewportAnchor();
+      const measured = refreshViewportAnchor(true);
       if (!sessionId || !measured) return;
       const items = itemsRef.current;
       let itemHeights: SessionScrollSnapshot['itemHeights'];
@@ -4300,7 +4320,7 @@ export function MessageStream({
       if (chipJumpGenerationRef.current !== null) return;
       if (!programmaticScrollRef.current) return;
       const generation = programmaticScrollGenerationRef.current;
-      if (finishProgrammaticScroll(generation) === false) refreshViewportAnchor();
+      if (finishProgrammaticScroll(generation) === false) refreshViewportAnchor(true);
     };
     root.addEventListener('scrollend', onScrollEnd);
     return () => root.removeEventListener('scrollend', onScrollEnd);
@@ -5086,7 +5106,9 @@ export function MessageStream({
         const rebased: ViewportTopSnapshot = {
           ...snapshot,
           viewportTopKey: recoveredKey,
-          offset: 0,
+          // A prepended page can rename a surviving work group. Preserve its
+          // measured offset instead of treating it as a newly selected row.
+          offset: snapshot.offset,
           ...(recoverableMessageExists
             ? {
                 messageClientId: recoverableMessageClientId,
@@ -5096,7 +5118,7 @@ export function MessageStream({
         };
         lastViewportTopRef.current = rebased;
         if (!windowAnchorLost && !programmaticScrollRef.current && !isLoadingMore) {
-          restoreViewportSnapshot(rebased, 0);
+          restoreViewportSnapshot(rebased);
         }
       }
       if (!windowAnchorLost && !programmaticScrollRef.current && !isLoadingMore) return;
