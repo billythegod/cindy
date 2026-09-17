@@ -105,6 +105,7 @@ import {
   actualSourceIdForModel,
   effectiveSourceIdForModel,
   findCatalogModel,
+  nativeDefaultSourceId,
   getModel,
   modelSupportsFastMode,
   providerOffersModel,
@@ -317,6 +318,21 @@ function ModelOptionsFloatingPanel({
 
 function providerDisplayName(p: ProviderView, t: (key: string) => string): string {
   return sharedProviderDisplayName(p, t);
+}
+
+/** Display-only alias lookup; implicit choices retain the default-source eligibility/order. */
+function modelDisplayProvider(
+  providers: ProviderView[], providerId: string | null | undefined,
+  modelId: string, agent: AgentKind, actualRoute: boolean,
+): ProviderView | undefined {
+  if (providerId) return providers.find((provider) => provider.id === providerId);
+  const resolveSource = actualRoute ? actualSourceIdForModel : effectiveSourceIdForModel;
+  const eligible = providers.filter((provider) => {
+    const model = findCatalogModel(provider, modelId, agent);
+    return model && resolveSource([provider], provider.id, model.id, agent) === provider.id;
+  });
+  const defaultId = nativeDefaultSourceId(eligible, agent);
+  return eligible.find((provider) => provider.id === defaultId);
 }
 
 // 来源供应商 → 单色官方 mark(fill=currentColor)。trigger 默认右间距 + trigger 文字色;
@@ -3402,7 +3418,10 @@ export function ModelSelector({
     : visibleModels.find((m) => m.id === modelId);
   // Wire IDs can differ from catalog IDs during a switch. Resolve display metadata
   // through the existing alias lookup without changing routing/capability decisions.
-  const resolvedModelName = (agentKind ? findCatalogModel(routeProvider, modelId, agentKind)?.name : undefined)
+  const displayProvider = agentKind
+    ? modelDisplayProvider(providers, currentProviderId, modelId, agentKind, actualRoute)
+    : undefined;
+  const resolvedModelName = (agentKind ? findCatalogModel(displayProvider, modelId, agentKind)?.name : undefined)
     ?? currentModel?.displayName;
   const labelKey = JSON.stringify([deviceId ?? null, currentProviderId ?? null, agentKind, modelId]);
   const lastModelName = useRef<{ key: string; name: string | undefined } | null>(null);
@@ -3586,8 +3605,7 @@ export function ModelSelector({
   // compact 会隐藏断连状态文字；原生 title 仍需保留同一状态，避免鼠标用户悬停
   // 错误图标时只看到模型名、无法判断发送为何被阻断。
   const describeSelection = (selection: SessionRuntimeProfileProjection): string => {
-    const pid = actualSourceIdForModel(providers, selection.providerId, selection.model, selection.agentKind);
-    const provider = providers.find((p) => p.id === (selection.providerId ?? pid));
+    const provider = modelDisplayProvider(providers, selection.providerId, selection.model, selection.agentKind, true);
     const model = findCatalogModel(provider, selection.model, selection.agentKind);
     const selectionKey = JSON.stringify([deviceId ?? null, selection.providerId, selection.agentKind, selection.model]);
     const name = selectionKey === labelKey ? localizedName : model?.name ? localizedModelName(model.name, t) : undefined;

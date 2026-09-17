@@ -326,6 +326,35 @@ describe('model selector display identity during switches', () => {
   };
   const trigger = () => screen.getByRole('button');
 
+  it.each([false, true])('resolves implicit aliases using the eligible default source (session=%s)', (actualRoute) => {
+    const gateway = { ...provider, id: 'xd', models: { codex: [{ id: 'gpt-6', name: 'Gateway GPT' }] } };
+    providersRef.providers = [gateway, provider];
+    const implicit = { ...props, currentProviderId: null, actualRoute };
+    const { rerender } = render(<ModelSelector {...implicit} switching />);
+    expect(trigger().textContent).toContain('GPT-6');
+    expect(trigger().textContent).not.toContain('Gateway GPT');
+    providersRef.providers = [gateway, { ...provider, connected: false }];
+    rerender(<ModelSelector {...implicit} />);
+    expect(trigger().textContent).toContain('Gateway GPT');
+  });
+
+  it.each([false, true])('preserves disabled-model eligibility for implicit sources (session=%s)', (actualRoute) => {
+    const gateway = { ...provider, id: 'xd', models: { codex: [{ id: 'gpt-6', name: 'Gateway GPT' }] } };
+    const disabled = { ...provider, models: { codex: [{ id: 'gpt-6', name: 'Saved GPT', disabled: true }] } };
+    providersRef.providers = [gateway, disabled];
+    render(<ModelSelector {...props} currentProviderId={null} actualRoute={actualRoute} />);
+    expect(trigger().textContent).toContain(actualRoute ? 'Saved GPT' : 'Gateway GPT');
+  });
+
+  it('resolves an implicit current model in the pending tooltip', () => {
+    providersRef.providers = [provider];
+    render(<ModelSelector {...props} currentProviderId={null}
+      agentIdentity={{ vendorKey: 'codex', state: 'pending' }}
+      currentSelection={{ agentKind: 'codex', model: props.modelId, providerId: null, effort: 'high', fastMode: false }} />);
+    expect(trigger().title).toContain('Codex · GPT-6 · OpenAI');
+    expect(trigger().title).not.toContain(props.modelId);
+  });
+
   it('resolves a wire alias immediately, including while the switch is in flight', () => {
     providersRef.providers = [provider];
     const { rerender } = render(<ModelSelector {...props} switching />);
