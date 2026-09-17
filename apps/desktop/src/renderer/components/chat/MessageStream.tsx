@@ -5878,7 +5878,7 @@ export function MessageStream({
             >
               <div
                 ref={contentRef}
-                className="mx-auto w-full pt-7"
+                className="relative mx-auto w-full pt-7"
                 style={{
                   paddingBottom: resolvedBottomPadding,
                   // Match the input overlay's width so chat content + input box
@@ -5888,9 +5888,10 @@ export function MessageStream({
                 }}
               >
                 {historyLoaded && historyCleared && <HistoryClearedMarker />}
-                {/* F-SYNC-2: Loading spinner at top */}
+                {/* Keep pagination feedback inside the existing top padding so
+                    toggling it never changes message positions or scrollHeight. */}
                 {isLoadingMore && (
-                  <div className="flex items-center justify-center pb-4">
+                  <div className="pointer-events-none absolute inset-x-0 top-1 flex items-center justify-center">
                     <Spinner size={20} className="text-[var(--msg-tool-text)]" />
                   </div>
                 )}

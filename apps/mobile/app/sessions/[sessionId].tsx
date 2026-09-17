@@ -9383,7 +9383,7 @@ export default function SessionScreen() {
                     itemsStructureKey={messageListStructureKey}
                     pendingSend={pendingSendActions}
                     getSentImagePreview={getSentImagePreview}
-                    loadingEarlier={historyView.snapshot.ready ? historyView.snapshot.loading : loadingEarlier}
+                    loadingEarlier={historyView.snapshot.ready ? historyView.view.isLoadingOlder() : loadingEarlier}
                     loadEarlierProgressKey={oldestLoadedMessageCursor}
                     onCopyMessageLink={copyMessageLink}
                     onAddMessageToComposer={canUseComposer ? addMessageToComposer : undefined}
