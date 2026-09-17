@@ -603,8 +603,8 @@ fn existing_install_files_medium_writable(app_dir: &Path, exe_name: &str) -> Opt
     }
     #[cfg(not(windows))]
     {
-        let _ = (app_dir, exe_name);
-        None
+        let _ = exe_name;
+        unpacked_walk_pins_install_writable(unpacked_tree_walk(app_dir)).then_some(true)
     }
 }
 
@@ -631,7 +631,7 @@ pub(crate) fn medium_writable_install_file_candidates(
             }
         }
     }
-    collect_medium_writable_unpacked_files(
+    let _ = collect_medium_writable_unpacked_files(
         &app_dir.join("resources").join("app.asar.unpacked"),
         &mut candidates,
     );
@@ -648,29 +648,86 @@ fn is_medium_writable_native_file(path: &Path) -> bool {
         })
 }
 
-fn collect_medium_writable_unpacked_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    if is_reparse_point(dir) {
-        return;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UnpackedWalk {
+    Complete,
+    Unreadable,
+}
+
+pub(crate) fn unpacked_walk_pins_install_writable(walk: UnpackedWalk) -> bool {
+    matches!(walk, UnpackedWalk::Unreadable)
+}
+
+fn unpacked_tree_walk(app_dir: &Path) -> UnpackedWalk {
+    let mut sink = Vec::new();
+    collect_medium_writable_unpacked_files(
+        &app_dir.join("resources").join("app.asar.unpacked"),
+        &mut sink,
+    )
+}
+
+/// GENERIC_WRITE, DELETE, or parent FILE_DELETE_CHILD / FILE_ADD_FILE each
+/// lets a medium-integrity process replace a loadable input before Close.
+pub(crate) fn file_is_medium_replaceable_from_access(
+    generic_write: Option<bool>,
+    delete: Option<bool>,
+    parent_delete_child: Option<bool>,
+    parent_add_file: Option<bool>,
+) -> Option<bool> {
+    if matches!(generic_write, Some(true))
+        || matches!(delete, Some(true))
+        || matches!(parent_delete_child, Some(true))
+        || matches!(parent_add_file, Some(true))
+    {
+        return Some(true);
     }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+    if matches!(generic_write, Some(false))
+        && matches!(delete, Some(false))
+        && matches!(parent_delete_child, Some(false))
+        && matches!(parent_add_file, Some(false))
+    {
+        return Some(false);
+    }
+    None
+}
+
+pub(crate) fn collect_medium_writable_unpacked_files(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+) -> UnpackedWalk {
+    if is_reparse_point(dir) {
+        return UnpackedWalk::Complete;
+    }
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return UnpackedWalk::Complete;
+        }
+        Err(_) => return UnpackedWalk::Unreadable,
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => return UnpackedWalk::Unreadable,
+        };
         let path = entry.path();
         if is_reparse_point(&path) {
             continue;
         }
         let Ok(file_type) = entry.file_type() else {
-            continue;
+            return UnpackedWalk::Unreadable;
         };
         if file_type.is_dir() {
-            collect_medium_writable_unpacked_files(&path, out);
+            if collect_medium_writable_unpacked_files(&path, out) == UnpackedWalk::Unreadable {
+                return UnpackedWalk::Unreadable;
+            }
             continue;
         }
         if file_type.is_file() {
             out.push(path);
         }
     }
+    UnpackedWalk::Complete
 }
 
 /// CreateFile GENERIC_WRITE can fail because the image is mapped, not because
@@ -2168,13 +2225,16 @@ fn directory_grants_add_file(app_dir: &Path) -> Option<bool> {
 #[cfg(windows)]
 fn existing_install_files_medium_writable_windows(app_dir: &Path, exe_name: &str) -> Option<bool> {
     let check = || {
+        if unpacked_walk_pins_install_writable(unpacked_tree_walk(app_dir)) {
+            return Some(true);
+        }
         let mut saw_existing = false;
         for path in medium_writable_install_file_candidates(app_dir, exe_name) {
             if !path.exists() || is_reparse_point(&path) {
                 continue;
             }
             saw_existing = true;
-            match file_grants_generic_write(&path) {
+            match file_is_medium_replaceable(&path) {
                 Some(true) => return Some(true),
                 Some(false) | None => {}
             }
@@ -2189,12 +2249,34 @@ fn existing_install_files_medium_writable_windows(app_dir: &Path, exe_name: &str
 }
 
 #[cfg(windows)]
-fn file_grants_generic_write(path: &Path) -> Option<bool> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+fn file_is_medium_replaceable(path: &Path) -> Option<bool> {
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING,
+        DELETE, FILE_ADD_FILE, FILE_ATTRIBUTE_NORMAL, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS,
     };
+
+    let parent = path.parent();
+    file_is_medium_replaceable_from_access(
+        file_grants_generic_write(path),
+        path_grants_access(path, DELETE, FILE_ATTRIBUTE_NORMAL),
+        parent.and_then(|dir| {
+            path_grants_access(dir, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS)
+        }),
+        parent.and_then(|dir| path_grants_access(dir, FILE_ADD_FILE, FILE_FLAG_BACKUP_SEMANTICS)),
+    )
+}
+
+#[cfg(windows)]
+fn file_grants_generic_write(path: &Path) -> Option<bool> {
+    use windows_sys::Win32::Foundation::GENERIC_WRITE;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_NORMAL;
+    path_grants_access(path, GENERIC_WRITE, FILE_ATTRIBUTE_NORMAL)
+}
+
+#[cfg(windows)]
+fn path_grants_access(path: &Path, desired_access: u32, flags: u32) -> Option<bool> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, OPEN_EXISTING};
 
     let wide: Vec<u16> = path
         .as_os_str()
@@ -2204,11 +2286,11 @@ fn file_grants_generic_write(path: &Path) -> Option<bool> {
     let handle = unsafe {
         CreateFileW(
             wide.as_ptr(),
-            GENERIC_WRITE,
+            desired_access,
             FILE_SHARE_READ,
             std::ptr::null(),
             OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
+            flags,
             std::ptr::null_mut(),
         )
     };
@@ -3924,6 +4006,89 @@ mod tests {
             Some(true),
             "ERROR_LOCK_VIOLATION is also a sharing failure, not PermissionDenied"
         );
+        assert_eq!(
+            super::file_is_medium_replaceable_from_access(
+                Some(false),
+                Some(true),
+                Some(false),
+                Some(false),
+            ),
+            Some(true),
+            "DELETE without GENERIC_WRITE still replaces resources/app.asar"
+        );
+        assert_eq!(
+            super::file_is_medium_replaceable_from_access(
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+            ),
+            Some(true),
+            "parent FILE_DELETE_CHILD can recreate a protected-looking asar"
+        );
+        assert_eq!(
+            super::file_is_medium_replaceable_from_access(
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+            ),
+            Some(true),
+            "parent FILE_ADD_FILE after delete also replaces the loadable input"
+        );
+        assert_eq!(
+            super::file_is_medium_replaceable_from_access(
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+            ),
+            Some(false),
+            "write, delete, and parent replace rights all denied stay protected"
+        );
+        assert!(
+            super::unpacked_walk_pins_install_writable(super::UnpackedWalk::Unreadable),
+            "an unreadable app.asar.unpacked tree must de-elevate, not look protected"
+        );
+        assert!(!super::unpacked_walk_pins_install_writable(
+            super::UnpackedWalk::Complete
+        ));
+        {
+            let not_dir = probe.0.join("not-a-directory");
+            fs::write(&not_dir, b"x").unwrap();
+            let mut listed = Vec::new();
+            assert_eq!(
+                super::collect_medium_writable_unpacked_files(&not_dir, &mut listed),
+                super::UnpackedWalk::Unreadable,
+                "read_dir failure must not become an empty protected subtree: {listed:?}"
+            );
+            let missing = probe.0.join("missing-unpacked");
+            listed.clear();
+            assert_eq!(
+                super::collect_medium_writable_unpacked_files(&missing, &mut listed),
+                super::UnpackedWalk::Complete,
+                "a missing unpacked tree is empty, not unknown"
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let hidden = probe.0.join("unreadable-unpacked");
+            fs::create_dir_all(&hidden).unwrap();
+            fs::write(hidden.join("index.js"), b"js").unwrap();
+            let original = fs::metadata(&hidden).unwrap().permissions();
+            let mut denied = original.clone();
+            denied.set_mode(0o000);
+            fs::set_permissions(&hidden, denied).unwrap();
+            let mut listed = Vec::new();
+            let walk = super::collect_medium_writable_unpacked_files(&hidden, &mut listed);
+            let _ = fs::set_permissions(&hidden, original);
+            assert_eq!(
+                walk,
+                super::UnpackedWalk::Unreadable,
+                "listing failure must not become an empty protected subtree: {listed:?}"
+            );
+        }
         let source = include_str!("installer.rs");
         let start = source
             .find("fn existing_install_files_medium_writable_windows")
@@ -3934,12 +4099,28 @@ mod tests {
             "do not classify from Cindy.exe alone:\n{body}"
         );
         let start = source
-            .find("fn file_grants_generic_write")
-            .expect("file write probe");
+            .find("fn path_grants_access")
+            .expect("file access probe");
         let body = &source[start..start + 900];
         assert!(
             body.contains("file_write_probe_from_os_error"),
             "sharing violations must not collapse to protected:\n{body}"
+        );
+        let start = source
+            .find("fn file_is_medium_replaceable(")
+            .expect("replaceable file probe");
+        let body = &source[start..start + 900];
+        assert!(
+            body.contains("DELETE") && body.contains("FILE_DELETE_CHILD") && body.contains("FILE_ADD_FILE"),
+            "GENERIC_WRITE alone misses delete/recreate of resources/app.asar:\n{body}"
+        );
+        let start = source
+            .find("fn existing_install_files_medium_writable_windows")
+            .expect("windows file classification");
+        let body = &source[start..start + 700];
+        assert!(
+            body.contains("unpacked_walk_pins_install_writable"),
+            "unlistable unpacked trees must pin writable under the medium token:\n{body}"
         );
         let temp = TestDir::new();
         let mut args = test_args();
