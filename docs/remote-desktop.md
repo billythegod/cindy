@@ -614,7 +614,8 @@ Other cursor colors/alpha are retained. Missing or invalid cursor data does not
 stop video. Windows overlay capture supports up to 4096px, the requested video
 quality and existing 30/60 fps caps; the old compatibility path stays at 1280px.
 Highly detailed overlay frames lower JPEG quality/resolution to keep the 1 MB
-native JPEG bound. This is not a guarantee of the delivered frame rate.
+native JPEG bound, and the capture connection keeps that reduced quality or the
+1280px fallback for later frames. This is not a guarantee of the delivered frame rate.
 
 Windows regression coverage: [cursor raster tests](../apps/desktop/native/remote-desktop/windows-host/src/cursor.rs),
 [large-frame pipe transfer](../apps/desktop/native/remote-desktop/windows-host/src/pipe.rs),

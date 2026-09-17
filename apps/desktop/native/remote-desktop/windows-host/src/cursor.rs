@@ -22,8 +22,6 @@ struct Surface {
     dc: HDC,
     bitmap: HBITMAP,
     old: HGDIOBJ,
-    pixels: *mut u8,
-    len: usize,
 }
 impl Drop for Surface {
     fn drop(&mut self) {
@@ -65,13 +63,7 @@ impl Surface {
             DeleteDC(dc);
             return None;
         }
-        Some(Self {
-            dc,
-            bitmap,
-            old,
-            pixels: pixels.cast(),
-            len: (width * height * 4) as usize,
-        })
+        Some(Self { dc, bitmap, old })
     }
 
     unsafe fn draw(
@@ -81,23 +73,56 @@ impl Surface {
         height: i32,
         background: u8,
     ) -> Option<Vec<u8>> {
-        ptr::write_bytes(self.pixels, background, self.len);
-        if DrawIconEx(
+        // Own the pixel buffer in Rust. CreateDIBSection's out-pointer starts
+        // null; CodeQL cannot prove the FFI write, so do not dereference it.
+        let mut info: BITMAPINFO = mem::zeroed();
+        info.bmiHeader = BITMAPINFOHEADER {
+            biSize: mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            ..mem::zeroed()
+        };
+        let mut pixels = vec![background; (width as usize) * (height as usize) * 4];
+        if SetDIBits(
             self.dc,
+            self.bitmap,
             0,
-            0,
-            handle,
-            width,
-            height,
-            0,
-            ptr::null_mut(),
-            DI_NORMAL,
+            height as u32,
+            pixels.as_ptr().cast(),
+            &info,
+            DIB_RGB_COLORS,
         ) == 0
+            || DrawIconEx(
+                self.dc,
+                0,
+                0,
+                handle,
+                width,
+                height,
+                0,
+                ptr::null_mut(),
+                DI_NORMAL,
+            ) == 0
         {
             return None;
         }
         GdiFlush();
-        Some(std::slice::from_raw_parts(self.pixels, self.len).to_vec())
+        if GetDIBits(
+            self.dc,
+            self.bitmap,
+            0,
+            height as u32,
+            pixels.as_mut_ptr().cast(),
+            &mut info,
+            DIB_RGB_COLORS,
+        ) == 0
+        {
+            return None;
+        }
+        Some(pixels)
     }
 }
 
