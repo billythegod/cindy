@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  HistoryViewController, HistoryViewHandoff, projectHistoryView, renderHistoryView,
+  HistoryViewController, HistoryViewHandoff, projectHistoryView, renderHistoryView, historyViewLeaves,
 } from '@cindy/maker-shared/message-window';
 import { buildRenderItems, groupWorkRuns } from '../components/chat/MessageStream';
 import type { HistoryChatMessage } from '../lib/makerChatStore';
@@ -21,8 +21,11 @@ function fixture() {
   });
   const handoff = new HistoryViewHandoff<HistoryChatMessage>((message) => message.isStreaming === true);
   const render = (raw: HistoryChatMessage[]) => {
-    raw = projectRemoteUsers(raw);
     const snapshot = view.getSnapshot();
+    const historyIds = new Set(historyViewLeaves(snapshot.items).flatMap((item) =>
+      item.type === 'messages' ? item.messages.map((row) => row.clientId) : []));
+    for (const detail of snapshot.details.values()) for (const row of detail.messages) historyIds.add(row.clientId);
+    raw = projectRemoteUsers(raw, historyIds);
     const state = handoff.reconcile(snapshot, raw);
     const build = (rows: readonly HistoryChatMessage[]) => groupWorkRuns(buildRenderItems([...rows]).items, false);
     const items = snapshot.ready ? renderHistoryView({
@@ -44,6 +47,21 @@ function fixture() {
 }
 
 describe('desktop remote history uses the shared live-to-history handoff', () => {
+  it.each([{ predecessors: [] as string[] }, { predecessors: ['removed'] }, { predecessors: ['user'] }])('anchors a send after late history with $predecessors', async ({ predecessors }) => {
+    const { view, render, setSource } = fixture();
+    const sent = reserveRemoteUser({ ...row('sent'), role: 'user' as const }, predecessors.map((id) => row(id)));
+    const reply = { ...row('reply', true), content: 'first reply' };
+    expect(render([reply, sent]).items.filter((item) => item.type === 'message').map((item) => item.message.clientId)).toEqual(['sent', 'reply']);
+    const late = { ...row('late'), role: 'user' as const, content: 'newer historical question' };
+    setSource([row('user'), late]);
+    await view.refresh();
+    expect(render([reply, row('user'), late, sent]).items.filter((item) => item.type === 'message').map((item) => item.message.clientId)).toEqual(['user', 'late', 'sent', 'reply']);
+    const second = reserveRemoteUser({ ...row('second'), role: 'user' as const }, [sent, reply]);
+    const secondReply = { ...row('second-reply', true), content: 'second reply' };
+    expect(render([reply, secondReply, row('user'), late, second, sent]).items.filter((item) => item.type === 'message').map((item) => item.message.clientId)).toEqual(['user', 'late', 'sent', 'reply', 'second', 'second-reply']);
+    view.setActive(false);
+  });
+
   it.each([false, true])('keeps a sent user through DB echo and stale history, ready=%s', async (ready) => {
     const { view, render, setSource } = fixture();
     if (ready) await view.refresh();

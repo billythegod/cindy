@@ -238,6 +238,27 @@ afterEach(() => {
 });
 
 describe('device-link controller mirror — end-to-end scenarios', () => {
+  it('keeps the existing mirror when an old Host rejects history-view and raw fallback fails', async () => {
+    const s = sid();
+    const cached = dbMessage(s, 'cached', 'usable offline history', '2026-09-08T00:00:00Z');
+    vi.mocked(readCachedMessages).mockResolvedValue([cached]);
+    host.seedSession(s);
+    const original = host.invoke.getMockImplementation()!;
+    host.invoke.mockImplementation((...args) => {
+      if (args[1] === 'local-db:messages:list') return Promise.reject(new Error('raw fallback timed out'));
+      return original(...args);
+    });
+    remoteProjectsStore.setDeviceSessions(DEVICE_ID, 'Mac A', [{ id: s } as Session]);
+    makerChatStore.enterView(s);
+    makerChatStore.ensureInitialMessages(s);
+    await vi.waitFor(() => expect(host.invoke).toHaveBeenCalledWith(DEVICE_ID, 'local-db:messages:list', expect.anything()));
+    await flush();
+    expect(clearCachedMessages).not.toHaveBeenCalled();
+    expect(makerChatStore.getSnapshot(s).messages.map((row) => row.content)).toContain('usable offline history');
+    makerChatStore.purgeSession(s);
+    vi.mocked(readCachedMessages).mockResolvedValue([]);
+  });
+
   it('keeps the real sent row reserved through DB echo until history takes ownership', async () => {
     const s = sid();
     host.enableHistoryView();

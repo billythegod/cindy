@@ -10910,7 +10910,7 @@ function createRemoteHistoryView(sessionId: string) {
     const snapshot = view.getSnapshot();
     if (isHistoryViewUnavailable(snapshot.error)) {
       writeCache = undefined;
-      clearCachedMessages(deviceId, sessionId);
+      // Keep the last usable mirror until the raw fallback succeeds and replaces it.
       setState(sessionId, (state) => ({ ...state, messages: confirmRemoteUsers(state.messages,
         new Set(state.messages.filter((row) => !row.isPendingPersist).map((row) => row.clientId))) }));
     } else if (snapshot.ready && !snapshot.loading && !snapshot.error && writeCache) {

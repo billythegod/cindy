@@ -29,7 +29,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
-import { HistoryViewHandoff, renderHistoryView, historyPrefetchThreshold } from '@cindy/maker-shared/message-window';
+import { HistoryViewHandoff, renderHistoryView, historyPrefetchThreshold, historyViewLeaves } from '@cindy/maker-shared/message-window';
 import { getRemoteHistoryView, type HistoryChatMessage } from '@/lib/makerChatStore';
 import { createPortal } from 'react-dom';
 import { GitFork } from 'lucide-react';
@@ -2545,12 +2545,20 @@ export function MessageStream({
 }: MessageStreamProps) {
   const { i18n, t } = useTranslation();
   const historyView = sessionId ? getRemoteHistoryView(sessionId) : undefined;
-  const displayMessages = useMemo(() => historyView ? projectRemoteUsers(messages) : messages, [historyView, messages]);
   const historySnapshot = useSyncExternalStore(
     historyView?.subscribe ?? (() => () => undefined),
     historyView?.getSnapshot ?? (() => null),
     historyView?.getSnapshot ?? (() => null),
   );
+  const displayMessages = useMemo(() => {
+    if (!historySnapshot) return messages;
+    const historyIds = new Set(historyViewLeaves(historySnapshot.items).flatMap((item) =>
+      item.type === 'messages' ? item.messages.map((row) => row.clientId) : []));
+    for (const detail of historySnapshot.details.values()) {
+      for (const row of detail.messages) historyIds.add(row.clientId);
+    }
+    return projectRemoteUsers(messages, historyIds);
+  }, [historySnapshot, messages]);
   const historyHandoff = useMemo(() => new HistoryViewHandoff<HistoryChatMessage>(
     (row) => row.isStreaming === true,
   ), [historyView]);
