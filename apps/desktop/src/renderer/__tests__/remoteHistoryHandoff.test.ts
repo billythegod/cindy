@@ -52,6 +52,43 @@ function fixture() {
 }
 
 describe('desktop remote history uses the shared live-to-history handoff', () => {
+  it('keeps the live tail after history when the last send reservation retires', async () => {
+    const { view, render, setSource } = fixture();
+    await view.refresh();
+    const sent = reserveRemoteUser({ ...row('sent'), role: 'user' as const }, [row('user')]);
+    const reply = { ...row('reply', true), content: 'current answer',
+      turnUsageDetails: buildTurnUsageDetails({ inputTokens: 3, outputTokens: 1 })! };
+    const raw = [row('user'), reply, sent];
+    render(raw); // Observe the live reply before the Host owns either row.
+    const { localSendPrecedingClientIds: _reservation, ...hostUser } = sent;
+    setSource([row('user'), hostUser]);
+    await view.refresh();
+    const historyIds = new Set(['user', 'sent']);
+    const confirmed = confirmRemoteUsers(raw, historyIds);
+    expect(confirmed.every((message) => !message.localSendPrecedingClientIds)).toBe(true);
+    const display = projectRemoteUsers(confirmed, historyIds);
+    expect(display.map((message) => message.clientId)).toEqual(['user', 'sent', 'reply']);
+    expect(render(confirmed).items.filter((item) => item.type === 'message')
+      .map((item) => item.message.clientId)).toEqual(['user', 'sent', 'reply']);
+    const visible = selectVisibleMessages(display);
+    const finals = collectTurnFinalAssistantClientIds(visible);
+    expect(finals).toEqual(new Set(['reply']));
+    expect(findLastUserMessageClientId(visible)).toBe('sent');
+    expect(planSessionBelongsToLatestUserTurn(display, ['reply'])).toBe(true);
+    expect(deriveNavRailEntries(visible).at(-1)?.answerExcerpt).toBe('current answer');
+    expect(collectAssistantTurnUsageDetails(display, finals).get('reply')?.totalTokens).toBe(4);
+    const second = reserveRemoteUser({ ...row('second'), role: 'user' as const }, display);
+    const secondReply = row('second-reply', true);
+    expect(projectRemoteUsers([...confirmed, secondReply, second], historyIds)
+      .map((message) => message.clientId)).toEqual(['user', 'sent', 'reply', 'second', 'second-reply']);
+    // Empty history (including the legacy path) provides no ordering evidence.
+    expect(projectRemoteUsers(confirmed)).toEqual(confirmed);
+    setSource([]);
+    await view.refresh();
+    expect(render(confirmed).items.filter((item) => item.type === 'message' && item.message.clientId === 'sent')).toEqual([]);
+    view.setActive(false);
+  });
+
   it('keeps turn actions, navigation, plans and usage aligned through skewed consecutive sends', () => {
     const oldAnswer = { ...row('old-answer'), content: 'old answer',
       turnUsageDetails: buildTurnUsageDetails({ inputTokens: 100, outputTokens: 1 })! };

@@ -14,9 +14,9 @@ export function projectRemoteUsers<T extends LocalUserHandoff>(
   messages: readonly T[],
   historyClientIds: ReadonlySet<string> = new Set(),
 ): T[] {
-  if (!messages.some((row) => row.role === 'user' && row.localSendPrecedingClientIds)) return [...messages];
   // Authoritative history is rendered before its live tail, even if raw timestamps
-  // put a new reply ahead of the late first page.
+  // put a new reply ahead of the late first page. This boundary still applies
+  // after history confirms the last local user and retires its reservation.
   const historical = (row: T) => historyClientIds.has(row.clientId) && !row.localSendPrecedingClientIds;
   const result = [...messages.filter(historical), ...messages.filter((row) => !historical(row))];
   const reservations = messages.filter((row) => row.role === 'user' && row.localSendPrecedingClientIds);
