@@ -4,7 +4,7 @@ import {
   projectHistoryView,
   type HistoryViewSnapshot,
 } from '@cindy/maker-shared/message-window';
-import { encodeRemoteHistory, fitsRemoteHistoryCache } from '../../shared/remoteHistoryCache';
+import { decodeRemoteHistory, encodeRemoteHistory, fitsRemoteHistoryCache } from '../../shared/remoteHistoryCache';
 import { readRemoteHistoryCache, remoteHistoryCacheWriter } from '../lib/remoteHistoryCache';
 import {
   clearCachedMessages,
@@ -58,6 +58,42 @@ afterEach(() => {
 });
 
 describe('structured history mirror lifecycle', () => {
+  it.each(['revision', 'lastMessageId', 'removed'] as const)(
+    'drops collapsed stale details on encode and legacy cache reads after %s changes',
+    async (change) => {
+      await readRemoteHistoryCache('dev', 'session');
+      const summary = { key: 'work', firstMessageId: 'm', lastMessageId: 'm', revision: 'r1',
+        startedAtMs: 0, endedAtMs: 1, isStreaming: false, messageCount: 1, toolCount: 0 };
+      const detail = { messages: [row], revision: 'r1', lastMessageId: 'm', complete: true, loading: false, error: null };
+      const cached: typeof snapshot = { ...snapshot, items: [{ type: 'work', key: 'work', summary }],
+        details: new Map([['work', detail]]), expanded: new Set() };
+      expect(decodeRemoteHistory(encodeRemoteHistory(cached))?.details.size).toBe(1);
+      const next: typeof snapshot = { ...cached, items: change === 'removed' ? [] : [
+        { type: 'work', key: 'work', summary: { ...summary, [change]: 'new' } },
+      ] };
+      const encoded = encodeRemoteHistory(next);
+      expect(encoded).not.toContain('cached text');
+      const legacy = JSON.parse(encoded);
+      legacy.details = [...cached.details]; // Cache written before revision filtering existed.
+      expect(decodeRemoteHistory(JSON.stringify(legacy))?.details.size).toBe(0);
+      remoteHistoryCacheWriter('dev', 'session')(next);
+      await flush();
+      expect(putMessages).toHaveBeenCalledTimes(1);
+      expect(putMessages.mock.calls[0][6]).not.toContain('cached text');
+    },
+  );
+
+  it('keeps matching nested work and preview details when collapsed', () => {
+    const summary = { key: 'work', firstMessageId: 'm', lastMessageId: 'm', revision: 'r1',
+      startedAtMs: 0, endedAtMs: 1, isStreaming: false, messageCount: 1, toolCount: 0 };
+    const detail = { messages: [row], revision: 'r1', lastMessageId: 'm', complete: true, loading: false, error: null };
+    const nested: typeof snapshot = { ...snapshot,
+      items: [{ type: 'work', key: 'outer', summary: { ...summary, key: 'outer' }, children: [
+        { type: 'work', key: 'work', summary: { ...summary, preview: { ...summary, key: 'preview' } } },
+      ] }], details: new Map([['work', detail], ['preview', detail]]) };
+    expect([...decodeRemoteHistory(encodeRemoteHistory(nested))!.details.keys()]).toEqual(['work', 'preview']);
+  });
+
   it('keeps the last mirror until current expanded details finish successfully', async () => {
     await readRemoteHistoryCache('dev', 'session');
     const writer = remoteHistoryCacheWriter('dev', 'session');

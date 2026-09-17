@@ -1,4 +1,15 @@
 import type { HistoryMessageSource, HistoryViewSnapshot } from '@cindy/maker-shared/message-window';
+import { historyWorkSummaries } from '@cindy/maker-shared/message-window';
+
+/** One eligibility rule for write admission, serialization and old cache reads. */
+export function currentRemoteHistoryDetails<T extends HistoryMessageSource>(snapshot: HistoryViewSnapshot<T>) {
+  const summaries = new Map(historyWorkSummaries(snapshot.items).map((summary) => [summary.key, summary]));
+  return new Map([...snapshot.details].filter(([key, detail]) => {
+    const summary = summaries.get(key);
+    return summary && detail.complete && !detail.loading && !detail.error
+      && detail.revision === summary.revision && detail.lastMessageId === summary.lastMessageId;
+  }));
+}
 
 /** Same bounded, versioned snapshot in Main's existing account-scoped mirror file. */
 export const MAX_HISTORY_CACHE_CHARS = 512 * 1024;
@@ -87,7 +98,7 @@ export function decodeRemoteHistory<T extends HistoryMessageSource>(
       )
     )
       return null;
-    return {
+    const snapshot = {
       items: value.items,
       details: new Map(value.details),
       expanded: new Set(value.expanded),
@@ -97,6 +108,7 @@ export function decodeRemoteHistory<T extends HistoryMessageSource>(
       loading: false,
       error: null,
     } as HistoryViewSnapshot<T>;
+    return { ...snapshot, details: currentRemoteHistoryDetails(snapshot) };
   } catch {
     return null;
   }
@@ -109,9 +121,7 @@ export function encodeRemoteHistory<T extends HistoryMessageSource>(
     {
       version: 1,
       items: snapshot.items,
-      details: [...snapshot.details].filter(
-        ([, detail]) => detail.complete && !detail.loading && !detail.error,
-      ),
+      details: [...currentRemoteHistoryDetails(snapshot)],
       expanded: [...snapshot.expanded],
       hasMore: snapshot.hasMore,
       nextCursor: snapshot.nextCursor,

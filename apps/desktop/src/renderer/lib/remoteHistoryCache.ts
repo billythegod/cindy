@@ -4,6 +4,7 @@ import {
   decodeRemoteHistory,
   encodeRemoteHistory,
   fitsRemoteHistoryCache,
+  currentRemoteHistoryDetails,
 } from '../../shared/remoteHistoryCache';
 import {
   readCachedMessages,
@@ -37,12 +38,9 @@ export function remoteHistoryCacheWriter(deviceId: string, sessionId: string) {
       return;
     // A page can be ready while its expanded work is still refreshing. Do not
     // replace the last usable mirror with a projection whose detail is omitted.
-    if (historyWorkSummaries(snapshot.items).some((summary) => {
-      if (!snapshot.expanded.has(summary.key)) return false;
-      const detail = snapshot.details.get(summary.key);
-      return !detail || !detail.complete || detail.loading || !!detail.error
-        || detail.revision !== summary.revision || detail.lastMessageId !== summary.lastMessageId;
-    })) return;
+    const currentDetails = currentRemoteHistoryDetails(snapshot);
+    if (historyWorkSummaries(snapshot.items).some((summary) =>
+      snapshot.expanded.has(summary.key) && !currentDetails.has(summary.key))) return;
     const text = encodeRemoteHistory(snapshot);
     if (!fitsRemoteHistoryCache(text)) {
       clearCachedMessages(deviceId, sessionId);
