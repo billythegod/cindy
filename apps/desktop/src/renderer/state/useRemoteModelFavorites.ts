@@ -42,7 +42,6 @@ export function useRemoteModelFavorites(deviceId?: string) {
       setError(false);
     } catch {
       if (current.current === key && sequence.current === seq) {
-        setState(null);
         setError(true);
       }
     }
@@ -56,18 +55,15 @@ export function useRemoteModelFavorites(deviceId?: string) {
       if (event.deviceId === deviceId && event.channel === MODEL_FAVORITES_CHANGED) void refresh();
     });
     const offStatus = api.onStatusChanged(() => {
-      setState(null);
       void refresh();
     });
     const offPeer = api.onPeerLinkReset?.((event) => {
       if (event.deviceId === deviceId) {
-        setState(null);
         void refresh();
       }
     });
     const offResponsive = api.onResponsivenessChanged?.((event) => {
       if (event.deviceId === deviceId) {
-        setState(null);
         void refresh();
       }
     });

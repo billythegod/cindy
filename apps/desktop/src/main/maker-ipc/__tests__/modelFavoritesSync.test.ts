@@ -63,7 +63,7 @@ it('waits for the selected host persistence acknowledgement, ignoring another re
 });
 it('rejects late acknowledgements across owner changes', async () => {
   const result = h.handle.get(MODEL_FAVORITES_GET)!({});
-  const rejected = expect(result).rejects.toThrow('not confirmed');
+  const rejected = expect(result).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
   h.owner = 'b';
   h.on.get(FAVORITE_HOST_REPLY)!(
     { sender: host },
@@ -73,7 +73,7 @@ it('rejects late acknowledgements across owner changes', async () => {
 });
 it('times out without replaying a mutation', async () => {
   const result = h.handle.get(MODEL_FAVORITES_APPLY)!({}, { kind: 'add', item });
-  const rejected = expect(result).rejects.toThrow('not confirmed');
+  const rejected = expect(result).rejects.toMatchObject({ code: 'DEVICE_LINK_TIMEOUT' });
   await vi.advanceTimersByTimeAsync(8000);
   await rejected;
   expect(host.send).toHaveBeenCalledTimes(1);
@@ -85,4 +85,20 @@ it('rejects untrusted local invocations and stale-owner invalidations', () => {
   h.trusted = true;
   h.on.get(FAVORITE_HOST_CHANGED)!({ sender: host }, { dataOwnerId: 'b', ownerGeneration: 1 });
   expect(broadcast).not.toHaveBeenCalled();
+});
+it('codes invalid input and missing hosts without dispatching mutations', async () => {
+  await expect(h.handle.get(MODEL_FAVORITES_APPLY)!({}, { kind: 'invalid' }))
+    .rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+  expect(host.send).not.toHaveBeenCalled();
+  host.isDestroyed = () => true;
+  await expect(h.handle.get(MODEL_FAVORITES_GET)!({}))
+    .rejects.toMatchObject({ code: 'DEVICE_LINK_UNAVAILABLE' });
+});
+it.each([true, false])('codes host rejection or malformed reply (rejected=%s)', async failed => {
+  const result = h.handle.get(MODEL_FAVORITES_GET)!({});
+  const checked = expect(result).rejects.toMatchObject({ code: failed ? 'PRECONDITION_FAILED' : 'INTERNAL' });
+  h.on.get(FAVORITE_HOST_REPLY)!({ sender: host }, {
+    requestId: host.send.mock.calls[0][1].requestId, failed, items: 'invalid',
+  });
+  await checked;
 });

@@ -12,6 +12,7 @@ const item = {
 };
 let root: ReturnType<typeof createRoot>, view: ReturnType<typeof useRemoteModelFavorites>;
 let invoke: ReturnType<typeof vi.fn>, push: (event: any) => void;
+let statusChanged: () => void, peerReset: (event: any) => void, responsive: (event: any) => void;
 function Probe({ device = 'a' }: { device?: string }) {
   view = useRemoteModelFavorites(device);
   return null;
@@ -27,13 +28,28 @@ beforeEach(() => {
           push = fn;
           return vi.fn();
         },
-        onStatusChanged: () => vi.fn(),
+        onStatusChanged: (fn: any) => { statusChanged = fn; return vi.fn(); },
+        onPeerLinkReset: (fn: any) => { peerReset = fn; return vi.fn(); },
+        onResponsivenessChanged: (fn: any) => { responsive = fn; return vi.fn(); },
       },
     },
   });
   root = createRoot(document.createElement('div'));
 });
 afterEach(() => act(() => root.unmount()));
+it.each(['status', 'peer', 'responsive'])('retains keyed favorites on failed %s refresh and replaces only on success', async event => {
+  await act(async () => root.render(createElement(Probe, {})));
+  const refresh = () => event === 'status' ? statusChanged()
+    : event === 'peer' ? peerReset({ deviceId: 'a' }) : responsive({ deviceId: 'a' });
+  invoke.mockRejectedValueOnce(new Error('offline'));
+  await act(async () => refresh());
+  expect(view.items).toEqual([item]);
+  expect(view.error).toBe(true);
+  invoke.mockResolvedValue([]);
+  await act(async () => refresh());
+  expect(view.items).toEqual([]);
+  expect(view.error).toBe(false);
+});
 it('remote favorite add/update/remove use remote operations, never browser storage', async () => {
   const local = vi.spyOn(Storage.prototype, 'setItem');
   await act(async () => root.render(createElement(Probe, {})));

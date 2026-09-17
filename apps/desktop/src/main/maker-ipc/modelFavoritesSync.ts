@@ -22,6 +22,7 @@ import {
   isAppSessionBoundaryPending,
 } from '../appSessionState.js';
 import { isDeviceLinkInvoke } from '../device-link/invoke-context.js';
+import { throwIpcError } from '../utils/ipcValidate.js';
 
 /** The existing renderer store is authoritative. Dispatch once to ONE owner-fenced
  * app window and acknowledge persisted results, never maintain a second database. */
@@ -58,32 +59,41 @@ export function registerModelFavoritesSync(
     )
       broadcast(MODEL_FAVORITES_CHANGED, {});
   });
-  const request = (mutation?: unknown): Promise<RemoteModelFavorite[]> => {
-    if (isAppSessionBoundaryPending() || pending.size >= 64)
-      return Promise.reject(new Error('Favorites unavailable'));
-    const operation = mutation === undefined ? undefined : parseModelFavoriteMutation(mutation);
+  const request = async (mutation?: unknown): Promise<RemoteModelFavorite[]> => {
+    if (isAppSessionBoundaryPending())
+      throwIpcError('PRECONDITION_FAILED', 'Favorites owner is changing');
+    if (pending.size >= 64)
+      throwIpcError('DEVICE_LINK_UNAVAILABLE', 'Favorites request capacity exceeded');
+    let operation;
+    try {
+      operation = mutation === undefined ? undefined : parseModelFavoriteMutation(mutation);
+    } catch {
+      throwIpcError('INVALID_PARAMS', 'Invalid favorite operation');
+    }
     const owner = activeOwnerScopeKey();
     const host = [...hosts.values()].find((value) => !value.isDestroyed());
-    if (!host) return Promise.reject(new Error('Favorites host not ready'));
+    if (!host) throwIpcError('DEVICE_LINK_UNAVAILABLE', 'Favorites host not ready');
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {
-      const settle = (reply?: FavoriteHostReply) => {
+      const settle = (reply?: FavoriteHostReply, timedOut = false) => {
         if (!pending.delete(requestId)) return;
         clearTimeout(timer);
         try {
-          if (
-            !reply ||
-            reply.failed ||
-            isAppSessionBoundaryPending() ||
-            activeOwnerScopeKey() !== owner
-          )
-            throw new Error('Favorites were not confirmed; refresh before retrying');
-          resolve(parseModelFavorites(reply.items));
+          if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== owner)
+            throwIpcError('PRECONDITION_FAILED', 'Favorites were not confirmed: owner changed');
+          if (!reply)
+            throwIpcError(timedOut ? 'DEVICE_LINK_TIMEOUT' : 'DEVICE_LINK_UNAVAILABLE', 'Favorites were not confirmed');
+          if (reply.failed)
+            throwIpcError('PRECONDITION_FAILED', 'Favorites were not confirmed; refresh before retrying');
+          let items;
+          try { items = parseModelFavorites(reply.items); }
+          catch { throwIpcError('INTERNAL', 'Invalid favorites host response'); }
+          resolve(items);
         } catch (error) {
           reject(error);
         }
       };
-      const timer = setTimeout(() => settle(), 8000);
+      const timer = setTimeout(() => settle(undefined, true), 8000);
       pending.set(requestId, { sender: host.id, settle });
       try {
         host.send(FAVORITE_HOST_REQUEST, {
@@ -103,7 +113,7 @@ export function registerModelFavoritesSync(
   });
   ipcMain.handle(MODEL_FAVORITES_APPLY, (event, mutation: unknown) => {
     if (!isDeviceLinkInvoke()) assertTrustedAppRendererEvent(event);
-    if (mutation === undefined) throw new Error('Favorite operation required');
+    if (mutation === undefined) throwIpcError('INVALID_PARAMS', 'Favorite operation required');
     return request(mutation);
   });
 }
