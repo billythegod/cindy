@@ -3433,10 +3433,10 @@ describe('Bot Session task end-to-end runtime', () => {
       message: string;
       persistedContent?: string;
       clientId?: string;
-      onAccepted?: () => void | Promise<void>;
+      onAccepted?: (replayed?: boolean) => void | Promise<void>;
     }) => {
       if (params.clientId && hasMessage(params.targetSessionId, params.clientId)) {
-        await params.onAccepted?.();
+        await params.onAccepted?.(true);
         return {
           ok: true as const,
           targetSessionId: params.targetSessionId,
@@ -4054,6 +4054,27 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
+  it('does not rebind an idempotent supplement replay to a later direct turn', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original task.' });
+      if (!task.ok) throw new Error('missing task');
+      const input = { kind: 'message' as const, text: 'Supplement.', idempotencyKey: 'same-input' };
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, input);
+      const original = h.sqlite!.prepare('SELECT permission_snapshot_json FROM bot_delegations WHERE id = ?').pluck().get(task.delegationId);
+      execution = { instanceId: 'native', generation: 3 };
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, input);
+      expect(h.sqlite!.prepare('SELECT permission_snapshot_json FROM bot_delegations WHERE id = ?').pluck().get(task.delegationId)).toBe(original);
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution, resultText: 'Unrelated result.' });
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId)).toMatchObject({ task: { status: 'running' } });
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution: { instanceId: 'native', generation: 2 }, resultText: 'Supplement result.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT result_summary FROM bot_delegations WHERE id = ?').pluck().get(task.delegationId)).toBe('Supplement result.');
+    } finally { runtime.dispose(); }
+  });
+
   it.each([false, true])('binds queued continuation start only at native acceptance (cold: %s)', async cold => {
     await seedPair();
     const receipts = new Map<string, { instanceId: string; generation: number }>();
@@ -4081,7 +4102,8 @@ describe('Bot Session task end-to-end runtime', () => {
         .toContain(`bot-delegation-start:${task.delegationId}:2`);
       const read = () => h.sqlite!.prepare("SELECT status, json_extract(permission_snapshot_json, '$.taskExecution') AS receipt FROM bot_delegations WHERE id = ?").get(task.delegationId);
       expect(read()).toEqual({ status: 'queued', receipt: JSON.stringify({ ...initialReceipt, runSequence: 1 }) });
-      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution: directReceipt, resultText: 'Unrelated direct result.' });
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution: directReceipt, resultText: 'Unrelated direct result.',
+        pendingInputClientIds: [`bot-delegation-start:${task.delegationId}:2`], hadPendingInputAtTerminal: true });
       expect(read()).toEqual({ status: 'queued', receipt: JSON.stringify({ ...initialReceipt, runSequence: 1 }) });
       if (cold) receipts.delete(task.childSessionId);
       runtime.coordinator!.setExecutionPaused(task.childSessionId, false);

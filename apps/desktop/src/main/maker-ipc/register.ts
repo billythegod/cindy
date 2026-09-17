@@ -9267,7 +9267,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     persistedContent?: string;
     clientId?: string;
     files?: AgentInputQueuedMessage['files'];
-    onAccepted?: () => void | Promise<void>;
+    onAccepted?: (replayed?: boolean) => void | Promise<void>;
     onAcceptedRollback?: () => void | Promise<void>;
   }) => {
     if (params.clientId && params.authorizationGuard) {
@@ -9303,7 +9303,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         return { ok: false as const, errorCode: 'AGENT_NOT_READY' as const, message: 'Previous welcome acceptance is unconfirmed; retry is required.' };
       }
       if (persisted && !params.toolsDisabled) {
-        await params.onAccepted?.();
+        await params.onAccepted?.(true);
         return {
           ok: true as const,
           targetSessionId: params.targetSessionId,
@@ -9370,7 +9370,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         queuedMessageId: clientId,
       };
     }
-    return sendToSessionInternal(params);
+    return sendToSessionInternal({ ...params, onAccepted: () => params.onAccepted?.() });
   };
 
   setBotInvitationWelcomeDispatch(dispatchBotSessionMessage);

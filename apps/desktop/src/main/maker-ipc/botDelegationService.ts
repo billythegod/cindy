@@ -112,7 +112,8 @@ export interface BotDelegationServiceDeps {
     message: string;
     persistedContent?: string;
     clientId?: string;
-    onAccepted?: () => void | Promise<void>;
+    /** true only for a persisted-message dedupe hit, not native acceptance. */
+    onAccepted?: (replayed?: boolean) => void | Promise<void>;
     dispatcherSessionId?: string;
   }) => Promise<DispatchResult>;
   abortSession: (sessionId: string) => Promise<void>;
@@ -1420,7 +1421,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       message: buildDelegationPrompt(row),
       persistedContent: row.objective,
       clientId: `bot-delegation-start:${row.id}${row.runSequence > 1 ? `:${row.runSequence}` : ''}`,
-      onAccepted: async () => {
+      onAccepted: async replayed => {
+        if (replayed) return;
         const acceptedAt = now();
         const [accepted] = await db
           .update(botDelegations)
@@ -1652,7 +1654,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       message,
       persistedContent: row.objective,
       clientId,
-      onAccepted: () => acceptExecution(row),
+      onAccepted: replayed => replayed ? undefined : acceptExecution(row),
     });
     if (dispatched.ok) {
       clearRetryTimer(row.id);
@@ -2395,7 +2397,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       message: [`[来自 ${requesterName} 的补充]`, trimmed].join('\n\n'),
       persistedContent: [`[来自 ${requesterName} 的补充]`, trimmed].join('\n\n'),
       clientId: BOT_DELEGATION_CLIENT_ID.interjection(delegationId, token),
-      onAccepted: () => acceptExecution(row),
+      onAccepted: replayed => replayed ? undefined : acceptExecution(row),
     });
     if (!dispatched?.ok) {
       return {
@@ -2948,7 +2950,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         const dispatched = await deps.dispatch({ targetSessionId: row.childSessionId,
           message: text?.trim() || 'Continue from the existing task history after the requested pause. Check what has already completed; do not replay the original request or repeat completed actions.',
           clientId: `bot-delegation-unpause:${row.id}:${pause.token}`,
-          onAccepted: () => acceptExecution(row),
+          onAccepted: replayed => replayed ? undefined : acceptExecution(row),
         });
         if (!dispatched.ok) throw new Error(dispatched.message);
       }
@@ -3272,7 +3274,10 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const [row] = await getDbClient().drizzle.select().from(botDelegations)
       .where(eq(botDelegations.childSessionId, params.childSessionId)).limit(1);
     if (!row) return [];
-    const clientIds = params.pendingInputClientIds.filter(id => isDelegationQueuedInput(row.id, id));
+    // Start/restart/unpause have their own native acceptance callback. A prior
+    // direct terminal cannot grant or deny that independent dispatch boundary.
+    const clientIds = params.pendingInputClientIds.filter(id =>
+      id.startsWith(`bot-delegation-interject:${row.id}:`));
     if (!isActiveDelegation(row.status as DelegationStatus) || readTaskPause(row)
       || row.acceptedAt == null || parseRecord(row.permissionSnapshotJson).taskCancelRequested === true) return clientIds;
     const receipt = parseRecord(row.permissionSnapshotJson).taskExecution as
