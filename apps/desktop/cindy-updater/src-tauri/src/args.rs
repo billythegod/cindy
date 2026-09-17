@@ -61,8 +61,10 @@ pub struct CliArgs {
     pub zip_sha256: Option<String>,
 
     /// First-attempt medium-integrity writability of `app_dir`. Retry must not
-    /// re-probe: a same-login process can change the DACL after failure.
-    #[arg(skip)]
+    /// re-probe: a same-login process can change the DACL after failure. The
+    /// unelevated parent forwards this across UAC so `--elevated` is not treated
+    /// as proof that a per-user install is protected.
+    #[arg(long = "install-writable", num_args = 0..=1, default_missing_value = "true")]
     pub install_writable: Option<bool>,
 }
 

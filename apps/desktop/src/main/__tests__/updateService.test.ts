@@ -874,6 +874,47 @@ describe('app update forward-only policy', () => {
     }
   });
 
+  it('redownloads a cold-started Windows patch when the same version is republished under a new filename', async () => {
+    vi.useFakeTimers();
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    const digest = 'd'.repeat(64);
+    const manifest = updateManifest('0.0.65', 'app/windows-x64/cindy-0.0.65.zip');
+    manifest.app.hotfix.sha256 = digest;
+    fetchManifest.mockResolvedValue(manifest);
+    const updatesDir = path.join(TEST_USER_DATA, 'updates');
+    fs.mkdirSync(updatesDir, { recursive: true });
+    fs.writeFileSync(path.join(updatesDir, 'staged.zip'), 'old-bytes');
+    fs.writeFileSync(
+      path.join(updatesDir, 'patch-info.json'),
+      JSON.stringify({
+        version: '0.0.65',
+        fileName: 'staged.zip',
+        sha256: 'f'.repeat(64),
+        enableBeta: false,
+      }),
+    );
+    download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, 'new-bytes');
+      return { path: targetPath, size: 123 };
+    });
+
+    const service = await freshUpdateService('win32');
+    service.initUpdateService();
+    try {
+      const handler = ipcHandlers.get('update-check-startup');
+      await expect(handler?.()).resolves.toMatchObject({
+        hasUpdate: true,
+        version: '0.0.65',
+      });
+      expect(download).toHaveBeenCalledTimes(1);
+      expect(download.mock.calls[0]?.[0]).toMatchObject({ sha256: digest });
+      expect(fs.readFileSync(path.join(updatesDir, 'cindy-0.0.65.zip'), 'utf8')).toBe('new-bytes');
+    } finally {
+      service.stopUpdateService();
+    }
+  });
+
   it('redownloads a cold-started Windows patch whose bytes do not match the current digest', async () => {
     vi.useFakeTimers();
     readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });

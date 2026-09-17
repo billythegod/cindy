@@ -219,7 +219,10 @@ import {
   notifyUpdateAutoRelaunchBusyStateChanged,
   setUpdateAutoRelaunchBusyProbe,
 } from './updateService';
-import { shouldKeepWaitingForWindowsUpdateLock } from './updateLockWait';
+import {
+  isWindowsUpdateLockSharingViolation,
+  shouldKeepWaitingForWindowsUpdateLock,
+} from './updateLockWait';
 import {
   createUpdatePresentationRecoveryController,
   decideUpdateRelaunchBusyTransition,
@@ -2660,16 +2663,19 @@ if (started) {
         holderPid,
         holderAlive,
         unlinkFailed: false,
+        sharingViolation: false,
       })
     ) {
       Atomics.wait(lockWait, 0, 0, pollMs);
       continue;
     }
     let unlinkFailed = false;
+    let sharingViolation = false;
     try {
       fs.unlinkSync(lockPath);
-    } catch {
+    } catch (error) {
       unlinkFailed = fs.existsSync(lockPath);
+      sharingViolation = unlinkFailed && isWindowsUpdateLockSharingViolation(error);
     }
     if (
       shouldKeepWaitingForWindowsUpdateLock({
@@ -2679,6 +2685,7 @@ if (started) {
         holderPid,
         holderAlive,
         unlinkFailed,
+        sharingViolation,
       })
     ) {
       Atomics.wait(lockWait, 0, 0, pollMs);

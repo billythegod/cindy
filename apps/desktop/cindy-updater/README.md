@@ -143,8 +143,11 @@ writability of `app_dir` before AppState is cloned, so Retry does not re-probe
 a later DACL, and keeps High-IL ProgramData staging even if the install later
 looks protected. Windows startup keeps waiting while the `.updating` holder
 PID is alive before the 30s timeout, then attempts unlink even if that PID
-was recycled; it only keeps waiting if unlink still fails because Retry owns
-the handle.
+was recycled. It only keeps waiting after that when unlink fails with a
+sharing violation (Retry still owns `FILE_SHARE_READ`); an ACL or third-party
+deny-delete error does not hang the pre-window loop. The unelevated parent
+forwards `--install-writable true|false` across UAC so the elevated child
+does not treat `--elevated` as proof that a per-user install is protected.
 
 A successful rollback retains the isolated zip for retry and does not relaunch
 Cindy while Retry remains available. The exclusive `.updating` lock stays on
@@ -156,7 +159,9 @@ reason for keeping it closed no longer applies. An elevated updater does not
 the successful install launch use the linked medium token instead, or skip
 relaunch if that token is unavailable. Protected install roots still relaunch
 at the current integrity. Retryable failures that never acquired `.updating`
-still relaunch if this updater already stopped Cindy. A present `.updating`
+still relaunch if this updater already stopped Cindy. A terminal pre-install
+Retry that never rewrote `app_dir` also relaunches on Close even though Retry
+is hidden; an inconsistent rollback still does not. A present `.updating`
 owned by another process suppresses relaunch — Cindy's 30-second wait can
 delete this window's leftover and a later updater may already be replacing
 files. A second updater that never owned the lock and never stopped Cindy

@@ -35,7 +35,11 @@ pub enum InstallerEvent {
     Phase(Phase, String),
     Progress(Phase, String, i32),
     Done,
-    Failed(String, bool),
+    Failed {
+        error: String,
+        can_retry: bool,
+        install_unmodified: bool,
+    },
     /// Cindy has exited (or this is an in-process Retry that no longer waits).
     /// Abandoning Retry must relaunch even if `.updating` was never acquired.
     AppExited,
@@ -75,10 +79,11 @@ pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
         if let Some(lock) = lock {
             release_update_lock(lock);
         }
-        emit(InstallerEvent::Failed(
-            "更新文件已不存在或无法读取，请重新检查更新".into(),
-            false,
-        ));
+        emit(InstallerEvent::Failed {
+            error: "更新文件已不存在或无法读取，请重新检查更新".into(),
+            can_retry: false,
+            install_unmodified: true,
+        });
         return;
     }
     match run_inner(&args, lock, &mut emit) {
@@ -110,7 +115,11 @@ pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
                     release_update_lock(lock);
                 }
             }
-            emit(InstallerEvent::Failed(failure.message, can_retry));
+            emit(InstallerEvent::Failed {
+                error: failure.message,
+                can_retry,
+                install_unmodified: failure.install_unmodified,
+            });
         }
     }
 }
@@ -126,6 +135,9 @@ struct InstallerFailure {
     /// and snapshot errors happen before app_dir is rewritten, so their
     /// elevated staging under app_dir must be deleted.
     keep_backup: bool,
+    /// True until copy_tree starts rewriting app_dir. Close must relaunch Cindy
+    /// after a terminal pre-install Retry even when Retry is no longer offered.
+    install_unmodified: bool,
     lock: Option<UpdateLock>,
 }
 
@@ -136,6 +148,7 @@ impl InstallerFailure {
             can_retry,
             discard_archive: !can_retry,
             keep_backup: false,
+            install_unmodified: true,
             lock: None,
         }
     }
@@ -149,6 +162,7 @@ impl InstallerFailure {
             can_retry: elevation_prompt_can_retry(),
             discard_archive: false,
             keep_backup: false,
+            install_unmodified: true,
             lock: None,
         }
     }
@@ -234,8 +248,9 @@ pub(crate) fn release_abandoned_update_lock(path: &Path) {
 pub(crate) fn should_relaunch_after_abandoning_retry(
     can_retry: bool,
     retry_in_progress: bool,
+    install_unmodified: bool,
 ) -> bool {
-    can_retry && !retry_in_progress
+    !retry_in_progress && (can_retry || install_unmodified)
 }
 
 pub(crate) fn restored_app_relaunch_path(args: &CliArgs) -> Option<PathBuf> {
@@ -308,8 +323,9 @@ pub(crate) fn should_relaunch_restored_app_on_abandon(
     owned_lock: bool,
     stopped_app: bool,
     foreign_lock: bool,
+    install_unmodified: bool,
 ) -> bool {
-    should_relaunch_after_abandoning_retry(can_retry, retry_in_progress)
+    should_relaunch_after_abandoning_retry(can_retry, retry_in_progress, install_unmodified)
         && (owned_lock || stopped_app)
         && !foreign_lock
 }
@@ -337,6 +353,7 @@ pub(crate) fn abandon_retry(
     can_retry: bool,
     retry_in_progress: bool,
     stopped_app: bool,
+    install_unmodified: bool,
 ) {
     if !begin_abandon_retry(&args.lock) {
         return;
@@ -350,6 +367,7 @@ pub(crate) fn abandon_retry(
         owned,
         stopped_app,
         foreign,
+        install_unmodified,
     ) {
         relaunch_restored_app(args);
     }
@@ -1140,6 +1158,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
             can_retry,
             discard_archive: !can_retry,
             keep_backup: false,
+            install_unmodified: true,
             lock: None,
         }
     })?;
@@ -1280,10 +1299,14 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                             "[installer] skipping Cindy relaunch because Retry remains available",
                         );
                     }
-                    return Err(InstallerFailure::new(
-                        format!("{} (已回滚到旧版本)", install_err),
+                    return Err(InstallerFailure {
+                        message: format!("{} (已回滚到旧版本)", install_err),
                         can_retry,
-                    ));
+                        discard_archive: !can_retry,
+                        keep_backup: false,
+                        install_unmodified: false,
+                        lock: None,
+                    });
                 }
                 Err(rb_err) => {
                     logger::error(format!(
@@ -1304,6 +1327,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                         can_retry: false,
                         discard_archive: true,
                         keep_backup: true,
+                        install_unmodified: false,
                         lock: None,
                     });
                 }
@@ -2095,6 +2119,7 @@ mod tests {
         uses_elevated_private_staging, uses_private_staging_acl, uses_protected_staging, Phase,
     };
     use crate::args::{CliArgs, ThemeArg};
+    use clap::Parser;
     use sha2::Digest;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -2417,16 +2442,20 @@ mod tests {
     #[test]
     fn abandoning_retry_relaunches_the_restored_app() {
         assert!(
-            should_relaunch_after_abandoning_retry(true, false),
+            should_relaunch_after_abandoning_retry(true, false, false),
             "Close after a retryable rollback must relaunch the restored Cindy"
         );
         assert!(
-            !should_relaunch_after_abandoning_retry(true, true),
+            !should_relaunch_after_abandoning_retry(true, true, true),
             "do not relaunch while an in-process Retry is still replacing files"
         );
         assert!(
-            !should_relaunch_after_abandoning_retry(false, false),
-            "non-retryable failures already relaunched or never left Cindy closed for Retry"
+            !should_relaunch_after_abandoning_retry(false, false, false),
+            "an inconsistent rollback must not relaunch Cindy"
+        );
+        assert!(
+            should_relaunch_after_abandoning_retry(false, false, true),
+            "Close after a terminal pre-install Retry must relaunch the unmodified Cindy"
         );
 
         let temp = TestDir::new();
@@ -2440,7 +2469,7 @@ mod tests {
         retain_update_lock_file(held);
 
         assert_eq!(super::restored_app_relaunch_path(&args).as_ref(), Some(&exe));
-        super::abandon_retry(&args, true, false, false);
+        super::abandon_retry(&args, true, false, false, false);
         assert!(
             !args.lock.exists(),
             "abandoning Retry still deletes this process's retained .updating"
@@ -2454,7 +2483,7 @@ mod tests {
     #[test]
     fn abandoning_retry_relaunches_even_without_a_retained_lock() {
         assert!(
-            should_relaunch_after_abandoning_retry(true, false),
+            should_relaunch_after_abandoning_retry(true, false, false),
             "retryable failures that never acquired .updating still left Cindy closed"
         );
         let temp = TestDir::new();
@@ -2465,11 +2494,19 @@ mod tests {
         fs::write(args.app_dir.join(&args.exe_name), b"cindy").unwrap();
         assert!(!args.lock.exists());
         assert!(super::should_relaunch_restored_app_on_abandon(
-            true, false, false, true, false
+            true, false, false, true, false, false
         ));
         assert!(
-            !super::should_relaunch_restored_app_on_abandon(true, false, false, true, true),
+            !super::should_relaunch_restored_app_on_abandon(true, false, false, true, true, true),
             "Cindy's 30s wait can drop this window's lock; a later updater's .updating must block relaunch"
+        );
+        assert!(
+            super::should_relaunch_restored_app_on_abandon(false, false, true, true, false, true),
+            "a terminal pre-install Retry left the install unmodified and Cindy stopped"
+        );
+        assert!(
+            !super::should_relaunch_restored_app_on_abandon(false, false, true, true, false, false),
+            "a failed rollback must not relaunch an inconsistent Cindy.exe"
         );
         assert!(super::begin_abandon_retry(&args.lock));
         assert!(
@@ -2504,10 +2541,10 @@ mod tests {
         fs::write(&args.lock, format!("updating {other_pid}\n")).unwrap();
         assert!(lock_owned_by_foreign_process(&args.lock));
         assert!(
-            !super::should_relaunch_restored_app_on_abandon(true, false, false, true, true),
+            !super::should_relaunch_restored_app_on_abandon(true, false, false, true, true, true),
             "stopped_app must not relaunch Cindy into another updater's replace window"
         );
-        super::abandon_retry(&args, true, false, true);
+        super::abandon_retry(&args, true, false, true, false);
         assert!(
             args.lock.exists(),
             "Close must not delete another updater's .updating"
@@ -2637,7 +2674,15 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|event| matches!(event, super::InstallerEvent::Failed(_, false))),
+                .any(|event| {
+                    matches!(
+                        event,
+                        super::InstallerEvent::Failed {
+                            can_retry: false,
+                            ..
+                        }
+                    )
+                }),
             "lock contention stays non-retryable so this window does not offer Retry"
         );
         release_update_lock(held);
@@ -2736,7 +2781,15 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|event| matches!(event, super::InstallerEvent::Failed(_, false))),
+                .any(|event| {
+                    matches!(
+                        event,
+                        super::InstallerEvent::Failed {
+                            can_retry: false,
+                            ..
+                        }
+                    )
+                }),
             "terminal ZIP errors stay non-retryable"
         );
     }
@@ -3195,6 +3248,50 @@ mod tests {
             .any(|arg| arg == "--elevated"));
     }
 
+    #[test]
+    fn elevation_forwards_pinned_install_writable() {
+        let mut args = test_args();
+        args.elevated = false;
+        args.install_writable = Some(true);
+        let cmdline = super::build_elevation_arg_string(&args);
+        assert!(
+            cmdline.contains("--install-writable true"),
+            "UAC child must keep the unelevated parent's writable pin:\n{cmdline}"
+        );
+        assert!(cmdline.contains("--elevated"));
+
+        args.install_writable = Some(false);
+        let cmdline = super::build_elevation_arg_string(&args);
+        assert!(
+            cmdline.contains("--install-writable false"),
+            "a protected install pin must survive UAC:\n{cmdline}"
+        );
+
+        let parsed = CliArgs::try_parse_from([
+            "cindy-updater",
+            "--zip",
+            r"C:\Users\Test User\update.zip",
+            "--app-dir",
+            r"C:\Users\Test User\AppData\Local\Cindy",
+            "--exe-name",
+            "Cindy.exe",
+            "--pid",
+            "1",
+            "--log",
+            r"C:\Users\Test User\update.log",
+            "--lock",
+            r"C:\Users\Test User\update.lock",
+            "--workdir",
+            r"C:\Users\Test User\update-workdir",
+            "--install-writable",
+            "true",
+            "--elevated",
+        ])
+        .expect("elevated child parses the forwarded pin");
+        assert_eq!(parsed.install_writable, Some(true));
+        assert!(parsed.elevated);
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn within_is_case_insensitive_on_windows() {
@@ -3405,6 +3502,12 @@ fn build_elevation_arg_string(args: &CliArgs) -> String {
     ];
     if let Some(digest) = args.zip_sha256.as_deref().filter(|digest| !digest.is_empty()) {
         pairs.push(("--zip-sha256", digest.to_string()));
+    }
+    if let Some(writable) = args.install_writable {
+        pairs.push((
+            "--install-writable",
+            if writable { "true".into() } else { "false".into() },
+        ));
     }
     let mut out = String::new();
     for (k, v) in &pairs {

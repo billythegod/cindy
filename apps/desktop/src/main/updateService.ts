@@ -1210,19 +1210,22 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
     const patchResult = checkExistingPatch();
     if (patchResult.action === 'relaunch' && patchResult.version === latestVersion) {
       const sameFile = path.basename(asset.file) === path.basename(readyFilePath ?? '');
-      const trustedSha256 = sameFile ? normalizeWindowsZipSha256(asset.sha256) : undefined;
+      const trustedSha256 = normalizeWindowsZipSha256(asset.sha256);
       if (!trustedSha256) {
         log.info('Windows: current manifest cannot re-anchor the staged patch — discarding it');
         discardStagedPatchFiles();
         return 'idle';
       }
-      if (await windowsZipFileMatchesDigest(readyFilePath, trustedSha256)) {
+      if (!sameFile) {
+        log.info('Windows: staged patch filename changed — downloading newly advertised artifact');
+      } else if (await windowsZipFileMatchesDigest(readyFilePath, trustedSha256)) {
         readyZipSha256 = trustedSha256;
         log.info('Staged patch v%s matches latest — skipping re-download', latestVersion);
         setStatus('ready', { version: latestVersion });
         return 'ready';
+      } else {
+        log.info('Windows: staged patch digest does not match current manifest — re-downloading');
       }
-      log.info('Windows: staged patch digest does not match current manifest — re-downloading');
     }
   }
 
@@ -2379,16 +2382,23 @@ export function initUpdateService(): void {
         let reuseStagedPatch = true;
         if (process.platform === 'win32') {
           const hotfix = manifest.app.hotfix;
-          const trustedSha256 = hotfix
-            && path.basename(hotfix.file) === path.basename(readyFilePath ?? '')
-            ? normalizeWindowsZipSha256(hotfix.sha256)
-            : undefined;
+          const sameFile = Boolean(
+            hotfix && path.basename(hotfix.file) === path.basename(readyFilePath ?? ''),
+          );
+          const trustedSha256 = hotfix ? normalizeWindowsZipSha256(hotfix.sha256) : undefined;
           if (!trustedSha256) {
-            log.info('Windows: manifest has no matching trusted hotfix digest — discarding local patch');
+            log.info('Windows: manifest has no trusted hotfix digest — discarding local patch');
             discardStagedPatchFiles();
             return { hasUpdate: false, action: 'none' as const };
           }
-          if (!(await windowsZipFileMatchesDigest(readyFilePath, trustedSha256))) {
+          if (!sameFile) {
+            log.info('Windows: local patch filename changed — will download newly advertised artifact');
+            readyVersion = undefined;
+            readyFilePath = undefined;
+            readyZipSha256 = undefined;
+            readyChannelEpoch = undefined;
+            reuseStagedPatch = false;
+          } else if (!(await windowsZipFileMatchesDigest(readyFilePath, trustedSha256))) {
             log.info('Windows: local patch bytes do not match current digest — will re-download');
             readyVersion = undefined;
             readyFilePath = undefined;
