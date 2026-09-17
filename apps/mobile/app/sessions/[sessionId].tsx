@@ -8110,12 +8110,14 @@ export default function SessionScreen() {
     if (config.agent !== sessionAgentKind) {
       if (!sessionAgentSwitchSupported) return false;
       if (agentSwitchIntent?.targetAgentKind !== config.agent && !await confirmMobileSessionAgentSwitch(config.agent, !!agentSwitchIntent)) return false;
-      return writeSessionAgentSwitchIntent({targetAgentKind:config.agent,model:config.modelId,
+      const applied = await writeSessionAgentSwitchIntent({targetAgentKind:config.agent,model:config.modelId,
         providerId:config.providerId,effort:config.effort,fastMode:config.fast});
+      if (applied) setModelSheetAgentKind(config.agent);
+      return applied;
     }
     const selection = targetCapabilities.supportsModelWindowSwitchGuard === true
       ? { effort:config.effort || null,fastMode:config.fast } : undefined;
-    return await runControlAction(async () => {
+    const applied = await runControlAction(async () => {
       const applied = await setComposerModel({model:config.modelId,providerId:config.providerId,
         targetContextWindow:capability.contextWindow,selection});
       if (!applied) return false;
@@ -8124,6 +8126,8 @@ export default function SessionScreen() {
       return true;
     }, {model:config.modelId,providerId:config.providerId,effort:config.effort,fastMode:config.fast,
       ...(agentSwitchIntent ? {agentSwitchIntent:null} : {})}, {recover:'refetch'});
+    if (applied) setModelSheetAgentKind(config.agent);
+    return applied;
   }, [canUseRemoteSessionControls,currentSession,controlBusy,composerDeviceProviders.providers,maker,
     sessionAgentKind,sessionAgentSwitchSupported,agentSwitchIntent,writeSessionAgentSwitchIntent,
     runControlAction,setComposerModel,sessionId,deviceId]);
