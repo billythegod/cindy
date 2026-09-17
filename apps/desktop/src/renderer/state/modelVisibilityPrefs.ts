@@ -385,7 +385,8 @@ function migrateLegacyVisibility(ownerId: string, ownerGeneration: number): Migr
 function ensureActiveOwnerReadyForWrites(): boolean {
   if (!activeOwnerId) return false;
   if (activeOwnerReadyForWrites && !activeOwnerMigrationPending
-    && window.localStorage.getItem(ownerMigrationCompleteKey(activeOwnerId)) === '1') return true;
+    && (window.localStorage.getItem(ownerMigrationCompleteKey(activeOwnerId)) === '1'
+      || window.localStorage.getItem(LEGACY_STORAGE_KEY) === null)) return true;
   if (activeOwnerMode === 'signed-out') return false;
   const migration = migrateLegacyVisibility(activeOwnerId, activeOwnerGeneration);
   activeOwnerReadyForWrites = migration.readyForWrites;
@@ -541,10 +542,13 @@ export async function setModelVisibilityOwner(
       readOwnerState(ownerId);
     } catch { /* Storage unavailable: never infer permission to initialize an existing profile. */ }
   }
-  mirrorToMain(cache ?? {});
   version += 1;
   for (const listener of listeners) listener();
   await withOwnerLock(ownerId, ownerGeneration, ensureActiveOwnerReadyForWrites);
+  // Reloading a renderer is not evidence that the current owner's valid Main
+  // mirror became stale. Publish pending only after checking under the owner lock.
+  if (activeOwnerId === ownerId && activeOwnerGeneration === ownerGeneration
+    && activeOwnerMode === mode) mirrorToMain(cache ?? {});
 }
 
 /**
