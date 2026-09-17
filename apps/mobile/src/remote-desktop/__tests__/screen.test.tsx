@@ -1430,6 +1430,11 @@ describe("remote desktop controls", () => {
           nativeEvent: { data: JSON.stringify({ type: "orientation", angle }) },
         });
       });
+      expect(
+        sent()
+          .filter((message) => message.type === "mouseButtons")
+          .at(-1),
+      ).toMatchObject({ topInset: fixture.safe.top });
       if (!landscape) {
         const style = Object.assign(
           {},
