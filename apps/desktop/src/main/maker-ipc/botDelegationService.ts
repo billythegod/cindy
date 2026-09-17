@@ -1416,13 +1416,18 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       await failDelegationDispatch(row, 'CALLER_PERMISSION_UNAVAILABLE: 伙伴权限已变更，任务未启动');
       return { ok: false, status: 'failed' };
     }
+    const retryReceipt = parseRecord(row.permissionSnapshotJson).taskDispatchRetry as
+      { runSequence: number; clientId: string } | undefined;
+    const startClientId = `bot-delegation-start:${row.id}${row.runSequence > 1 ? `:${row.runSequence}` : ''}`;
+    const clientId = retryReceipt?.runSequence === row.runSequence ? retryReceipt.clientId : startClientId;
+    let persistedReplay = false;
     const dispatched = await deps.dispatch({
       targetSessionId: row.childSessionId,
       message: buildDelegationPrompt(row),
       persistedContent: row.objective,
-      clientId: `bot-delegation-start:${row.id}${row.runSequence > 1 ? `:${row.runSequence}` : ''}`,
+      clientId,
       onAccepted: async replayed => {
-        if (replayed) return;
+        if (replayed) { persistedReplay = true; return; }
         const acceptedAt = now();
         const [accepted] = await db
           .update(botDelegations)
@@ -1446,12 +1451,30 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         }
       },
     });
+    if (dispatched.ok && persistedReplay) {
+      // A user row can survive a crash before native acceptance. Keep confirmed
+      // runs idempotent, but give an unaccepted start a durable retry identity.
+      // CAS prevents recovery from replacing a receipt accepted concurrently.
+      const [retrying] = await db.update(botDelegations).set({
+        permissionSnapshotJson: sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskDispatchRetry', json(${JSON.stringify({
+          runSequence: row.runSequence, clientId: `${startClientId}:retry:${createId()}`,
+        })}))`,
+      }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
+        eq(botDelegations.status, 'queued'), eq(botDelegations.permissionSnapshotJson, row.permissionSnapshotJson),
+        sql`COALESCE(json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.runSequence'), 0) != ${row.runSequence}`))
+        .returning({ id: botDelegations.id });
+      if (retrying) return attemptDispatch(row.id, attempt + 1, isCreationPermissionCurrent, resumingPause);
+    }
     if (dispatched.ok) {
       const [current] = await db
-        .select({ status: botDelegations.status })
+        .select({ status: botDelegations.status, permissionSnapshotJson: botDelegations.permissionSnapshotJson })
         .from(botDelegations)
         .where(eq(botDelegations.id, row.id))
         .limit(1);
+      if (persistedReplay && current?.status === 'queued'
+        && (parseRecord(current.permissionSnapshotJson).taskExecution as { runSequence?: number } | undefined)?.runSequence !== row.runSequence) {
+        scheduleDispatchRetry(row.id, attempt, isCreationPermissionCurrent);
+      }
       return { ok: true, status: current?.status === 'running' ? 'running' : 'queued' };
     }
     // 去程没送出去。**不能**一律留在 queued 然后永远重试下去：没登录、子任务已归档

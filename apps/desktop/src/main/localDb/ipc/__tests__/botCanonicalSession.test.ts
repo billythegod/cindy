@@ -4054,6 +4054,27 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
+  it('retries a persisted start without a current-run acceptance receipt after restart', async () => {
+    await seedPair();
+    const before = createDelegationRuntime({ beforeNativeAcceptance: () => { throw new Error('host exited before acceptance'); } });
+    await expect(before.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Unaccepted start.' })).rejects.toThrow('host exited');
+    const row = h.sqlite!.prepare('SELECT id, child_session_id AS child, status FROM bot_delegations').get() as { id: string; child: string; status: string };
+    expect(row.status).toBe('queued');
+    before.dispose();
+    const after = createDelegationRuntime({ readSessionExecution: () => ({ instanceId: 'restarted', generation: 1 }) });
+    try {
+      await after.delegation.restore();
+      expect(after.started.filter(turn => turn.sessionId === row.child)).toHaveLength(1);
+      expect(await after.delegation.getSessionTask('session-1', row.id)).toMatchObject({ task: { status: 'running' } });
+      expect(after.dispatch.mock.calls.at(-1)?.[0].clientId).not.toBe(`bot-delegation-start:${row.id}`);
+      const retry = after.dispatch.mock.calls.at(-1)?.[0].clientId;
+      expect(h.sqlite!.prepare("SELECT json_extract(permission_snapshot_json, '$.taskDispatchRetry.clientId') FROM bot_delegations WHERE id = ?").pluck().get(row.id)).toBe(retry);
+      expect(h.sqlite!.prepare('SELECT COUNT(*) FROM messages WHERE session_id = ? AND client_id = ?').pluck().get(row.child, `bot-delegation-start:${row.id}`)).toBe(1);
+      await after.delegation.settleSession({ childSessionId: row.child, outcome: 'done', execution: { instanceId: 'restarted', generation: 1 }, resultText: 'Recovered result.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT result_summary FROM bot_delegations WHERE id = ?').pluck().get(row.id)).toBe('Recovered result.');
+    } finally { after.dispose(); }
+  });
+
   it('does not rebind an idempotent supplement replay to a later direct turn', async () => {
     await seedPair();
     let execution = { instanceId: 'native', generation: 1 };
