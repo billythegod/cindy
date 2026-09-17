@@ -614,8 +614,10 @@ fn existing_install_files_medium_writable(app_dir: &Path, exe_name: &str) -> Opt
 
 /// Existing loadable inputs a medium-integrity process can replace to hijack
 /// an elevated launch: the main exe, `resources/app.asar`, app-local native
-/// binaries, and every unpacked file under `resources/app.asar.unpacked`
-/// (Forge unpacks JS such as `node-pty` that production later `require`s).
+/// binaries, every unpacked file under `resources/app.asar.unpacked`
+/// (Forge unpacks JS such as `node-pty` that production later `require`s),
+/// and extraResource natives under `resources/tools` (the Windows desktop
+/// host `.node` is required into the main process).
 pub(crate) fn medium_writable_install_file_candidates(
     app_dir: &Path,
     exe_name: &str,
@@ -627,6 +629,10 @@ pub(crate) fn medium_writable_install_file_candidates(
     let _ = collect_medium_writable_root_natives(app_dir, &mut candidates);
     let _ = collect_medium_writable_unpacked_files(
         &app_dir.join("resources").join("app.asar.unpacked"),
+        &mut candidates,
+    );
+    let _ = collect_medium_writable_unpacked_files(
+        &app_dir.join("resources").join("tools"),
         &mut candidates,
     );
     candidates
@@ -657,6 +663,16 @@ fn runtime_trees_pin_install_writable(app_dir: &Path) -> bool {
     let mut sink = Vec::new();
     unpacked_walk_pins_install_writable(collect_medium_writable_root_natives(app_dir, &mut sink))
         || unpacked_walk_pins_install_writable(unpacked_tree_walk(app_dir))
+        || unpacked_walk_pins_install_writable(extra_resource_tools_walk(app_dir))
+}
+
+fn extra_resource_tools_walk(app_dir: &Path) -> UnpackedWalk {
+    let mut sink = Vec::new();
+    collect_medium_writable_unpacked_files(&app_dir.join("resources").join("tools"), &mut sink)
+}
+
+pub(crate) fn loadable_input_is_reparse(path: &Path) -> bool {
+    path.exists() && is_reparse_point(path)
 }
 
 fn unpacked_tree_walk(app_dir: &Path) -> UnpackedWalk {
@@ -2288,8 +2304,11 @@ fn existing_install_files_medium_writable_windows(app_dir: &Path, exe_name: &str
         }
         let mut saw_existing = false;
         for path in medium_writable_install_file_candidates(app_dir, exe_name) {
-            if !path.exists() || is_reparse_point(&path) {
+            if !path.exists() {
                 continue;
+            }
+            if loadable_input_is_reparse(&path) {
+                return Some(true);
             }
             saw_existing = true;
             match file_is_medium_replaceable(&path) {
@@ -4071,6 +4090,27 @@ mod tests {
             candidates.iter().any(|path| path.ends_with("index.js")),
             "Forge-unpacked JS such as node-pty must pin the install as unprotected: {candidates:?}"
         );
+        fs::create_dir_all(
+            app.join("resources")
+                .join("tools")
+                .join("remote-desktop"),
+        )
+        .unwrap();
+        fs::write(
+            app.join("resources")
+                .join("tools")
+                .join("remote-desktop")
+                .join("cindy-windows-desktop-host.node"),
+            b"node",
+        )
+        .unwrap();
+        let candidates = super::medium_writable_install_file_candidates(&app, "Cindy.exe");
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.ends_with("cindy-windows-desktop-host.node")),
+            "Forge extraResource natives under resources/tools must pin the install as unprotected: {candidates:?}"
+        );
         assert_eq!(
             super::file_write_probe_from_os_error(std::io::ErrorKind::PermissionDenied, Some(5)),
             Some(false),
@@ -4200,6 +4240,14 @@ mod tests {
                 super::UnpackedWalk::Reparse,
                 "a junctioned unpacked tree must not look like a complete protected walk: {listed:?}"
             );
+            let asar_target = probe.0.join("asar-target");
+            fs::write(&asar_target, b"asar").unwrap();
+            let asar_link = probe.0.join("app.asar");
+            std::os::unix::fs::symlink(&asar_target, &asar_link).unwrap();
+            assert!(
+                super::loadable_input_is_reparse(&asar_link),
+                "a junctioned resources/app.asar must pin writable, not be skipped"
+            );
         }
         #[cfg(unix)]
         {
@@ -4284,6 +4332,23 @@ mod tests {
         assert!(
             body.contains("WRITE_DAC") && body.contains("WRITE_OWNER"),
             "a directory that only grants WRITE_DAC must not look protected:\n{body}"
+        );
+        let start = source
+            .find("fn existing_install_files_medium_writable_windows")
+            .expect("windows file classification");
+        let body = &source[start..start + 900];
+        assert!(
+            body.contains("loadable_input_is_reparse")
+                || (body.contains("is_reparse_point") && body.contains("Some(true)")),
+            "a reparse-point app.asar must pin writable, not be skipped:\n{body}"
+        );
+        let start = source
+            .find("pub(crate) fn medium_writable_install_file_candidates")
+            .expect("candidate list");
+        let body = &source[start..start + 900];
+        assert!(
+            body.contains("tools") || body.contains("extra_resource"),
+            "resources/tools extraResource natives must be classification inputs:\n{body}"
         );
         let temp = TestDir::new();
         let mut args = test_args();
