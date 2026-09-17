@@ -81,6 +81,11 @@ export interface DelegationExecutionReceipt {
   generation: number;
 }
 
+function isDelegationQueuedInput(delegationId: string, clientId: string): boolean {
+  return ['bot-delegation-start', 'bot-delegation-resume', 'bot-delegation-unpause', 'bot-delegation-interject']
+    .some(kind => clientId === `${kind}:${delegationId}` || clientId.startsWith(`${kind}:${delegationId}:`));
+}
+
 /** Withdraw only the expired delegation's pending messages, including cold queues. */
 export async function discardDelegationQueuedInputs(
   queue: Pick<AgentInputCoordinator, 'ensureQueueRestored' | 'getQueueControlSnapshot' | 'remove'>,
@@ -89,10 +94,8 @@ export async function discardDelegationQueuedInputs(
   flush: (sessionId: string) => Promise<void>,
 ): Promise<void> {
   await queue.ensureQueueRestored(sessionId);
-  const prefixes = ['bot-delegation-start', 'bot-delegation-resume',
-    'bot-delegation-unpause', 'bot-delegation-interject'].map(kind => `${kind}:${delegationId}`);
   for (const item of queue.getQueueControlSnapshot(sessionId).pendingQueue) {
-    if (prefixes.some(prefix => item.clientId === prefix || item.clientId.startsWith(`${prefix}:`))) {
+    if (isDelegationQueuedInput(delegationId, item.clientId)) {
       queue.remove(sessionId, item.clientId);
     }
   }
@@ -1578,7 +1581,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
 
     if (typeof resumedAt === 'number' && deps.taskControl) {
       await deps.taskControl.restoreInput(row.childSessionId);
-      if (deps.hasPendingInput?.(row.childSessionId)) {
+      if (hasPendingDelegationInput(row)) {
         prepareQueuedResume(row);
         await deps.taskControl.resumeInput(row.childSessionId);
         return;
@@ -2909,7 +2912,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         if (!dispatched.ok) throw new Error('Initial task dispatch has not been accepted');
         status = dispatched.status === 'running' ? 'running' : 'queued';
       }
-      if (!pending && (text || (pause.previousStatus !== 'queued' && !deps.hasPendingInput?.(row.childSessionId)))) {
+      if (!pending && (text || (pause.previousStatus !== 'queued' && !hasPendingDelegationInput(row)))) {
         const dispatched = await deps.dispatch({ targetSessionId: row.childSessionId,
           message: text?.trim() || 'Continue from the existing task history after the requested pause. Check what has already completed; do not replay the original request or repeat completed actions.',
           clientId: `bot-delegation-unpause:${row.id}:${pause.token}`,
@@ -3117,8 +3120,17 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       if (!deps.taskControl?.isActive(params.childSessionId)) await cancelDelegationTree(row, 'Cancelled by the requesting Bot.', true, true);
       return;
     }
-    if (params.hadPendingInputAtTerminal) return;
     if (!row || readTaskPause(row) || !ACTIVE_DELEGATION_STATUSES.includes(row.status as (typeof ACTIVE_DELEGATION_STATUSES)[number])) return;
+    const ownedPendingInputIds = params.pendingInputClientIds?.filter(clientId => isDelegationQueuedInput(row.id, clientId));
+    if (ownedPendingInputIds?.length) {
+      if (params.execution) pendingExecutionInputs.set(params.childSessionId, {
+        execution: params.execution, clientIds: ownedPendingInputIds, runSequence: row.runSequence,
+      });
+      return;
+    }
+    // Native terminal events always provide the queue snapshot. Direct user
+    // input in that snapshot cannot defer or take over this delegation's result.
+    if (ownedPendingInputIds === undefined && params.hadPendingInputAtTerminal) return;
     if (params.execution) {
       const [recorded] = await db.update(botDelegations).set({
         permissionSnapshotJson: sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskTerminal', json(${JSON.stringify({
@@ -3182,9 +3194,17 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     execution: DelegationExecutionReceipt | null; clientIds: string[]; runSequence?: number;
   }>();
 
+  const hasPendingDelegationInput = (row: DelegationRow): boolean => {
+    if (!row.childSessionId) return false;
+    return deps.readPendingInputClientIds
+      ? deps.readPendingInputClientIds(row.childSessionId).some(clientId => isDelegationQueuedInput(row.id, clientId))
+      : deps.hasPendingInput?.(row.childSessionId) === true;
+  };
+
   const prepareQueuedResume = (row: DelegationRow): void => {
     if (!row.childSessionId) return;
-    const clientIds = deps.readPendingInputClientIds?.(row.childSessionId) ?? [];
+    const clientIds = (deps.readPendingInputClientIds?.(row.childSessionId) ?? [])
+      .filter(clientId => isDelegationQueuedInput(row.id, clientId));
     if (!clientIds.length) return;
     pendingExecutionInputs.set(row.childSessionId, {
       execution: (parseRecord(row.permissionSnapshotJson).taskExecution as DelegationExecutionReceipt | undefined) ?? null,
@@ -3193,9 +3213,6 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   };
 
   const settleSession = async (params: Parameters<typeof settleSessionUnserialized>[0]) => {
-    if (params.execution && params.pendingInputClientIds?.length && sameExecution(params.childSessionId, params.execution)) {
-      pendingExecutionInputs.set(params.childSessionId, { execution: params.execution, clientIds: params.pendingInputClientIds });
-    }
     params = { ...params, hadPendingInputAtTerminal: params.hadPendingInputAtTerminal ?? deps.hasPendingInput?.(params.childSessionId) };
     if (heldSessionIds.has(params.childSessionId)) {
       // Do not await an operation queued behind Stop: native abort may itself await this callback.
@@ -3212,8 +3229,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     if (row) await withTaskOperation(row.id, () => settleSessionUnserialized({ ...params, expectedRunSequence: row.runSequence }));
   };
 
-  // Only queue entries present at the delegated terminal boundary belong to
-  // its continuation. A direct turn arriving after that boundary is unrelated.
+  // Only delegation-owned entries from a validated terminal/resume boundary
+  // can adopt a new receipt. Ordinary direct Session input remains independent.
   const acceptQueuedSessionInput = async (childSessionId: string, clientId: string): Promise<void> => {
     const boundary = pendingExecutionInputs.get(childSessionId);
     if (!boundary?.clientIds.includes(clientId)) return;

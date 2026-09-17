@@ -3606,7 +3606,7 @@ describe('Bot Session task end-to-end runtime', () => {
       closeSession,
       broadcastSessionCreated: vi.fn(),
       resolveInteraction: options.resolveInteraction,
-      readPendingInputClientIds: id => coordinator?.getQueueControlSnapshot(id).pendingQueue.map(item => item.clientId) ?? [],
+      readPendingInputClientIds: coordinator ? id => coordinator.getQueueControlSnapshot(id).pendingQueue.map(item => item.clientId) : undefined,
       hasPendingInput: (sessionId) => coordinator?.hasPendingQueuedWork(sessionId) || pendingTurns.some(
         (turn) => turn.sessionId === sessionId && turn.queued,
       ),
@@ -4273,6 +4273,54 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
+  it('does not adopt an ordinary user message queued before the delegated terminal event', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Delegated objective.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Delegated answer.', hadPendingInputAtTerminal: true, pendingInputClientIds: ['ordinary-user-input'] });
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'ordinary-user-input');
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Unrelated answer.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Delegated answer.' });
+    } finally { runtime.dispose(); }
+  });
+
+  it.each(['direct', 'delegated-looking'] as const)('does not publish an invalid direct terminal boundary for %s queued input while the original result is pending', async kind => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    let release!: () => void;
+    let entered!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const collecting = new Promise<void>(resolve => { entered = resolve; });
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution,
+      collectArtifacts: async () => { entered(); await barrier; return []; } });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original objective.' });
+      if (!task.ok) throw new Error('missing task');
+      const original = runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Original answer.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      await collecting;
+      execution = { instanceId: 'native', generation: 2 };
+      const clientId = kind === 'direct' ? 'next-direct-input' : `bot-delegation-interject:${task.delegationId}:queued`;
+      const direct = runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Direct answer.', hadPendingInputAtTerminal: true, pendingInputClientIds: [clientId] });
+      execution = { instanceId: 'native', generation: 3 };
+      await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, clientId)).resolves.toBeUndefined();
+      expect(h.sqlite!.prepare("SELECT json_extract(permission_snapshot_json, '$.taskExecution.generation') AS generation FROM bot_delegations WHERE id = ?").get(task.delegationId))
+        .toEqual({ generation: 1 });
+      release();
+      await Promise.all([original, direct]);
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Original answer.' });
+    } finally { release(); runtime.dispose(); }
+  });
+
   it('adopts only input queued at the delegated terminal boundary', async () => {
     await seedPair();
     let execution = { instanceId: 'native', generation: 1 };
@@ -4281,13 +4329,13 @@ describe('Bot Session task end-to-end runtime', () => {
       const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Queued work.' });
       if (!task.ok) throw new Error('missing task');
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
-        hadPendingInputAtTerminal: true, pendingInputClientIds: ['owned-queued-input'] });
+        hadPendingInputAtTerminal: true, pendingInputClientIds: [`bot-delegation-interject:${task.delegationId}:owned`] });
       execution = { instanceId: 'native', generation: 2 };
       await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'unrelated-input');
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
         resultText: 'Unrelated.', hadPendingInputAtTerminal: false });
       expect(await runtime.delegation.getSessionTask('session-1', task.delegationId)).toMatchObject({ task: { status: 'running' } });
-      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'owned-queued-input');
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, `bot-delegation-interject:${task.delegationId}:owned`);
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
         resultText: 'Queued result.', hadPendingInputAtTerminal: false });
       expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
@@ -4303,20 +4351,36 @@ describe('Bot Session task end-to-end runtime', () => {
       const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Durable queue adoption.' });
       if (!task.ok) throw new Error('missing task');
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
-        hadPendingInputAtTerminal: true, pendingInputClientIds: ['queued-retry'] });
+        hadPendingInputAtTerminal: true, pendingInputClientIds: [`bot-delegation-interject:${task.delegationId}:retry`] });
       execution = { instanceId: 'native', generation: 2 };
       const raise = failure === 'FAIL' ? "RAISE(FAIL, 'fixture receipt unavailable')" : 'RAISE(IGNORE)';
       h.sqlite!.exec(`CREATE TEMP TRIGGER fail_execution_receipt BEFORE UPDATE OF permission_snapshot_json ON bot_delegations
         WHEN json_extract(NEW.permission_snapshot_json, '$.taskExecution.generation') = 2
         BEGIN SELECT ${raise}; END`);
-      await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'queued-retry')).rejects.toThrow();
+      await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, `bot-delegation-interject:${task.delegationId}:retry`)).rejects.toThrow();
       h.sqlite!.exec('DROP TRIGGER fail_execution_receipt');
-      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'queued-retry');
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, `bot-delegation-interject:${task.delegationId}:retry`);
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
         resultText: 'Retry adopted.', hadPendingInputAtTerminal: false });
       expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
         .toEqual({ status: 'completed', result_summary: 'Retry adopted.' });
     } finally { h.sqlite!.exec('DROP TRIGGER IF EXISTS fail_execution_receipt'); runtime.dispose(); }
+  });
+
+  it('enqueues a delegated resume even when an unrelated direct input is already queued', async () => {
+    await seedPair();
+    const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
+    const runtime = createDelegationRuntime({ taskControl: true, queueSnapshots });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Resume delegated objective.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.delegation.stopSessionTask('session-1', task.delegationId, 'pause');
+      await runtime.settleChild(task.childSessionId, 'Paused.');
+      await runtime.dispatch({ targetSessionId: task.childSessionId, message: 'Unrelated direct input.', clientId: 'ordinary-paused-input' });
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'resume' });
+      expect(runtime.dispatch.mock.calls.some(([input]) => input.clientId?.startsWith(`bot-delegation-unpause:${task.delegationId}:`))).toBe(true);
+      expect(runtime.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue.some(input => input.clientId.startsWith(`bot-delegation-unpause:${task.delegationId}:`))).toBe(true);
+    } finally { runtime.dispose(); }
   });
 
   it('binds a restored explicit resume queue to the new native execution', async () => {
