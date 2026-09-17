@@ -158,6 +158,8 @@ class CindyRemotePresentationModule : Module() {
     val text = content.optString("text", null) ?: html?.let { Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString() }
     val uri = content.optString("url", null)?.let { Uri.parse(it) }
     val png = content.optString("png", null)
+    // Process incarnation, shared by all module instances without an ownership registry.
+    val pendingPrefix = "${android.os.Process.myPid()}-${android.os.Process.getStartElapsedRealtime()}-"
     var imageFile: File? = null
     var committed = false
     try {
@@ -167,7 +169,7 @@ class CindyRemotePresentationModule : Module() {
           val context = appContext.reactContext!!
           val directory = File(context.cacheDir, "remote-clipboard").apply { mkdirs() }
           // Other writes must not reclaim an image that is still being prepared.
-          imageFile = File(directory, "${UUID.randomUUID()}.png.pending")
+          imageFile = File(directory, "$pendingPrefix${UUID.randomUUID()}.png.pending")
           imageFile!!.writeBytes(bytes)
           val publishedFile = File(directory, imageFile!!.name.removeSuffix(".pending"))
           val imageUri = FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", publishedFile)
@@ -204,12 +206,19 @@ class CindyRemotePresentationModule : Module() {
           val retained = (0 until current.itemCount).mapNotNull { current.getItemAt(it).uri }.toSet()
           val context = appContext.reactContext!!
           val images = File(context.cacheDir, "remote-clipboard").listFiles()
-            ?.filter { it.extension == "png" }
+            ?.filter { it.extension == "png" || it.name.endsWith(".png.pending") }
             ?.sortedByDescending { it.lastModified() } ?: emptyList()
           var graceFiles = 0
           for (file in images) {
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.remoteclipboard", file)
             if (uri in retained) continue
+            if (file.name.endsWith(".png.pending")) {
+              // Only stale files from previous processes (including legacy names).
+              // Never age out this process's work, even across module recreation
+              // or a long suspension. Pending files were never published as URIs.
+              if (!file.name.startsWith(pendingPrefix) && System.currentTimeMillis() - file.lastModified() > 3_600_000) file.delete()
+              continue
+            }
             // At most three previous images (24 MiB) get a read grace period.
             if (System.currentTimeMillis() - file.lastModified() <= 3_600_000 && graceFiles < 3) {
               graceFiles++

@@ -639,6 +639,10 @@ reclaims unreferenced published images, retaining at most three previous images
 always preserved. Preparation uses unpublished temporary files; failed or cancelled
 preparation/publication removes only its own file. Cleanup is best effort when
 the clipboard cannot be inspected or the filesystem rejects deletion.
+Subsequent successful replacements also reclaim unpublished files left by older
+processes once they are over one hour old. Filenames include the process ID and
+start time, so current-process preparation survives long suspensions and module
+recreation without an active-file registry.
 
 Desktop manual copy, automatic reads and write verification share a 4 million
 pixel check before native PNG encoding. PNG buffers over 8 MiB are rejected before
