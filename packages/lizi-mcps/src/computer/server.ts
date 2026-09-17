@@ -856,7 +856,8 @@ export function createComputerMcpServer(
             stable_samples: 2,
             include_screenshot: false,
           }
-        : { include_screenshot: true }),
+        // Automatic evidence must not create unmanaged screenshots of user windows.
+        : { include_screenshot: false }),
     };
     const read = await readForRecovery(
       deps,

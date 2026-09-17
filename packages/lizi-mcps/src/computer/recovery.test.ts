@@ -66,13 +66,35 @@ describe("bounded Computer Use recovery", () => {
         pid: 1,
         window_id: 2,
         session: "recovery-test",
-        include_screenshot: true,
+        include_screenshot: false,
       },
       expect.objectContaining({
         sessionId: "recovery-test",
+        observationPurpose: "recovery",
         signal: expect.any(AbortSignal),
       }),
     );
+  });
+
+  it.each([false, true])("does not capture recovery screenshots or accept degraded text evidence (thrown=%s)", async (thrown) => {
+    const dispatch = vi.fn(async (name: string) => {
+      if (name === "click") {
+        if (thrown) throw Object.assign(new Error("unknown delivery"), { outcomeUnknown: true });
+        return { effect: "unverifiable" };
+      }
+      return { degraded: true, elements: [], tree_markdown: "" };
+    });
+    const call = await harness(dispatch);
+    const result = await call("click", { pid: 1, window_id: 2, x: 2, y: 3 });
+    expect(result.postcheck).toMatchObject({ tool: "get_window_state", ok: false });
+    if (thrown) expect(result.data.outcome_unknown).toBe(true);
+    else expect(result.outcome.status).toBe("unknown");
+    expect(dispatch).toHaveBeenLastCalledWith(
+      "get_window_state",
+      { pid: 1, window_id: 2, session: "recovery-test", include_screenshot: false },
+      expect.objectContaining({ observationPurpose: "recovery" }),
+    );
+    expect(dispatch).toHaveBeenCalledTimes(2);
   });
 
   it("does not let a late automatic observation supersede a newer explicit snapshot", async () => {
