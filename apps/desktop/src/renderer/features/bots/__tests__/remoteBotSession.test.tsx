@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   merge: vi.fn(),
   view: vi.fn(),
   online: true,
+  lastReplyAt: 0,
 }));
 vi.mock('react-router-dom', () => ({ useParams: () => ({ deviceId: 'home', botId: 'writer' }) }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -23,6 +24,7 @@ vi.mock('../useRemoteBots', () => ({
       avatarColor: '',
       sessionId: 'old-canonical',
       online: h.online,
+      lastReplyAt: h.lastReplyAt,
     },
   ],
 }));
@@ -44,6 +46,7 @@ vi.mock('@/features/cc-agent/CCAgentSessionView', () => ({
 import { RemoteBotSessionView } from '../RemoteBotSessionView';
 beforeEach(() => {
   h.online = true;
+  h.lastReplyAt = 0;
   h.pin.mockReset();
   h.merge.mockReset();
   h.view.mockReset();
@@ -75,11 +78,18 @@ it('resolves the latest canonical task and pins its host before mounting writabl
       botIdentity: expect.objectContaining({ id: 'writer', sessionId: 'new-canonical' }),
     }),
   );
+  const identity = h.view.mock.lastCall![0].botIdentity;
+  const requestCount = h.invoke.mock.calls.length;
+  h.lastReplyAt = 123;
+  rerender(<RemoteBotSessionView />);
+  expect(h.view.mock.lastCall![0].botIdentity).toBe(identity);
+  expect(h.invoke).toHaveBeenCalledTimes(requestCount);
   h.online = false;
   rerender(<RemoteBotSessionView />);
   await waitFor(() =>
     expect(h.view).toHaveBeenLastCalledWith(expect.objectContaining({ readOnly: true })),
   );
+  expect(h.view.mock.lastCall![0].botIdentity).toBe(identity);
 });
 it('never mounts a task with a mismatched authoritative source', async () => {
   h.invoke
