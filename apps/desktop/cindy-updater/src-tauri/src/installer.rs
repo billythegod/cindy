@@ -602,7 +602,8 @@ fn existing_install_files_medium_writable(app_dir: &Path, exe_name: &str) -> Opt
 }
 
 /// Existing loadable inputs a medium-integrity process can replace to hijack
-/// an elevated launch: the main exe, `resources/app.asar`, and app-local DLLs.
+/// an elevated launch: the main exe, `resources/app.asar`, app-local DLLs, and
+/// unpacked native addons under `resources/app.asar.unpacked`.
 pub(crate) fn medium_writable_install_file_candidates(
     app_dir: &Path,
     exe_name: &str,
@@ -617,16 +618,68 @@ pub(crate) fn medium_writable_install_file_candidates(
             if is_reparse_point(&path) {
                 continue;
             }
-            let is_dll = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"));
-            if is_dll {
+            if is_medium_writable_native_file(&path) {
                 candidates.push(path);
             }
         }
     }
+    collect_medium_writable_native_files(
+        &app_dir.join("resources").join("app.asar.unpacked"),
+        &mut candidates,
+    );
     candidates
+}
+
+fn is_medium_writable_native_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("dll")
+                || ext.eq_ignore_ascii_case("exe")
+                || ext.eq_ignore_ascii_case("node")
+        })
+}
+
+fn collect_medium_writable_native_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    if is_reparse_point(dir) {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if is_reparse_point(&path) {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            collect_medium_writable_native_files(&path, out);
+            continue;
+        }
+        if file_type.is_file() && is_medium_writable_native_file(&path) {
+            out.push(path);
+        }
+    }
+}
+
+/// CreateFile GENERIC_WRITE can fail because the image is mapped, not because
+/// the DACL denies write. Sharing/lock is not proof the file is protected.
+pub(crate) fn file_write_probe_from_os_error(
+    kind: io::ErrorKind,
+    raw: Option<i32>,
+) -> Option<bool> {
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ERROR_LOCK_VIOLATION: i32 = 33;
+    match raw {
+        Some(ERROR_SHARING_VIOLATION) | Some(ERROR_LOCK_VIOLATION) => Some(true),
+        Some(ERROR_ACCESS_DENIED) => Some(false),
+        _ if kind == io::ErrorKind::PermissionDenied => Some(false),
+        _ => None,
+    }
 }
 
 fn directory_medium_token_can_modify(app_dir: &Path) -> Option<bool> {
@@ -2153,10 +2206,7 @@ fn file_grants_generic_write(path: &Path) -> Option<bool> {
     };
     if handle == INVALID_HANDLE_VALUE || handle.is_null() {
         let err = io::Error::last_os_error();
-        if err.kind() == io::ErrorKind::PermissionDenied {
-            return Some(false);
-        }
-        return None;
+        return file_write_probe_from_os_error(err.kind(), err.raw_os_error());
     }
     unsafe {
         let _ = CloseHandle(handle);
@@ -3795,6 +3845,53 @@ mod tests {
                 .any(|path| path.ends_with("vcruntime140.dll")),
             "a writable app-local DLL must pin the install as unprotected: {candidates:?}"
         );
+        fs::create_dir_all(
+            app.join("resources")
+                .join("app.asar.unpacked")
+                .join("node_modules")
+                .join("better-sqlite3")
+                .join("build")
+                .join("Release"),
+        )
+        .unwrap();
+        fs::write(
+            app.join("resources")
+                .join("app.asar.unpacked")
+                .join("node_modules")
+                .join("better-sqlite3")
+                .join("build")
+                .join("Release")
+                .join("better_sqlite3.node"),
+            b"node",
+        )
+        .unwrap();
+        let candidates = super::medium_writable_install_file_candidates(&app, "Cindy.exe");
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.ends_with("better_sqlite3.node")),
+            "a writable unpacked native addon must pin the install as unprotected: {candidates:?}"
+        );
+        assert_eq!(
+            super::file_write_probe_from_os_error(std::io::ErrorKind::PermissionDenied, Some(5)),
+            Some(false),
+            "ACL deny is the only CreateFile failure that proves the file is protected"
+        );
+        assert_eq!(
+            super::file_write_probe_from_os_error(std::io::ErrorKind::PermissionDenied, Some(32)),
+            Some(true),
+            "Windows may map ERROR_SHARING_VIOLATION to PermissionDenied; that is not a protected ACL"
+        );
+        assert_eq!(
+            super::file_write_probe_from_os_error(std::io::ErrorKind::ResourceBusy, Some(32)),
+            Some(true),
+            "ERROR_SHARING_VIOLATION while Cindy.exe is mapped is not a protected ACL"
+        );
+        assert_eq!(
+            super::file_write_probe_from_os_error(std::io::ErrorKind::Other, Some(33)),
+            Some(true),
+            "ERROR_LOCK_VIOLATION is also a sharing failure, not PermissionDenied"
+        );
         let source = include_str!("installer.rs");
         let start = source
             .find("fn existing_install_files_medium_writable_windows")
@@ -3803,6 +3900,14 @@ mod tests {
         assert!(
             body.contains("medium_writable_install_file_candidates"),
             "do not classify from Cindy.exe alone:\n{body}"
+        );
+        let start = source
+            .find("fn file_grants_generic_write")
+            .expect("file write probe");
+        let body = &source[start..start + 900];
+        assert!(
+            body.contains("file_write_probe_from_os_error"),
+            "sharing violations must not collapse to protected:\n{body}"
         );
         let temp = TestDir::new();
         let mut args = test_args();

@@ -150,8 +150,11 @@ forwards `--install-writable true|false` across UAC so the elevated child
 does not treat `--elevated` as proof that a per-user install is protected.
 A denied write probe still pins the install as writable when the same-login
 medium token can modify the directory, an existing `Cindy.exe`, an app-local
-DLL, or `resources/app.asar`, even if Administrators own the tree. Ownership
-alone is not enough. After Cindy
+DLL, `resources/app.asar`, or an unpacked native addon under
+`resources/app.asar.unpacked`, even if Administrators own the tree. Ownership
+alone is not enough. A `CreateFile(GENERIC_WRITE)` sharing or lock violation
+while Cindy.exe is still mapped is treated as writable, not as a protected
+ACL. After Cindy
 exits, Retry opens a non-reparse directory handle and writes backup/copy/
 rollback through that path, refusing descendant junctions so a swapped
 `resources` reparse cannot receive elevated files. Windows startup waits
