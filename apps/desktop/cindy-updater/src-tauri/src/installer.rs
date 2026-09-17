@@ -604,7 +604,7 @@ fn existing_install_files_medium_writable(app_dir: &Path, exe_name: &str) -> Opt
     #[cfg(not(windows))]
     {
         let _ = exe_name;
-        unpacked_walk_pins_install_writable(unpacked_tree_walk(app_dir)).then_some(true)
+        runtime_trees_pin_install_writable(app_dir).then_some(true)
     }
 }
 
@@ -620,17 +620,7 @@ pub(crate) fn medium_writable_install_file_candidates(
         app_dir.join(exe_name),
         app_dir.join("resources").join("app.asar"),
     ];
-    if let Ok(entries) = fs::read_dir(app_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if is_reparse_point(&path) {
-                continue;
-            }
-            if is_medium_writable_native_file(&path) {
-                candidates.push(path);
-            }
-        }
-    }
+    let _ = collect_medium_writable_root_natives(app_dir, &mut candidates);
     let _ = collect_medium_writable_unpacked_files(
         &app_dir.join("resources").join("app.asar.unpacked"),
         &mut candidates,
@@ -652,10 +642,17 @@ fn is_medium_writable_native_file(path: &Path) -> bool {
 pub(crate) enum UnpackedWalk {
     Complete,
     Unreadable,
+    Reparse,
 }
 
 pub(crate) fn unpacked_walk_pins_install_writable(walk: UnpackedWalk) -> bool {
-    matches!(walk, UnpackedWalk::Unreadable)
+    matches!(walk, UnpackedWalk::Unreadable | UnpackedWalk::Reparse)
+}
+
+fn runtime_trees_pin_install_writable(app_dir: &Path) -> bool {
+    let mut sink = Vec::new();
+    unpacked_walk_pins_install_writable(collect_medium_writable_root_natives(app_dir, &mut sink))
+        || unpacked_walk_pins_install_writable(unpacked_tree_walk(app_dir))
 }
 
 fn unpacked_tree_walk(app_dir: &Path) -> UnpackedWalk {
@@ -664,6 +661,37 @@ fn unpacked_tree_walk(app_dir: &Path) -> UnpackedWalk {
         &app_dir.join("resources").join("app.asar.unpacked"),
         &mut sink,
     )
+}
+
+pub(crate) fn collect_medium_writable_root_natives(
+    app_dir: &Path,
+    out: &mut Vec<PathBuf>,
+) -> UnpackedWalk {
+    if is_reparse_point(app_dir) {
+        return UnpackedWalk::Reparse;
+    }
+    let entries = match fs::read_dir(app_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return UnpackedWalk::Complete;
+        }
+        Err(_) => return UnpackedWalk::Unreadable,
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => return UnpackedWalk::Unreadable,
+        };
+        let path = entry.path();
+        if !is_medium_writable_native_file(&path) {
+            continue;
+        }
+        if is_reparse_point(&path) {
+            return UnpackedWalk::Reparse;
+        }
+        out.push(path);
+    }
+    UnpackedWalk::Complete
 }
 
 /// GENERIC_WRITE, DELETE, or parent FILE_DELETE_CHILD / FILE_ADD_FILE each
@@ -696,7 +724,7 @@ pub(crate) fn collect_medium_writable_unpacked_files(
     out: &mut Vec<PathBuf>,
 ) -> UnpackedWalk {
     if is_reparse_point(dir) {
-        return UnpackedWalk::Complete;
+        return UnpackedWalk::Reparse;
     }
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -712,14 +740,15 @@ pub(crate) fn collect_medium_writable_unpacked_files(
         };
         let path = entry.path();
         if is_reparse_point(&path) {
-            continue;
+            return UnpackedWalk::Reparse;
         }
         let Ok(file_type) = entry.file_type() else {
             return UnpackedWalk::Unreadable;
         };
         if file_type.is_dir() {
-            if collect_medium_writable_unpacked_files(&path, out) == UnpackedWalk::Unreadable {
-                return UnpackedWalk::Unreadable;
+            let nested = collect_medium_writable_unpacked_files(&path, out);
+            if unpacked_walk_pins_install_writable(nested) {
+                return nested;
             }
             continue;
         }
@@ -2225,7 +2254,7 @@ fn directory_grants_add_file(app_dir: &Path) -> Option<bool> {
 #[cfg(windows)]
 fn existing_install_files_medium_writable_windows(app_dir: &Path, exe_name: &str) -> Option<bool> {
     let check = || {
-        if unpacked_walk_pins_install_writable(unpacked_tree_walk(app_dir)) {
+        if runtime_trees_pin_install_writable(app_dir) {
             return Some(true);
         }
         let mut saw_existing = false;
@@ -4053,6 +4082,10 @@ mod tests {
         assert!(!super::unpacked_walk_pins_install_writable(
             super::UnpackedWalk::Complete
         ));
+        assert!(
+            super::unpacked_walk_pins_install_writable(super::UnpackedWalk::Reparse),
+            "a reparse-point unpacked tree must de-elevate, not look protected"
+        );
         {
             let not_dir = probe.0.join("not-a-directory");
             fs::write(&not_dir, b"x").unwrap();
@@ -4062,12 +4095,38 @@ mod tests {
                 super::UnpackedWalk::Unreadable,
                 "read_dir failure must not become an empty protected subtree: {listed:?}"
             );
+            listed.clear();
+            assert_eq!(
+                super::collect_medium_writable_root_natives(&not_dir, &mut listed),
+                super::UnpackedWalk::Unreadable,
+                "unlistable install root must not omit ffmpeg.dll and other natives: {listed:?}"
+            );
             let missing = probe.0.join("missing-unpacked");
             listed.clear();
             assert_eq!(
                 super::collect_medium_writable_unpacked_files(&missing, &mut listed),
                 super::UnpackedWalk::Complete,
                 "a missing unpacked tree is empty, not unknown"
+            );
+            listed.clear();
+            assert_eq!(
+                super::collect_medium_writable_root_natives(&missing, &mut listed),
+                super::UnpackedWalk::Complete,
+                "a missing install root is empty, not unknown"
+            );
+        }
+        #[cfg(unix)]
+        {
+            let target = probe.0.join("unpacked-target");
+            fs::create_dir_all(&target).unwrap();
+            fs::write(target.join("index.js"), b"js").unwrap();
+            let link = probe.0.join("unpacked-link");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            let mut listed = Vec::new();
+            assert_eq!(
+                super::collect_medium_writable_unpacked_files(&link, &mut listed),
+                super::UnpackedWalk::Reparse,
+                "a junctioned unpacked tree must not look like a complete protected walk: {listed:?}"
             );
         }
         #[cfg(unix)]
@@ -4119,8 +4178,24 @@ mod tests {
             .expect("windows file classification");
         let body = &source[start..start + 700];
         assert!(
-            body.contains("unpacked_walk_pins_install_writable"),
-            "unlistable unpacked trees must pin writable under the medium token:\n{body}"
+            body.contains("runtime_trees_pin_install_writable"),
+            "unlistable install roots and unpacked reparse trees must pin writable under the medium token:\n{body}"
+        );
+        let start = source
+            .find("fn collect_medium_writable_root_natives")
+            .expect("root native walk");
+        let body = &source[start..start + 700];
+        assert!(
+            body.contains("Unreadable") && !body.contains("if let Ok(entries)"),
+            "install-root listing failure must not omit ffmpeg.dll:\n{body}"
+        );
+        let start = source
+            .find("pub(crate) fn collect_medium_writable_unpacked_files")
+            .expect("unpacked walk");
+        let body = &source[start..start + 500];
+        assert!(
+            body.contains("UnpackedWalk::Reparse"),
+            "an unpacked reparse point must not look like a complete protected walk:\n{body}"
         );
         let temp = TestDir::new();
         let mut args = test_args();
