@@ -57,6 +57,7 @@ import {
 
 import { cn, basename } from '@/lib/utils';
 import { Spinner } from '@/components/ui/spinner';
+import { BotWorkingStatus } from '@/features/bots/BotWorkingStatus';
 import { setRemoteReceiptDisplayReady } from '@/lib/sessionAttentionStore';
 import { shortSessionId } from '@/lib/sessionId';
 import { ChatInput } from '@/components/new-chat/ChatInput';
@@ -4777,19 +4778,24 @@ export function CCAgentSessionView({
               style={{ width: inputWidth }}
             >
               {botChatIdentity ? (
-                composerRuntimeVisible ? (
-                  <div
-                    data-testid="bot-thinking-indicator"
-                    role="status"
-                    aria-live="polite"
-                    className="mx-auto flex items-center gap-2 px-2 py-[6px] text-12 text-[var(--text-tertiary)]"
-                    style={{ width: inputWidth }}
-                  >
-                    {botAssistantAvatar}
-                    <Spinner size={12} />
-                    <span>{t('ccAgent.agentStatus.thinking')}</span>
-                  </div>
-                ) : null
+                <BotWorkingStatus
+                  key={sessionId}
+                  sessionId={remoteDeviceId ? undefined : sessionId ?? undefined}
+                  visible={composerRuntimeVisible}
+                  status={
+                    pendingPermission ? 'Waiting on approval'
+                      : pendingAskUser ? 'Waiting on input'
+                        : composerStatus
+                  }
+                  messages={messages}
+                  startedAt={agentStatus.startedAt}
+                  foregroundRunning={agentStatus.isRunning || isStreaming}
+                  backgroundWorkActive={
+                    backgroundTasksActive || runningWorkflow !== null || Boolean(agentStatus.sideTaskRunning)
+                  }
+                  avatar={botAssistantAvatar}
+                  inputWidth={inputWidth}
+                />
               ) : !pendingPlanReview || (hasControlledBanner && controlledBannerCollapsed) ? (
                 <RunningStatusBar
                   key={sessionId}

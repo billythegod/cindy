@@ -101,11 +101,9 @@ describe('伙伴消息流收起内部工作过程', () => {
     expect(messageStream).toContain("from '@/features/bots/botConversationPresentation'");
     expect(messageStream).toContain('compact={simplifiedBotConversation}');
     expect(messageStream).not.toContain('data-testid="bot-thinking-indicator"');
-    expect(sessionView).toContain('data-testid="bot-thinking-indicator"');
-    expect(sessionView).toContain("t('ccAgent.agentStatus.thinking')");
-    expect(sessionView).toContain('botChatIdentity ? (');
-    expect(sessionView).not.toContain('hasBotAssistantOutputInCurrentTurn');
-    expect(sessionView).toContain('composerRuntimeVisible ? (');
+    expect(sessionView).toContain('<BotWorkingStatus');
+    expect(sessionView).toContain('visible={composerRuntimeVisible}');
+    expect(sessionView).not.toContain('botAssistantOutputStarted');
   });
 
   it('时间戳只挂在伙伴消息分组上', () => {
