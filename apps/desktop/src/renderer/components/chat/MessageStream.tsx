@@ -291,6 +291,7 @@ import { ThinkingCard } from './ThinkingCard';
 import { AgentActionsBlock } from './AgentActionsBlock';
 import { AgentTaskCard } from './AgentTaskCard';
 import { TurnChangesCard } from './TurnChangesCard';
+import { useBotGeneratedFileDeliveries } from '@/features/bots/useBotGeneratedFileDeliveries';
 import { GeneratedFilesCard, generatedFilesCheckKey } from './GeneratedFilesCard';
 import { WorkGroupBlock, type WorkGroupChild } from './WorkGroupBlock';
 import {
@@ -2773,15 +2774,18 @@ export function MessageStream({
   // work-group pass:把最终回答前的工作过程折叠成 work_group,无最终回答时
   // 继续走旧的 tool_segment + thinking 折叠兼容路径。
   // isSessionStreaming 翻转(每 turn 一次)与 items 变化时重算,O(n) 单扫描。
+  const { visibleGeneratedFileKeys, onGeneratedFilesVisibilityChange } = useBotGeneratedFileDeliveries(
+    ungroupedRenderItems, sessionFileValue,
+  );
   const allRenderItems = useMemo(() => {
     const grouped = insertForkOriginItem(
       historySnapshot?.ready ? ungroupedRenderItems : groupWorkRuns(ungroupedRenderItems, isSessionStreaming),
       forkOrigin,
   );
     return simplifiedBotConversation
-      ? simplifyBotRenderItems(grouped, isSessionStreaming)
+      ? simplifyBotRenderItems(grouped, isSessionStreaming, visibleGeneratedFileKeys)
       : grouped;
-  }, [ungroupedRenderItems, isSessionStreaming, forkOrigin, simplifiedBotConversation, historySnapshot?.ready]);
+  }, [ungroupedRenderItems, isSessionStreaming, forkOrigin, simplifiedBotConversation, historySnapshot?.ready, visibleGeneratedFileKeys]);
   const botMessageTimeGroups = useMemo(() => {
     if (!simplifiedBotConversation) return new Map<string, number>();
     return collectBotMessageTimeGroups(
@@ -5702,6 +5706,7 @@ export function MessageStream({
                           turnEndMs={item.turnEndMs}
                           turnSealed={item.turnSealed === true}
                           botArtifacts={simplifiedBotConversation}
+                          onVisibilityChange={simplifiedBotConversation ? onGeneratedFilesVisibilityChange : undefined}
                         />
                       );
                     }

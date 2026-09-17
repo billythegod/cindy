@@ -99,6 +99,17 @@ describe('teammate public execution disclosure', () => {
     expect(allKeys(result)).toContain('msg-error');
   });
 
+  it('confirmed generated output preserves sealed answers and does not suppress a later turn fallback', () => {
+    const input: RenderItem[] = [message('u', 'user'), message('progress', 'assistant'), tool('t'),
+      message('final', 'assistant', 'Finished', { turnCompleted: true }),
+      { type: 'generated_files', key: 'files', files: [{ name: 'report.pdf', path: '/report.pdf', source: 'tool' }],
+        turnStartMs: 1000, turnEndMs: 5000 },
+      message('u2', 'user'), message('explanation', 'assistant'), tool('failed')];
+    const result = simplifyBotRenderItems(groupWorkRuns(input, false), false, new Set(['files']));
+    expect(proseIds(result)).toEqual(['final', 'explanation']);
+    expect(allKeys(result)).toEqual(input.map((item) => item.key));
+  });
+
   it('does not infer commentary from words, paragraph length or markdown shape', () => {
     const text = '# Report\n' + '先查市场 final result '.repeat(100);
     const input = [message('u', 'user'), message('long', 'assistant', text), tool('t'),
