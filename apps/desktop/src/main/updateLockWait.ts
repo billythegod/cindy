@@ -19,10 +19,10 @@ export function shouldKeepWaitingForWindowsUpdateLock(
   if (!input.lockExists) {
     return false;
   }
-  if (input.holderAlive) {
+  if (input.unlinkFailed) {
     return true;
   }
-  if (input.unlinkFailed) {
+  if (input.holderAlive && input.elapsedMs < input.maxWaitMs) {
     return true;
   }
   return input.elapsedMs < input.maxWaitMs;

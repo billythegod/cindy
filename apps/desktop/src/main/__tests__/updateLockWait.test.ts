@@ -17,6 +17,19 @@ describe('Windows update lock wait', () => {
     ).toBe(true);
   });
 
+  it('attempts unlink after the timeout even if a live PID was recycled', () => {
+    expect(
+      shouldKeepWaitingForWindowsUpdateLock({
+        lockExists: true,
+        elapsedMs: 30_000,
+        maxWaitMs: 30_000,
+        holderPid: 4242,
+        holderAlive: true,
+        unlinkFailed: false,
+      }),
+    ).toBe(false);
+  });
+
   it('keeps waiting when unlink fails because the updater still holds the file', () => {
     expect(
       shouldKeepWaitingForWindowsUpdateLock({

@@ -1180,13 +1180,16 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
   if (wasReady && latestVersion === previousReadyVersion) {
     if (process.platform === 'win32') {
       const sameFile = path.basename(asset.file) === path.basename(previousReadyFilePath ?? '');
-      const trustedSha256 = sameFile ? normalizeWindowsZipSha256(asset.sha256) : undefined;
+      const trustedSha256 = normalizeWindowsZipSha256(asset.sha256);
       if (!trustedSha256) {
         log.info('Windows: current manifest cannot re-anchor the ready patch — discarding it');
         discardStagedPatchFiles();
         return 'idle';
       }
-      if (!windowsZipDigestsEqual(previousReadyZipSha256, trustedSha256)) {
+      if (!sameFile) {
+        log.info('Windows: ready patch filename changed — downloading newly advertised artifact');
+        replacingReadyWindowsDigest = true;
+      } else if (!windowsZipDigestsEqual(previousReadyZipSha256, trustedSha256)) {
         log.info('Windows: ready patch digest changed — re-downloading current artifact');
         replacingReadyWindowsDigest = true;
       } else {

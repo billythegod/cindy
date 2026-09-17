@@ -812,6 +812,37 @@ describe('app update forward-only policy', () => {
     }
   });
 
+  it('redownloads a ready Windows patch when the same version is republished under a new filename', async () => {
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    const firstDigest = 'a'.repeat(64);
+    const secondDigest = 'b'.repeat(64);
+    const firstManifest = updateManifest('0.0.65', 'app/windows-x64/staged.zip');
+    firstManifest.app.hotfix.sha256 = firstDigest;
+    const secondManifest = updateManifest('0.0.65', 'app/windows-x64/cindy-0.0.65.zip');
+    secondManifest.app.hotfix.sha256 = secondDigest;
+    download.mockImplementation(async ({ targetPath, sha256 }: { targetPath: string; sha256: string }) => {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, sha256 === firstDigest ? 'old-bytes' : 'new-bytes');
+      return { path: targetPath, size: 123 };
+    });
+
+    const service = await freshUpdateService('win32');
+    service.initUpdateService();
+    try {
+      await expect(service.checkForUpdate(firstManifest)).resolves.toBe('ready');
+      expect(download).toHaveBeenCalledTimes(1);
+
+      await expect(service.checkForUpdate(secondManifest)).resolves.toBe('ready');
+      expect(download).toHaveBeenCalledTimes(2);
+      expect(download.mock.calls[1]?.[0]).toMatchObject({ sha256: secondDigest });
+      expect(fs.readFileSync(path.join(TEST_USER_DATA, 'updates', 'cindy-0.0.65.zip'), 'utf8')).toBe(
+        'new-bytes',
+      );
+    } finally {
+      service.stopUpdateService();
+    }
+  });
+
   it('redownloads a ready Windows patch when the same file is republished with a new digest', async () => {
     readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
     const firstDigest = 'a'.repeat(64);

@@ -117,7 +117,7 @@ fn retry_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String
 }
 
 pub fn run() {
-    let args = CliArgs::parse();
+    let mut args = CliArgs::parse();
     logger::init(&args.log);
     logger::info(format!(
         "[cindy-updater] starting, version={}, args={:?}",
@@ -128,6 +128,7 @@ pub fn run() {
     // Catches backup dirs from prior failed rollbacks that we intentionally
     // kept around for manual recovery. Bounded so disk doesn't grow forever.
     // Archive hashing runs in the installer worker after this window is shown.
+    installer::pin_install_writable(&mut args);
     installer::sweep_stale_temp_dirs();
 
     let initial_status = StatusPayload {
@@ -321,6 +322,24 @@ mod retry_update_contract {
         assert!(
             !body.contains("bind_zip_sha256"),
             "hashing a large ZIP before the window is shown leaves the user with no UI:\n{body}"
+        );
+    }
+
+    #[test]
+    fn run_pins_install_writable_before_cloning_into_app_state() {
+        let source = include_str!("lib.rs");
+        let start = source.find("pub fn run()").expect("pub fn run");
+        let end = source[start..]
+            .find("tauri::Builder::default()")
+            .expect("window builder follows startup");
+        let body = &source[start..start + end];
+        let pin = body
+            .find("pin_install_writable")
+            .expect("pin before AppState");
+        let clone = body.find("args.clone()").expect("AppState clones args");
+        assert!(
+            pin < clone,
+            "Retry reads AppState.args; pin before that clone or Retry re-probes app_dir:\n{body}"
         );
     }
 }
