@@ -184,9 +184,17 @@ export function createBotMessageTransport(deps: {
     async send(input, assertCurrent) {
       const address = parseBotPeerAddress(input.targetId);
       if (!address) throw unavailable('INVALID_ARGS');
+      // remoteInvoke runs preSend again after waiting for the connection. Only this
+      // local guard can prove an owner change prevented submission; a remote error
+      // with the same code (or an account change after submission) cannot.
+      const ownerChangedBeforeSend = unavailable('OWNER_CHANGED');
+      const preSend = () => {
+        try { assertCurrent(); }
+        catch { throw ownerChangedBeforeSend; }
+      };
       try {
         await device(address.deviceId);
-        assertCurrent();
+        preSend();
       } catch (error) {
         return {
           ok: false,
@@ -206,7 +214,7 @@ export function createBotMessageTransport(deps: {
             address.deviceId,
             REMOTE_RESOURCE_GET_CHANNEL,
             [{ client, ref: ref(address.botId) }],
-            assertCurrent,
+            preSend,
           );
           if (
             resource.ref.id !== address.botId ||
@@ -219,7 +227,7 @@ export function createBotMessageTransport(deps: {
             address.deviceId,
             'local-db:sessions:get',
             [input.bridgeSessionId],
-            assertCurrent,
+            preSend,
           );
           if (
             session.id !== input.bridgeSessionId ||
@@ -239,7 +247,7 @@ export function createBotMessageTransport(deps: {
           ].join('\n\n');
           // Existing remote permission and account preSend gates remain authoritative.
           await device(address.deviceId);
-          assertCurrent();
+          preSend();
           submitted = true;
           const result = await value<{ accepted?: boolean; reason?: string; outcome?: { dispatched?: boolean } }>(
             address.deviceId,
@@ -256,7 +264,7 @@ export function createBotMessageTransport(deps: {
                 persistUserMessage: { clientId: bridgeClientId(input.messageId), content: text },
               },
             ],
-            assertCurrent,
+            preSend,
           );
           if (result.accepted === false)
             return {
@@ -288,6 +296,7 @@ export function createBotMessageTransport(deps: {
           const inFlight =
             error && typeof error === 'object' && 'inFlight' in error && error.inFlight === true;
           if (
+            error === ownerChangedBeforeSend ||
             !submitted ||
             (!inFlight &&
               [
@@ -329,7 +338,7 @@ export function createBotMessageTransport(deps: {
               },
             },
           ],
-          assertCurrent,
+          preSend,
         );
       } catch (error) {
         const code =
@@ -337,16 +346,17 @@ export function createBotMessageTransport(deps: {
         const inFlight =
           error && typeof error === 'object' && 'inFlight' in error && error.inFlight === true;
         if (
-          !inFlight &&
-          [
-            'NOT_FOUND',
-            'UNSUPPORTED_CAPABILITY',
-            'REMOTE_DISABLED',
-            'PERMISSION_DENIED',
-            'ACCESS_REVOKED',
-            'CHANNEL_NOT_ALLOWED',
-            'DEVICE_OFFLINE',
-          ].includes(code)
+          error === ownerChangedBeforeSend ||
+          (!inFlight &&
+            [
+              'NOT_FOUND',
+              'UNSUPPORTED_CAPABILITY',
+              'REMOTE_DISABLED',
+              'PERMISSION_DENIED',
+              'ACCESS_REVOKED',
+              'CHANNEL_NOT_ALLOWED',
+              'DEVICE_OFFLINE',
+            ].includes(code))
         ) {
           return { ok: false, errorCode: code, message: `Remote message rejected: ${code}` };
         }

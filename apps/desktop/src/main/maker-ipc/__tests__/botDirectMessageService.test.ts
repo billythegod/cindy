@@ -18,6 +18,7 @@ vi.mock('../../localDb/ipc/messages.js', () => ({
 }));
 
 import { createBotDirectMessageService } from '../botDirectMessageService.js';
+import { createBotMessageTransport } from '../botMessageTransport.js';
 
 function createDatabase(): Database.Database {
   const sqlite = new Database(':memory:');
@@ -192,6 +193,57 @@ describe('botDirectMessageService', () => {
       expect(sqlite.prepare('SELECT delivery_status FROM bot_direct_messages').get()).toEqual({ delivery_status: 'failed' });
       expect(sqlite.prepare('SELECT message_count FROM bot_direct_message_threads').get()).toEqual({ message_count: 0 });
       expect(nextOwnerDb.prepare('SELECT count(*) AS count FROM bot_direct_messages').get()).toEqual({ count: 0 });
+      expect(h.createMessage).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally { nextOwnerDb.close(); h.db = drizzle(sqlite); }
+  });
+
+  it.each([
+    ['legacy', 'before-send'], ['native', 'before-send'],
+    ['legacy', 'after-send'], ['native', 'after-send'],
+  ] as const)('preserves the %s owner-switch result %s through transport and original-owner cleanup', async (mode, phase) => {
+    let current = true;
+    const nextOwnerDb = createDatabase();
+    const enterTunnel = vi.fn();
+    const changeOwner = () => { current = false; h.db = drizzle(nextOwnerDb); };
+    const transport = createBotMessageTransport({ selfDeviceId: () => 'local',
+      listDevices: async () => ({ devices: [{ deviceId: 'peer', name: 'Peer', platform: 'darwin',
+        appVersion: '1', online: true, busy: false, remoteControlEnabled: true,
+        controlEnabled: true, isSelf: false, lastSeenAt: null }] }),
+      invoke: async (_device, channel, _args, options) => {
+        options?.preSend?.();
+        if (channel === 'maker:remote-resources:get') return { ok: true, result: {
+          ref: { collectionId: 'teammates', kind: 'bot', id: 'bot-b' }, display: { title: 'Remote' },
+          ...(mode === 'native' ? { teammateMessaging: { version: 1, available: true } } : {
+            links: [{ rel: 'conversation', target: { kind: 'session', sessionId: 'remote-chat' } }],
+          }),
+        } };
+        if (channel === 'local-db:sessions:get') return { ok: true, result: {
+          id: 'remote-chat', source: 'bot', status: 'active', agentKind: 'codex',
+          workingDir: '/virtual/peer', model: 'saved-model',
+        } };
+        // Match remoteInvoke's initial guard / await-online / final guard ordering.
+        await Promise.resolve();
+        if (phase === 'before-send') changeOwner();
+        options?.preSend?.();
+        enterTunnel(channel);
+        changeOwner();
+        // A same-code error after submission is not proof of local guard rejection.
+        throw Object.assign(new Error('Account changed after submission'), { code: 'OWNER_CHANGED' });
+      },
+    });
+    const service = createBotDirectMessageService({ dispatch, transport,
+      captureOwnerScope: () => 'original', isOwnerScopeCurrent: () => current });
+    try {
+      expect(await service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'peer::bot-b', message: 'hello' }))
+        .toMatchObject({ ok: false, errorCode: phase === 'before-send' ? 'OWNER_CHANGED' : 'DELIVERY_UNKNOWN' });
+      expect(enterTunnel).toHaveBeenCalledTimes(phase === 'before-send' ? 0 : 1);
+      expect(sqlite.prepare('SELECT delivery_status FROM bot_direct_messages').get())
+        .toEqual({ delivery_status: phase === 'before-send' ? 'failed' : 'pending' });
+      expect(sqlite.prepare('SELECT message_count FROM bot_direct_message_threads').get())
+        .toEqual({ message_count: phase === 'before-send' ? 0 : 1 });
+      expect(nextOwnerDb.prepare('SELECT count(*) AS count FROM bot_direct_messages').get()).toEqual({ count: 0 });
+      expect(nextOwnerDb.prepare('SELECT count(*) AS count FROM bot_direct_message_threads').get()).toEqual({ count: 0 });
       expect(h.createMessage).not.toHaveBeenCalled();
       expect(dispatch).not.toHaveBeenCalled();
     } finally { nextOwnerDb.close(); h.db = drizzle(sqlite); }

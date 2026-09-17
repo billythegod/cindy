@@ -218,6 +218,26 @@ describe('published 0.1.85 host compatibility', () => {
       .rejects.toMatchObject({ code: 'TARGET_CONVERSATION_CHANGED' });
   });
 
+  it('never reaches the released SEND handler when the owner changes during the connection wait', async () => {
+    const h = oldHost();
+    const original = h.invoke.getMockImplementation()!;
+    let current = true;
+    h.invoke.mockImplementation(async (...args) => {
+      if (args[1] === 'maker:send') {
+        args[3]?.preSend?.();
+        await Promise.resolve();
+        current = false;
+        args[3]?.preSend?.();
+      }
+      return original(...args);
+    });
+    expect(await h.transport.send(h.input, () => {
+      if (!current) throw new Error('[OWNER_CHANGED] Account changed');
+    })).toMatchObject({ ok: false, errorCode: 'OWNER_CHANGED' });
+    expect(h.engine.send).not.toHaveBeenCalled();
+    expect(h.sqlite.prepare('SELECT count(*) AS count FROM messages').get()).toEqual({ count: 0 });
+  });
+
   it('retains unknown delivery after an in-flight revocation instead of retrying a legacy send', async () => {
     const h = oldHost();
     const original = h.invoke.getMockImplementation()!;
