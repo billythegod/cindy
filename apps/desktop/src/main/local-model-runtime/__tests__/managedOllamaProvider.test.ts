@@ -181,41 +181,38 @@ describe('managed Ollama model identity', () => {
 describe('local model display names', () => {
   const hfId = 'hf.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF:Q4_K_M';
 
-  it.each([hfId, '', undefined])(
-    'repairs a cached fallback name %s without changing other fields',
-    (name) => {
-      const existing = providerWith(hfId);
-      for (const runtime of Object.values(existing.runtimes)) {
-        runtime.models = [
-          {
-            id: hfId,
-            ...(name === undefined ? {} : { name }),
-            contextWindow: 65_536,
-            defaultEnabled: false,
-            reasoning: true,
-            supportsImageInput: false,
-          },
-        ] as typeof runtime.models;
-      }
-      const before = structuredClone(existing);
-      const migrated = migrateManagedOllamaProvider(existing)!;
-      for (const agent of ['pi', 'claude-code', 'codex'] as const) {
-        expect(migrated.runtimes[agent]).toEqual({
-          ...before.runtimes[agent],
-          models: [{ ...before.runtimes[agent].models[0], name: 'Ornith 1.5 35B A3B (Q4_K_M)' }],
-        });
-      }
-      expect(existing).toEqual(before);
-      expect(migrateManagedOllamaProvider(migrated)).toBe(migrated);
-    },
-  );
+  it('repairs a cached ID name without changing other fields', () => {
+    const existing = providerWith(hfId);
+    for (const runtime of Object.values(existing.runtimes)) {
+      runtime.models = [
+        {
+          id: hfId,
+          name: hfId,
+          contextWindow: 65_536,
+          defaultEnabled: false,
+          reasoning: true,
+          supportsImageInput: false,
+        },
+      ] as typeof runtime.models;
+    }
+    const before = structuredClone(existing);
+    const migrated = migrateManagedOllamaProvider(existing)!;
+    for (const agent of ['pi', 'claude-code', 'codex'] as const) {
+      expect(migrated.runtimes[agent]).toEqual({
+        ...before.runtimes[agent],
+        models: [{ ...before.runtimes[agent].models[0], name: 'Ornith 1.5 35B A3B (Q4_K_M)' }],
+      });
+    }
+    expect(existing).toEqual(before);
+    expect(migrateManagedOllamaProvider(migrated)).toBe(migrated);
+  });
 
-  it.each([{ name: 'My local model' }, { name: hfId, nameExplicit: true }])(
-    'preserves saved or explicitly chosen names: %j',
+  it.each([{ name: 'My local model' }, { name: hfId, nameExplicit: true }, { name: '' }, {}])(
+    'leaves names other than implicit ID fallbacks untouched: %j',
     (saved) => {
       const existing = providerWith(hfId);
       for (const runtime of Object.values(existing.runtimes)) {
-        runtime.models = [{ id: hfId, ...saved }];
+        runtime.models = [{ id: hfId, ...saved }] as typeof runtime.models;
       }
       expect(migrateManagedOllamaProvider(existing)).toBe(existing);
     },

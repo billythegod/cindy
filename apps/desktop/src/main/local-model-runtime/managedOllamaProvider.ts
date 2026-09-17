@@ -172,6 +172,7 @@ function restoreManagedModelNames(provider: CustomProviderConfig): CustomProvide
     const runtime = provider.runtimes[agent];
     if (!runtime) continue;
     const models = runtime.models.map((model) => {
+      if (!model.name || model.name !== model.id) return model;
       const name = localModelDisplayName(model.id, model.name, model.nameExplicit);
       return name === model.name ? model : { ...model, name };
     });
