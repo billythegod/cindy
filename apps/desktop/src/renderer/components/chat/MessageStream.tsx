@@ -2761,7 +2761,7 @@ export function MessageStream({
   // 入口与运行态标记(review: codex P2;同族的 isSyntheticTrigger 坑见
   // findLastUserMessageClientId 注释)。按子代理归属反查的派生(buildSubagentModelMap)
   // 仍吃原始 messages —— 它要的正是这些被隐藏的行。
-  const visibleMessages = useMemo(() => selectVisibleMessages(messages), [messages]);
+  const visibleMessages = useMemo(() => selectVisibleMessages(displayMessages), [displayMessages]);
 
   // 全量 build:折叠 / 丢弃 / 反向膨胀的所有规则一次性吸收 — 窗口看到的就是
   // 用户看到的。流式中每 token messages 引用变 → 这里跑一次 O(n) 单线性扫描,
@@ -2907,9 +2907,9 @@ export function MessageStream({
   const latestInlinePlanBelongsToActiveTurn = useMemo(
     () =>
       latestInlinePlan
-        ? planSessionBelongsToLatestUserTurn(messages, latestInlinePlan.sourceClientIds)
+        ? planSessionBelongsToLatestUserTurn(displayMessages, latestInlinePlan.sourceClientIds)
         : false,
-    [latestInlinePlan, messages],
+    [latestInlinePlan, displayMessages],
   );
 
   /**
@@ -5526,8 +5526,8 @@ export function MessageStream({
   // 切片,还有老页未加载(hasMoreMessages)时不能把切片首条误判为对话首条
   // (判定逻辑与陷阱见 findFirstUserMessageClientId 注释)。
   const firstUserMessageClientId = useMemo(
-    () => findFirstUserMessageClientId(messages, Boolean(hasMoreMessages)),
-    [messages, hasMoreMessages],
+    () => findFirstUserMessageClientId(displayMessages, Boolean(hasMoreMessages)),
+    [displayMessages, hasMoreMessages],
   );
 
   // edit-last-message: 最后一条 user 消息才显示编辑入口(编辑 = rewind 到该条
@@ -5548,12 +5548,12 @@ export function MessageStream({
     [visibleMessages],
   );
 
-  // 刻意吃**原始** messages,不走 visibleMessages:子代理消耗的 token 是这个 turn 的
+  // 使用未过滤子代理的 displayMessages,不走 visibleMessages:子代理消耗的 token 是这个 turn 的
   // 真实花费,过滤掉等于把子代理的账从用量里抹掉(成本失真,比显示问题更糟)。
   // 归属键 turnFinalAssistantClientIds 已按可见序列算出,聚合区间仍落在正确的 turn 内。
   const userTurnUsageDetailsByAssistantId = useMemo(() => {
-    return collectAssistantTurnUsageDetails(messages, turnFinalAssistantClientIds);
-  }, [messages, turnFinalAssistantClientIds]);
+    return collectAssistantTurnUsageDetails(displayMessages, turnFinalAssistantClientIds);
+  }, [displayMessages, turnFinalAssistantClientIds]);
 
   // error-tail-banner:尾部未忽略的 error 行由输入框上方红条独家承载,流内需要
   // 知道"是不是最后一条"来跳过重复渲染。走可见序列:尾部挂着子代理内部行时,

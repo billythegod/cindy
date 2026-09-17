@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   HistoryViewController, HistoryViewHandoff, projectHistoryView, renderHistoryView, historyViewLeaves,
 } from '@cindy/maker-shared/message-window';
-import { buildRenderItems, groupWorkRuns } from '../components/chat/MessageStream';
+import { buildRenderItems, groupWorkRuns, selectVisibleMessages, collectTurnFinalAssistantClientIds,
+  findLastUserMessageClientId, planSessionBelongsToLatestUserTurn } from '../components/chat/MessageStream';
+import { deriveNavRailEntries } from '../components/chat/messageNavRailModel';
+import { collectAssistantTurnUsageDetails } from '../lib/userTurnUsage';
+import { buildTurnUsageDetails } from '../../shared/turnUsageDetails';
 import type { HistoryChatMessage } from '../lib/makerChatStore';
 import { confirmRemoteUsers, projectRemoteUsers, reserveRemoteUser } from '../lib/remoteUserHandoff';
 
@@ -47,6 +52,35 @@ function fixture() {
 }
 
 describe('desktop remote history uses the shared live-to-history handoff', () => {
+  it('keeps turn actions, navigation, plans and usage aligned through skewed consecutive sends', () => {
+    const oldAnswer = { ...row('old-answer'), content: 'old answer',
+      turnUsageDetails: buildTurnUsageDetails({ inputTokens: 100, outputTokens: 1 })! };
+    const history = [row('user'), oldAnswer];
+    const sent = reserveRemoteUser({ ...row('sent'), role: 'user' as const }, history);
+    const internal = { ...row('internal'), parentToolUseId: 'toolu_subagent',
+      turnUsageDetails: buildTurnUsageDetails({ inputTokens: 5, outputTokens: 2 })! };
+    const reply = { ...row('reply'), content: 'current answer',
+      turnUsageDetails: buildTurnUsageDetails({ inputTokens: 3, outputTokens: 1 })! };
+    const second = reserveRemoteUser({ ...row('second'), role: 'user' as const }, [...history, sent, internal, reply]);
+    const secondReply = { ...row('second-reply'), content: 'second answer' };
+    const display = projectRemoteUsers([...history, internal, reply, secondReply, second, sent]);
+    const visible = selectVisibleMessages(display);
+    expect(visible.map((message) => message.clientId)).toEqual(['user', 'old-answer', 'sent', 'reply', 'second', 'second-reply']);
+    const finals = collectTurnFinalAssistantClientIds(visible);
+    expect(finals).toEqual(new Set(['old-answer', 'reply', 'second-reply']));
+    expect(findLastUserMessageClientId(visible)).toBe('second');
+    expect(planSessionBelongsToLatestUserTurn(display, ['second-reply'])).toBe(true);
+    expect(planSessionBelongsToLatestUserTurn(display, ['reply'])).toBe(false);
+    expect(deriveNavRailEntries(visible).map((entry) => entry.answerExcerpt)).toEqual(['old answer', 'current answer', 'second answer']);
+    expect(collectAssistantTurnUsageDetails(display, finals).get('reply')?.totalTokens).toBe(11);
+    // Pin the component's inputs too: pure helpers alone cannot catch a raw-order caller.
+    const source = readFileSync(new URL('../components/chat/MessageStream.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('selectVisibleMessages(displayMessages)');
+    expect(source).toContain('planSessionBelongsToLatestUserTurn(displayMessages,');
+    expect(source).toContain('findFirstUserMessageClientId(displayMessages,');
+    expect(source).toContain('collectAssistantTurnUsageDetails(displayMessages,');
+  });
+
   it.each([{ predecessors: [] as string[] }, { predecessors: ['removed'] }, { predecessors: ['user'] }])('anchors a send after late history with $predecessors', async ({ predecessors }) => {
     const { view, render, setSource } = fixture();
     const sent = reserveRemoteUser({ ...row('sent'), role: 'user' as const }, predecessors.map((id) => row(id)));
