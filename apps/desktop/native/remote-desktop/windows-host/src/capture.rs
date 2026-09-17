@@ -11,10 +11,15 @@ mod desktop;
 pub struct Capture {
     desktop: desktop::InputDesktop,
     rect: [i32; 4],
+    overlay: bool,
+    quality: u8,
 }
 impl Capture {
-    pub fn new(rect: &serde_json::Value) -> Result<Self> {
-        let rect = rect.as_array().filter(|r| r.len() == 4).ok_or_else(error)?;
+    pub fn new(init: &serde_json::Value) -> Result<Self> {
+        let rect = init["rect"]
+            .as_array()
+            .filter(|r| r.len() == 4)
+            .ok_or_else(error)?;
         let mut values = [0; 4];
         for (i, v) in rect.iter().enumerate() {
             values[i] = v
@@ -35,6 +40,12 @@ impl Capture {
         Ok(Self {
             desktop: desktop::InputDesktop::new(),
             rect: values,
+            overlay: init["cursorOverlay"] == true,
+            quality: match init["bitrate"].as_u64() {
+                Some(20_000_000) => 95,
+                Some(8_000_000) => 80,
+                _ => 65,
+            },
         })
     }
     pub fn frame(&mut self) -> Result<Vec<u8>> {
@@ -57,7 +68,9 @@ impl Capture {
             {
                 return denied();
             }
-            let scale = 1280.0 / (width.max(height) as f64);
+            // The negotiated path is also the normal video source. Do not force
+            // it through the legacy 1280px compatibility-preview ceiling.
+            let scale = (if self.overlay { 4096.0 } else { 1280.0 }) / (width.max(height) as f64);
             let scale = scale.min(1.0);
             let w = (width as f64 * scale).round().max(1.0) as i32;
             let h = (height as f64 * scale).round().max(1.0) as i32;
@@ -115,7 +128,11 @@ impl Capture {
             // The cursor is not necessarily included in the screen DC.
             let mut cursor: CURSORINFO = mem::zeroed();
             cursor.cbSize = mem::size_of::<CURSORINFO>() as u32;
-            if ok != 0 && GetCursorInfo(&mut cursor) != 0 && cursor.flags == CURSOR_SHOWING {
+            if !self.overlay
+                && ok != 0
+                && GetCursorInfo(&mut cursor) != 0
+                && cursor.flags == CURSOR_SHOWING
+            {
                 let mut icon: ICONINFO = mem::zeroed();
                 if GetIconInfo(cursor.hCursor, &mut icon) != 0 {
                     DrawIconEx(
@@ -147,16 +164,45 @@ impl Capture {
             DeleteObject(dib);
             DeleteDC(target);
             ReleaseDC(ptr::null_mut(), source);
-            let data = data.ok_or_else(error)?;
-            for quality in [65, 45, 25, 10] {
+            let mut data = data.ok_or_else(error)?;
+            let (mut w, mut h) = (w, h);
+            let cursor = if self.overlay {
+                crate::cursor::read(self.rect)
+            } else {
+                None
+            };
+            for (attempt, quality) in [if self.overlay { self.quality } else { 65 }, 45, 25, 10]
+                .into_iter()
+                .enumerate()
+            {
+                // Reserve a bounded last attempt for highly detailed overlay frames.
+                if self.overlay && attempt == 3 && w.max(h) > 1280 {
+                    let scale = 1280.0 / w.max(h) as f64;
+                    let nw = (w as f64 * scale).round().max(1.0) as i32;
+                    let nh = (h as f64 * scale).round().max(1.0) as i32;
+                    let mut resized = vec![0; (nw * nh * 4) as usize];
+                    for y in 0..nh {
+                        for x in 0..nw {
+                            let from = ((y * h / nh * w + x * w / nw) * 4) as usize;
+                            let to = ((y * nw + x) * 4) as usize;
+                            resized[to..to + 4].copy_from_slice(&data[from..from + 4]);
+                        }
+                    }
+                    data = resized;
+                    w = nw;
+                    h = nh;
+                }
                 let mut jpeg = Vec::new();
                 jpeg_encoder::Encoder::new(&mut jpeg, quality)
                     .encode(&data, w as u16, h as u16, jpeg_encoder::ColorType::Bgra)
                     .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidData))?;
-                if jpeg.len() <= 180000 {
-                    let mut line = base64::engine::general_purpose::STANDARD
-                        .encode(jpeg)
-                        .into_bytes();
+                if jpeg.len() <= if self.overlay { 1_000_000 } else { 180000 } {
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(jpeg);
+                    let mut line = if self.overlay {
+                        serde_json::to_vec(&serde_json::json!({"jpeg":encoded, "cursor":cursor}))?
+                    } else {
+                        encoded.into_bytes()
+                    };
                     line.push(b'\n');
                     return Ok(line);
                 }
