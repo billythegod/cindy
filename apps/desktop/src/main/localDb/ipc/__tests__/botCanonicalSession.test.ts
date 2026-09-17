@@ -4499,7 +4499,7 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
-  it.each(['missing-terminal', 'saved-terminal', 'user-before-restore', 'edit-before-restore', 'text-before-restore', 'content-before-restore', 'merge-before-restore'] as const)('restores an owned supplement with %s', async scenario => {
+  it.each(['missing-terminal', 'saved-terminal', 'expired-saved-terminal', 'user-before-restore', 'edit-before-restore', 'text-before-restore', 'content-before-restore', 'merge-before-restore'] as const)('restores an owned supplement with %s', async scenario => {
     await seedPair();
     const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
     const before = createDelegationRuntime({ taskControl: true, queueSnapshots,
@@ -4508,7 +4508,7 @@ describe('Bot Session task end-to-end runtime', () => {
     try {
       const task = await before.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
       if (!task.ok) throw new Error('missing task');
-      if (scenario === 'saved-terminal') {
+      if (scenario === 'saved-terminal' || scenario === 'expired-saved-terminal') {
         // The native terminal receipt is durable, but settlement was interrupted.
         h.sqlite!.exec("CREATE TEMP TRIGGER fail_terminal_commit BEFORE UPDATE OF status ON bot_delegations WHEN NEW.status = 'completed' BEGIN SELECT RAISE(FAIL, 'fixture restart'); END");
         await expect(before.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done',
@@ -4521,7 +4521,7 @@ describe('Bot Session task end-to-end runtime', () => {
       h.sqlite!.prepare('UPDATE sessions SET last_turn_ended_at = 10000 WHERE id = ?').run(task.childSessionId);
       before.dispose();
       const execution = { instanceId: 'after-restart', generation: 1 };
-      after = createDelegationRuntime({ taskControl: true, queueSnapshots, startTime: 11000,
+      after = createDelegationRuntime({ taskControl: true, queueSnapshots, startTime: scenario === 'expired-saved-terminal' ? 2_000_000 : 11000,
         readSessionExecution: () => execution });
       if (scenario.endsWith('before-restore')) {
         await after.coordinator!.ensureQueueRestored(task.childSessionId);
@@ -4541,6 +4541,12 @@ describe('Bot Session task end-to-end runtime', () => {
         after.coordinator!.resume(task.childSessionId);
       } else {
         await after.delegation.restore();
+      }
+      if (scenario === 'expired-saved-terminal') {
+        expect(await after.delegation.getSessionTask('session-1', task.delegationId))
+          .toMatchObject({ task: { status: 'timed-out' } });
+        expect(after.started.some(turn => turn.sessionId === task.childSessionId)).toBe(false);
+        return;
       }
       await vi.waitFor(() => expect(after!.started).toHaveLength(1));
       expect(after.started[0].sessionId).toBe(task.childSessionId);
@@ -6004,7 +6010,7 @@ describe('Bot Session task end-to-end runtime', () => {
     }
   });
 
-  it('recovers the durable delegated terminal receipt despite a later direct turn before restart', async () => {
+  it.each([10_000, 2_000_000])('recovers the durable delegated terminal receipt despite a later direct turn at restart time %s', async startTime => {
     await seedPair();
     const execution = { instanceId: 'before-restart', generation: 1 };
     const beforeRestart = createDelegationRuntime({ readSessionExecution: () => execution });
@@ -6042,7 +6048,7 @@ describe('Bot Session task end-to-end runtime', () => {
     h.sqlite!.prepare('UPDATE sessions SET active_turn_started_at = 30000, last_turn_ended_at = 40000 WHERE id = ?').run(started.childSessionId);
     beforeRestart.dispose();
 
-    const afterRestart = createDelegationRuntime();
+    const afterRestart = createDelegationRuntime({ startTime });
     try {
       await afterRestart.delegation.restore();
       await expect(

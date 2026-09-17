@@ -1521,11 +1521,6 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       });
     }
     const deadlineAt = readDeadline(effectiveSnapshot);
-    if (deadlineAt !== null && deadlineAt <= now()) {
-      await timeoutDelegation(row.id);
-      return;
-    }
-    if (deadlineAt !== null && row.status !== 'waiting') scheduleTimeout(row.id, deadlineAt);
     if (!row.childSessionId) {
       const lastError = '应用重启后找不到这项后台任务的执行会话。';
       const changed = await updateTerminal({
@@ -1559,23 +1554,10 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       return;
     }
 
-    // User-released cold input may already be running before background restore.
-    // Do not enqueue another restart prompt or replay its predecessor meanwhile.
-    if (deps.readSessionExecution?.(row.childSessionId) && deps.taskControl?.isActive(row.childSessionId)) {
-      scheduleResumeRetry(row.id, attempt);
-      return;
-    }
-
-    // Pending owned input supersedes even a durable terminal receipt: replaying
-    // that receipt first would complete the delegation before its supplement.
-    if (deps.taskControl) {
-      await deps.taskControl.restoreInput(row.childSessionId);
-      if (hasPendingDelegationInput(row)) {
-        prepareQueuedResume(row);
-        await deps.taskControl.resumeInput(row.childSessionId);
-        return;
-      }
-    }
+    // Restore without releasing input: pending work still owns the original
+    // deadline, while a verified completed result only needs durable replay.
+    await deps.taskControl?.restoreInput(row.childSessionId);
+    const hasOwnedPendingInput = hasPendingDelegationInput(row);
 
     const snapshot = parseRecord(row.permissionSnapshotJson);
     const acceptedExecution = snapshot.taskExecution as (DelegationExecutionReceipt & { runSequence: number }) | undefined;
@@ -1583,13 +1565,30 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       runSequence: number; execution: DelegationExecutionReceipt; outcome: 'done' | 'error';
       resultText?: string; resultMessageClientId?: string; error?: string;
     } | undefined;
-    if (acceptedExecution && terminal?.execution && terminal.runSequence === row.runSequence
+    if (!hasOwnedPendingInput && acceptedExecution && terminal?.execution && terminal.runSequence === row.runSequence
       && acceptedExecution.runSequence === row.runSequence
       && terminal.execution.instanceId === acceptedExecution.instanceId
       && terminal.execution.generation === acceptedExecution.generation
       && (terminal.outcome === 'done' || terminal.outcome === 'error')) {
       await settleSessionUnserialized({ childSessionId: row.childSessionId, ...terminal,
         expectedRunSequence: row.runSequence, hadPendingInputAtTerminal: false });
+      return;
+    }
+
+    if (deadlineAt !== null && deadlineAt <= now()) {
+      await timeoutDelegation(row.id);
+      return;
+    }
+    if (deadlineAt !== null && row.status !== 'waiting') scheduleTimeout(row.id, deadlineAt);
+
+    // A user-released cold turn is already executing; do not duplicate it.
+    if (deps.readSessionExecution?.(row.childSessionId) && deps.taskControl?.isActive(row.childSessionId)) {
+      scheduleResumeRetry(row.id, attempt);
+      return;
+    }
+    if (hasOwnedPendingInput && deps.taskControl) {
+      prepareQueuedResume(row);
+      await deps.taskControl.resumeInput(row.childSessionId);
       return;
     }
 
