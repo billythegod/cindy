@@ -2194,7 +2194,7 @@ function ExpandedView({
       for (const [sessionId, kind] of attentionKindsRef.current) {
         if (kind === 'awaiting' || kind === 'error') waiting.add(sessionId);
       }
-      const target = sessionsRef.current.find((s) => s.id === id);
+      const target = sessionsByIdRef.current.get(id);
       holdSidebarViewedPriority(
         id,
         sidebarPriorityContext(
