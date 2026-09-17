@@ -70,7 +70,8 @@ describe('MakerMemoryManager · owner scope guard (#2341)', () => {
     '%s preserves unopened legacy Bot memory until lazy Home migration',
     async (resetMethod) => {
       const botScope = buildBotMemoryScopeKey('bot-not-opened');
-      const projectScope = path.join(path.sep, 'bot-project');
+      // A normal project's sanitized path matches the legacy Bot name shape.
+      const projectScope = path.join(path.sep, 'bot', 'proj', '0123456789abcdef');
       const deps = {
         basePath: rootA,
         resolveBasePath: () => rootA,
@@ -96,9 +97,6 @@ describe('MakerMemoryManager · owner scope guard (#2341)', () => {
         legacyManager.dispose();
       }
       const legacyDir = path.join(rootA, 'maker-memory', memoryScopeDirName(botScope));
-      // The directory namespace must protect recoverable shards even when
-      // derived metadata is unreadable; opening the Bot will rebuild it.
-      await writeFile(path.join(legacyDir, 'meta.json'), '{broken', 'utf8');
       const homeMemory = path.join(rootA, 'bots', 'bot-not-opened', 'memories');
       const manager = new MakerMemoryManager({
         ...deps,
@@ -121,6 +119,47 @@ describe('MakerMemoryManager · owner scope guard (#2341)', () => {
         expect((await migrated.read('user_keep.md')).body.trim()).toBe('Keep this preference.');
         expect(await migrated.getIndex()).toContain('user_keep.md');
         expect(existsSync(path.join(homeMemory, 'user_keep.md'))).toBe(true);
+      } finally {
+        manager.dispose();
+      }
+    },
+  );
+
+  it.each(['resetAll', 'resetDigests'] as const)(
+    '%s refuses ambiguous directory ownership without reporting a successful clear',
+    async (resetMethod) => {
+      const scope = path.join(path.sep, 'bot-project-0123456789abcdef');
+      const deps = {
+        basePath: rootA, sqliteFactory: trackingSqlite().factory,
+        ownerScopeKey: () => 'cloud:abc:1',
+        agents: {}, logger: noopLogger, initialEnabled: true,
+      };
+      const writer = new MakerMemoryManager(deps);
+      try {
+        await writer.write(scope, {
+          type: 'digest', name: 'summary', title: 'Summary',
+          description: 'Project summary', body: 'Project data.',
+        });
+      } finally {
+        writer.dispose();
+      }
+      const dir = path.join(rootA, 'maker-memory', memoryScopeDirName(scope));
+      const metaPath = path.join(dir, 'meta.json');
+      const originalMeta = await readFile(metaPath, 'utf8');
+      const manager = new MakerMemoryManager(deps);
+      try {
+        const previouslyOpen = resetMethod === 'resetAll' ? await manager.getStore(WORKDIR) : null;
+        for (const metadata of [null, '{broken', JSON.stringify({ absPath: buildBotMemoryScopeKey('wrong-bot') })]) {
+          if (metadata === null) await rm(metaPath);
+          else await writeFile(metaPath, metadata, 'utf8');
+          await expect(manager[resetMethod]()).rejects.toThrow(/cannot determine memory scope/);
+          expect(existsSync(path.join(dir, 'digest_summary.md'))).toBe(true);
+          if (previouslyOpen) await expect(previouslyOpen.list()).rejects.toThrow(/memory was reset/);
+        }
+        // Recovering authoritative metadata restores the normal clear path.
+        await writeFile(metaPath, originalMeta, 'utf8');
+        expect(await manager[resetMethod]()).toEqual({ removedCount: 1 });
+        expect(existsSync(path.join(dir, 'digest_summary.md'))).toBe(false);
       } finally {
         manager.dispose();
       }

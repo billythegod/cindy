@@ -44,6 +44,7 @@ import {
 } from '@cindy/maker-core';
 
 import { createCindyMemoryMcpServer } from '../cindy_memoryMcpServer.js';
+import { createLiziMcpProviders } from '../providers.js';
 import type { LiziMcpSessionContext } from '../types.js';
 
 const noopLogger: Logger = {
@@ -118,18 +119,38 @@ afterEach(async () => {
  * 会话」。ctx 形状与修复后的三个 harness 注入一致:workingDir 仍是项目目录,
  * memoryScopeKey 才是伙伴记忆的定位键。
  */
-async function connectBotSession(ctx: Partial<LiziMcpSessionContext> & { agentKind: LiziMcpSessionContext['agentKind'] }) {
+async function connectBotSession(
+  ctx: Partial<LiziMcpSessionContext> & { agentKind: LiziMcpSessionContext['agentKind'] },
+  throughProvider = false,
+) {
   const sessionContext: LiziMcpSessionContext = {
     workingDir: PROJECT_DIR,
     vendorOptions: {},
     ...ctx,
   } as LiziMcpSessionContext;
-  const server = createCindyMemoryMcpServer({
+  const deps = {
     getManager: () => manager,
     workdir: sessionContext.workingDir,
     getSessionContext: () => sessionContext,
     logger: noopLogger,
-  });
+  };
+  let server: ReturnType<typeof createCindyMemoryMcpServer>;
+  if (throughProvider) {
+    const provider = createLiziMcpProviders({ memory: deps })
+      .find((item) => item.name === 'cindy_memory')!;
+    expect(provider.isEnabled?.(sessionContext)).toBe(true);
+    expect(provider.isEnabled?.({ ...sessionContext, memoryScopeKey: undefined })).toBe(false);
+    // Claude binds a concrete Session at registration; shared Codex/Pi
+    // bridges start without one and resolve it at tool-call time.
+    const registrationContext: LiziMcpSessionContext = ctx.agentKind === 'claude-code'
+      ? sessionContext
+      : { agentKind: ctx.agentKind, workingDir: '', getSessionContext: () => sessionContext };
+    expect(provider.isEnabled?.(registrationContext)).toBe(true);
+    const config = provider.toClaudeSdkConfig(registrationContext) as { instance: typeof server };
+    server = config.instance;
+  } else {
+    server = createCindyMemoryMcpServer(deps);
+  }
   const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'bot-memory-chain', version: '0.0.0' });
   await Promise.all([server.connect(serverTx), client.connect(clientTx)]);
@@ -190,12 +211,12 @@ function partition(records: readonly MemoryRecord[]): {
 }
 
 describe('Cindy Bot 记忆全链(形成 → 存 → 取 → 用 → 删)', () => {
-  it('keeps Bot MCP reads/writes available with global memory off, without enabling project memory', async () => {
+  it.each(['claude-code', 'codex', 'pi'] as const)('keeps %s Bot registration and MCP reads/writes available with global memory off', async (agentKind) => {
     manager.dispose();
     memoryEnabled = false;
     manager = createManager(true);
     const botScope = buildBotMemoryScopeKey(BOT_ID);
-    const bot = await connectBotSession({ agentKind: 'pi', memoryScopeKey: botScope });
+    const bot = await connectBotSession({ agentKind, memoryScopeKey: botScope }, true);
     const project = await connectBotSession({ agentKind: 'codex' });
     const record = {
       type: 'user', name: 'independent', title: 'Independent',

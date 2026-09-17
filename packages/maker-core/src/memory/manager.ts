@@ -27,6 +27,7 @@ import * as fsSync from 'node:fs';
 import type Database from 'better-sqlite3';
 
 import { MakerMemoryStore, memoryScopeDirName, parseFilename } from './store.js';
+import { parseBotMemoryScopeKey } from './storage.js';
 import {
   MemoryError,
   type MemoryConfig,
@@ -127,11 +128,26 @@ interface PooledEntry {
 const MEMORY_SUBDIR = 'maker-memory';
 const FTS_DB_FILENAME = 'fts.db';
 const STORAGE_MIGRATION_RECEIPT = '.cindy-memory-migration-v1.json';
-// Legacy Bot stores use memoryScopeDirName's hashed Bot namespace. Preserve
-// these even before their first access migrates them into Bot Home, including
-// stores whose meta.json is missing/damaged. Ordinary bot-prefixed project
-// directories (e.g. /bot-project) are still reset normally.
+// This shape is only a candidate: sanitized project paths can match it too.
 const LEGACY_BOT_MEMORY_DIR = /^bot-.{0,24}-[a-f0-9]{16}$/;
+
+async function isLegacyBotMemoryDir(dir: string): Promise<boolean> {
+  const name = path.basename(dir);
+  if (!LEGACY_BOT_MEMORY_DIR.test(name)) return false;
+  try {
+    const meta: unknown = JSON.parse(await fsSync.promises.readFile(path.join(dir, 'meta.json'), 'utf8'));
+    const scope = meta && typeof meta === 'object' && 'absPath' in meta ? meta.absPath : undefined;
+    // Validate both identity and its mapping to this directory. A matching
+    // project scope must be cleared even if its directory looks like a Bot's.
+    if (typeof scope === 'string' && scope && memoryScopeDirName(scope) === name) {
+      return parseBotMemoryScopeKey(scope) !== null;
+    }
+  } catch {
+    // Missing/damaged metadata cannot prove either ownership. Preserve the
+    // ambiguous data, but never report a successful global clear.
+  }
+  throw new MemoryError('not-ready', `cannot determine memory scope for ${name}; reset incomplete, data preserved`);
+}
 
 function copyLegacyMemoryShardsSync(sourceDir: string, targetDir: string): void {
   fsSync.mkdirSync(targetDir, { recursive: true });
@@ -745,7 +761,6 @@ export class MakerMemoryManager {
     }
     for (const entry of entries) {
       if (activeDirs.has(entry)) continue;
-      if (LEGACY_BOT_MEMORY_DIR.test(entry)) continue;
       const dir = path.join(memoryRoot, entry);
       let filenames: string[];
       try {
@@ -755,6 +770,9 @@ export class MakerMemoryManager {
       } catch {
         continue;
       }
+      const botOwned = await isLegacyBotMemoryDir(dir);
+      this.assertScopeUnchanged(scopeAtEntry);
+      if (botOwned) continue;
       for (const filename of filenames) {
         if (parseFilename(filename)?.type !== 'digest') continue;
         try {
@@ -813,16 +831,16 @@ export class MakerMemoryManager {
         // 先复核 scope (review #2388 Greptile 23rd P1): readdir await 期间边界
         // 可能发生 — 不得把跨边界的 reset 误判为成功。
         this.assertScopeUnchanged(scopeAtEntry);
-        this.poolGeneration += 1;
         return { removedCount: 0 };
       }
       for (const entry of entries) {
-        if (LEGACY_BOT_MEMORY_DIR.test(entry)) continue;
         const dir = path.join(memoryRoot, entry);
         try {
           const stat = await fs.stat(dir);
           if (!stat.isDirectory()) continue;
+          const botOwned = await isLegacyBotMemoryDir(dir);
           this.assertScopeUnchanged(scopeAtEntry);
+          if (botOwned) continue;
           await fs.rm(dir, { recursive: true, force: true });
           total += 1;
         } catch (e) {
@@ -845,11 +863,11 @@ export class MakerMemoryManager {
           'owner scope changed during resetAll; result is partial and must not be trusted',
         );
       }
-      // 池世代兜底失效 (review #2388 Greptile 13th/16th): 即使有漏网旧条目,
-      // getStore 命中旧世代也会 close + 重建, 不残留指向已删目录的条目。
-      this.poolGeneration += 1;
       return { removedCount: total };
     } finally {
+      // closeResettableStores invalidates its handles even if ambiguous
+      // ownership aborts the reset. Retained callers must reopen their store.
+      this.poolGeneration += 1;
       this.resetInFlight -= 1;
     }
   }
