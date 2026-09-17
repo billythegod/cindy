@@ -3161,12 +3161,9 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     }
     if (!row || readTaskPause(row) || !ACTIVE_DELEGATION_STATUSES.includes(row.status as (typeof ACTIVE_DELEGATION_STATUSES)[number])) return;
     const ownedPendingInputIds = params.pendingInputClientIds?.filter(clientId => isDelegationQueuedInput(row.id, clientId));
-    if (ownedPendingInputIds?.length) {
-      if (params.execution) pendingExecutionInputs.set(params.childSessionId, {
-        execution: params.execution, clientIds: ownedPendingInputIds, runSequence: row.runSequence,
-      });
-      return;
-    }
+    // Live terminal boundary validation is awaited separately by queue acceptance.
+    // Do not overwrite a receipt already adopted while settlement was reading.
+    if (ownedPendingInputIds?.length) return;
     // Native terminal events always provide the queue snapshot. Direct user
     // input in that snapshot cannot defer or take over this delegation's result.
     if (ownedPendingInputIds === undefined && params.hadPendingInputAtTerminal) return;
@@ -3251,7 +3248,40 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     });
   };
 
+  const pendingBoundaryValidations = new Map<string, Map<string, Promise<void>>>();
+
+  const validateTerminalQueueBoundary = async (params: Parameters<typeof settleSessionUnserialized>[0]): Promise<void> => {
+    if (!params.execution || !params.pendingInputClientIds?.length) return;
+    const [row] = await getDbClient().drizzle.select().from(botDelegations)
+      .where(eq(botDelegations.childSessionId, params.childSessionId)).limit(1);
+    if (!row || !isActiveDelegation(row.status as DelegationStatus) || readTaskPause(row)
+      || row.acceptedAt == null || parseRecord(row.permissionSnapshotJson).taskCancelRequested === true) return;
+    const receipt = parseRecord(row.permissionSnapshotJson).taskExecution as
+      (DelegationExecutionReceipt & { runSequence: number }) | undefined;
+    if (receipt?.runSequence !== row.runSequence || receipt.instanceId !== params.execution.instanceId
+      || receipt.generation !== params.execution.generation) return;
+    const clientIds = params.pendingInputClientIds.filter(id => isDelegationQueuedInput(row.id, id));
+    if (clientIds.length) pendingExecutionInputs.set(params.childSessionId, {
+      execution: params.execution, clientIds, runSequence: row.runSequence,
+    });
+  };
+
   const settleSession = async (params: Parameters<typeof settleSessionUnserialized>[0]) => {
+    // Publish an awaitable validation before the first database await. Queue drain
+    // is already scheduled by the synchronous event adapter at this point.
+    if (params.execution && params.pendingInputClientIds?.length) {
+      const validation = validateTerminalQueueBoundary(params);
+      let pending = pendingBoundaryValidations.get(params.childSessionId);
+      if (!pending) pendingBoundaryValidations.set(params.childSessionId, pending = new Map());
+      for (const id of params.pendingInputClientIds) {
+        const previous = pending.get(id);
+        const gate = previous ? previous.catch(() => undefined).then(() => validation) : validation;
+        // Settlement observes validation errors even if no queue consumer arrives.
+        void gate.catch(() => undefined);
+        pending.set(id, gate);
+      }
+      await validation;
+    }
     params = { ...params, hadPendingInputAtTerminal: params.hadPendingInputAtTerminal ?? deps.hasPendingInput?.(params.childSessionId) };
     if (heldSessionIds.has(params.childSessionId)) {
       // Do not await an operation queued behind Stop: native abort may itself await this callback.
@@ -3271,6 +3301,13 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   // Only delegation-owned entries from a validated terminal/resume boundary
   // can adopt a new receipt. Ordinary direct Session input remains independent.
   const acceptQueuedSessionInput = async (childSessionId: string, clientId: string, supersedesClientId?: string, restoredFromSnapshot = false): Promise<void> => {
+    const validations = pendingBoundaryValidations.get(childSessionId);
+    const validation = validations?.get(clientId);
+    if (validation) {
+      await validation;
+      if (validations?.get(clientId) === validation) validations.delete(clientId);
+      if (!validations?.size) pendingBoundaryValidations.delete(childSessionId);
+    }
     let boundary = pendingExecutionInputs.get(childSessionId);
     if (!boundary && restoredFromSnapshot) {
       // Queue restoration can be released by the user before Bot restore runs.
@@ -3419,6 +3456,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   const dispose = (): void => {
     unregisterParentCancellation();
     pendingExecutionInputs.clear();
+    pendingBoundaryValidations.clear();
     for (const timer of timers.values()) clearTimeout(timer);
     timers.clear();
     for (const timer of retryTimers.values()) clearTimeout(timer);

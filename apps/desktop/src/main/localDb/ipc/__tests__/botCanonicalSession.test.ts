@@ -4373,6 +4373,28 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
+  it('awaits terminal receipt validation when queue acceptance overtakes settlement', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Queued follow-up.' });
+      if (!task.ok) throw new Error('missing task');
+      const clientId = `bot-delegation-interject:${task.delegationId}:racing`;
+      // Do not await settlement: simulate the already-scheduled queue drain.
+      const terminal = runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        pendingInputClientIds: [clientId], hadPendingInputAtTerminal: true });
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, clientId);
+      await terminal;
+      runtime.delegation.confirmQueuedSessionInputDispatched(task.childSessionId, clientId);
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Follow-up result.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Follow-up result.' });
+    } finally { runtime.dispose(); }
+  });
+
   it.each([false, true])('retains accepted but undispatched input for retry (cloned: %s)', async cloned => {
     await seedPair();
     let execution = { instanceId: 'native', generation: 1 };
