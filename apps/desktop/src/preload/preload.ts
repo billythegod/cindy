@@ -1,3 +1,4 @@
+import { FAVORITE_HOST_READY, FAVORITE_HOST_REQUEST, FAVORITE_HOST_REPLY, FAVORITE_HOST_CHANGED, type ModelFavoritesHostApi } from '../shared/modelFavoritesSync';
 import { invokeOpenPath } from './openPath';
 import { COPY_PNG_TO_CLIPBOARD_CHANNEL, type CopyPngToClipboardParams } from '../shared/pngClipboard';
 import { REMOTE_VIEWER } from '../shared/remoteDesktopViewer';
@@ -1013,6 +1014,16 @@ type CindyMediaPreferenceKind = {
 };
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  modelFavoritesHost: {
+    ready: () => ipcRenderer.send(FAVORITE_HOST_READY),
+    changed: stamp => ipcRenderer.send(FAVORITE_HOST_CHANGED, stamp),
+    reply: reply => ipcRenderer.send(FAVORITE_HOST_REPLY, reply),
+    onRequest: listener => {
+      const receive = (_event: Electron.IpcRendererEvent, request: Parameters<typeof listener>[0]) => listener(request);
+      ipcRenderer.on(FAVORITE_HOST_REQUEST, receive);
+      return () => { ipcRenderer.removeListener(FAVORITE_HOST_REQUEST, receive); };
+    },
+  } satisfies ModelFavoritesHostApi,
   routines: {
     list: (botId: string) => ipcRenderer.invoke('routines:list', botId),
     save: (botId: string, input: RoutineInput, id?: string) => ipcRenderer.invoke('routines:save', botId, input, id),
@@ -4422,6 +4433,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         sessionId: string,
       ): Promise<{
         messages: Record<string, unknown>[];
+        historyView?: string;
         invalidation?: number;
         ownerToken?: string;
         accountCounter?: number;
@@ -4444,6 +4456,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         expectedInvalidation?: number,
         expectedOwnerToken?: string,
         expectedAccountCounter?: number,
+        historyView?: string,
       ): Promise<{ ok: true; invalidation?: number }> =>
         ipcRenderer.invoke('device-link:mirror-cache:messages:put', {
           deviceId,
@@ -4452,6 +4465,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
           expectedInvalidation,
           expectedOwnerToken,
           expectedAccountCounter,
+          historyView,
         }),
       /** 读侧边栏远程会话列表快照 */
       getSessionList: (): Promise<{
@@ -5250,6 +5264,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       create: (body?: unknown): Promise<unknown> =>
         ipcRenderer.invoke('local-db:sessions:create', body),
       get: (id: string): Promise<unknown> => ipcRenderer.invoke('local-db:sessions:get', id),
+      getMany: (ids: string[]): Promise<unknown> => ipcRenderer.invoke('local-db:sessions:get-many', ids),
       resolveReferences: (sessionIds: string[]): Promise<unknown> =>
         ipcRenderer.invoke('local-db:sessions:resolve-references', sessionIds),
       restoreIfArchived: (id: string, expected: unknown): Promise<unknown> =>
