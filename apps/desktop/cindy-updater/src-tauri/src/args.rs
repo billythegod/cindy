@@ -59,6 +59,11 @@ pub struct CliArgs {
     /// cannot be extracted by a still-elevated child.
     #[arg(long = "zip-sha256")]
     pub zip_sha256: Option<String>,
+
+    /// First-attempt medium-integrity writability of `app_dir`. Retry must not
+    /// re-probe: a same-login process can change the DACL after failure.
+    #[arg(skip)]
+    pub install_writable: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]

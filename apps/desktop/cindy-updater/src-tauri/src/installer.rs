@@ -65,6 +65,7 @@ pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
     held_lock: Option<UpdateLock>,
     mut emit: F,
 ) {
+    pin_install_writable(&mut args);
     let lock = held_lock;
     if let Err(error) = bind_zip_sha256(&mut args) {
         logger::error(format!("[installer] FAILED: archive unavailable ({error})"));
@@ -278,9 +279,12 @@ fn launch_app_exe(args: &CliArgs, exe: &Path) -> io::Result<AppLaunch> {
     if may_relaunch_with_current_integrity(
         args.elevated,
         process_is_elevated(),
-        install_writable_for_staging(
-            args.elevated,
-            medium_integrity_needs_elevation(&args.app_dir),
+        resolved_install_writable(
+            args,
+            install_writable_for_staging(
+                args.elevated,
+                medium_integrity_needs_elevation(&args.app_dir),
+            ),
         ),
     ) {
         launch_detached(exe)?;
@@ -505,13 +509,27 @@ pub(crate) fn install_writable_for_staging(
     !cli_elevated && !medium_integrity_needs_elevation
 }
 
+pub(crate) fn pin_install_writable(args: &mut CliArgs) {
+    if args.install_writable.is_some() {
+        return;
+    }
+    args.install_writable = Some(install_writable_for_staging(
+        args.elevated,
+        !args.elevated && medium_integrity_needs_elevation(&args.app_dir),
+    ));
+}
+
+fn resolved_install_writable(args: &CliArgs, probed: bool) -> bool {
+    args.install_writable.unwrap_or(probed)
+}
+
 pub(crate) fn staging_dirs(args: &CliArgs) -> (PathBuf, PathBuf) {
     let process_elevated = process_is_elevated();
-    let install_writable = install_writable_for_staging(
+    let probed = install_writable_for_staging(
         args.elevated,
         !args.elevated && medium_integrity_needs_elevation(&args.app_dir),
     );
-    staging_dirs_for(args, process_elevated, install_writable)
+    staging_dirs_for(args, process_elevated, resolved_install_writable(args, probed))
 }
 
 pub(crate) fn uses_protected_staging(
@@ -606,6 +624,7 @@ pub(crate) fn staging_dirs_for(
     install_writable: bool,
 ) -> (PathBuf, PathBuf) {
     let ts = workdir_ts(&args.workdir);
+    let install_writable = resolved_install_writable(args, install_writable);
     let private_root;
     let root = if uses_protected_staging(args.elevated, process_elevated, install_writable) {
         &args.app_dir
@@ -922,6 +941,7 @@ pub(crate) fn retry_args(args: &CliArgs) -> CliArgs {
         theme: args.theme,
         elevated: args.elevated,
         zip_sha256: args.zip_sha256.clone(),
+        install_writable: args.install_writable,
     }
 }
 
@@ -991,6 +1011,12 @@ fn run_inner<F: FnMut(InstallerEvent)>(
         ));
     }
     emit(InstallerEvent::AppExited);
+    if is_reparse_point(&args.app_dir) {
+        return Err(InstallerFailure::new(
+            format!("安装目录是重解析点，拒绝继续：{}", args.app_dir.display()),
+            false,
+        ));
+    }
     std::thread::sleep(FS_SETTLE_DELAY);
 
     // 1.2. Terminate lingering processes that run FROM app_dir. pid_wait only
@@ -2088,6 +2114,7 @@ mod tests {
             theme: ThemeArg::Dark,
             elevated: true,
             zip_sha256: None,
+            install_writable: None,
         }
     }
 
@@ -2842,6 +2869,43 @@ mod tests {
         assert!(
             body.contains("process_is_elevated()"),
             "staging_dirs must read the process token; --elevated is omitted on inherited elevation"
+        );
+    }
+
+    #[test]
+    fn inherited_elevation_retry_keeps_pinned_private_staging() {
+        assert!(
+            uses_elevated_private_staging(false, true, true),
+            "inherited elevation of a per-user install must stay on High-IL ProgramData"
+        );
+        let temp = TestDir::new();
+        let mut args = test_args();
+        args.elevated = false;
+        args.install_writable = Some(true);
+        args.app_dir = temp.0.join("Cindy");
+        args.workdir = temp.0.join("cindy-update-1710000000000");
+        fs::create_dir(&args.app_dir).unwrap();
+        fs::create_dir(&args.workdir).unwrap();
+        let private_root = elevated_private_staging_root(&args);
+        let (extract_dir, backup_dir) = staging_dirs_for(&args, true, false);
+        assert!(
+            extract_dir.starts_with(&private_root),
+            "a later Administrators-only DACL must not move Retry staging into plantable app_dir"
+        );
+        assert!(backup_dir.starts_with(&private_root));
+        assert!(!extract_dir.starts_with(&args.app_dir));
+
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("pub(crate) fn staging_dirs(args: &CliArgs)")
+            .expect("staging_dirs");
+        let helper = source[start..]
+            .find("pub(crate) fn uses_protected_staging")
+            .expect("uses_protected_staging");
+        let body = &source[start..start + helper];
+        assert!(
+            body.contains("resolved_install_writable"),
+            "Retry must pin the first writable classification instead of re-probing app_dir:\n{body}"
         );
     }
 

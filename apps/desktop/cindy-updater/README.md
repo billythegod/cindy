@@ -138,7 +138,11 @@ The exclusive `.updating` lock is acquired only after that handoff, so the
 elevated child can install. Cancelling that prompt, or a Retry that would need a
 second `runas`, does not offer Retry and does not relaunch the TEMP executable;
 close the window and check for updates again. An already-elevated Retry continues
-in-process.
+in-process. Inherited-elevation Retry pins the first medium-integrity
+writability of `app_dir` and keeps High-IL ProgramData staging even if the
+install DACL later looks protected. Windows startup keeps waiting while the
+`.updating` holder PID is alive or unlink fails because Retry still owns the
+handle.
 
 A successful rollback retains the isolated zip for retry and does not relaunch
 Cindy while Retry remains available. The exclusive `.updating` lock stays on
