@@ -86,6 +86,41 @@ it('keeps modal-only Cindy Make cards out of the message timeline', () => {
 });
 
 describe('Bot 流式正文呈现', () => {
+  it('preserves consecutive Claude final text blocks only after the turn seal', () => {
+    let state = { ...EMPTY_SESSION_STATE, isStreaming: true, messages: [mkUser('u1')] };
+    const visibleProse = () => simplifyBotRenderItems(
+      groupWorkRuns(buildRenderItems(state.messages).items, state.isStreaming), state.isStreaming,
+    ).flatMap((item) => item.type === 'message' && item.message.role === 'assistant'
+      ? [item.message.content] : []);
+    const emitText = (id: string, text: string) => {
+      state = handleStreamEvent(state, {
+        sessionId: 'claude-multi-block', type: 'text', persistId: id,
+        data: { text, isFinal: true },
+      });
+    };
+    emitText('progress', '我查一下：');
+    state = handleStreamEvent(state, {
+      sessionId: 'claude-multi-block', type: 'tool_use', persistId: 'tool',
+      data: { id: 'tool', name: 'Bash', input: { command: 'echo ok' } },
+    });
+    state = handleStreamEvent(state, {
+      sessionId: 'claude-multi-block', type: 'tool_result', persistId: 'result',
+      data: { toolUseId: 'tool', result: 'ok' },
+    });
+    emitText('first', 'first');
+    expect(visibleProse()).toEqual([]);
+    emitText('second', 'second');
+    expect(visibleProse()).toEqual([]);
+    state = handleStreamEvent(state, {
+      sessionId: 'claude-multi-block', type: 'text', persistId: 'second',
+      data: { text: 'second', isFinal: true, isFullText: true },
+      agentMeta: { turnCompleted: true },
+    });
+    expect(visibleProse()).toEqual(['first', 'second']);
+    state = { ...state, isStreaming: false };
+    expect(visibleProse()).toEqual(['first', 'second']);
+  });
+
   it('运行中从首字收拢未封口正文与工具，保留可展开过程', () => {
     const messages = [
       mkUser('u1'),

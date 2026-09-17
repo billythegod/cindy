@@ -39,6 +39,20 @@ export function simplifyBotRenderItems(
   items: readonly RenderItem[],
   isStreaming: boolean,
 ): RenderItem[] {
+  // groupWorkRuns leaves every contiguous block of a sealed answer outside its
+  // work group. Only the last block carries the seal. Capture that run before
+  // unwrapping groups/removing thinking, which must remain answer boundaries.
+  const sealedAnswers = new Set<ChatMessage>();
+  let sealedRun = false;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (!isProse(item) || !item.message.content.trim()) {
+      sealedRun = false;
+      continue;
+    }
+    sealedRun ||= isCompletedAssistantMessage(item.message);
+    if (sealedRun) sealedAnswers.add(item.message);
+  }
   const result: RenderItem[] = [];
   let turn: RenderItem[] = [];
   const flushTurn = (active: boolean) => {
@@ -64,7 +78,7 @@ export function simplifyBotRenderItems(
       if (item.type === 'message' && item.message.isSyntheticTrigger) return;
       if (isProse(item)) {
         if (!item.message.content.trim() && !hasAttachments(item.message)) return;
-        if (!isCompletedAssistantMessage(item.message)
+        if (!isCompletedAssistantMessage(item.message) && !sealedAnswers.has(item.message)
           && !hasAttachments(item.message) && (active || index !== lastProse)
           && extractRenderedMarkdownImageTargets(item.message.content).length === 0) {
           work.push(item);

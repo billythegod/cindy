@@ -50,6 +50,26 @@ describe('teammate public execution disclosure', () => {
     expect(allKeys(result)).toContain('tools-t2');
   });
 
+  it('keeps all blocks of sealed replies across continuation tools and history reloads', () => {
+    const input = [message('u', 'user'), message('progress', 'assistant'), tool('t1'),
+      message('first', 'assistant'), message('second', 'assistant', 'Second', { turnCompleted: true }),
+      tool('t2'), message('third', 'assistant'),
+      message('fourth', 'assistant', 'Fourth', { turnCompleted: true })];
+    for (const streaming of [true, false]) {
+      const result = project(input, streaming);
+      expect(proseIds(result)).toEqual(['first', 'second', 'third', 'fourth']);
+      expect(allKeys(result)).toEqual(input.map((item) => item.key));
+    }
+  });
+
+  it('does not extend a seal across thinking removed from public execution', () => {
+    const result = simplifyBotRenderItems([message('progress', 'assistant'),
+      message('private', 'thinking'), message('first', 'assistant'),
+      message('second', 'assistant', 'Second', { turnCompleted: true })], true);
+    expect(proseIds(result)).toEqual(['first', 'second']);
+    expect(allKeys(result)).not.toContain('msg-private');
+  });
+
   it('does not infer commentary from words, paragraph length or markdown shape', () => {
     const text = '# Report\n' + '先查市场 final result '.repeat(100);
     const input = [message('u', 'user'), message('long', 'assistant', text), tool('t'),
