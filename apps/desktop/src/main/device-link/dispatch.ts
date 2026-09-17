@@ -644,11 +644,19 @@ const REMOTE_INVOKE_IN_FLIGHT_LIMIT = 64;
 /** Host DB admission is independent of whether a read can share an in-flight snapshot. */
 const BACKGROUND_REMOTE_INVOKE_CHANNELS: ReadonlySet<string> = new Set([
   'local-db:sessions:list',
+  'local-db:sessions:interrupted-pending',
+  'maker:list-active',
+  'local-db:bots:list',
+  'maker:remote-resources:list',
   'maker:get-capabilities',
   'maker:provider:list',
   'maker:git-safety:get',
   'maker:schedule:list-sidebar-index-runs',
 ]);
+/** Include pre/post authorization and cached delivery, not only the IPC handler. */
+function withRemoteDbAdmission<T>(channel: string | undefined, fn: () => T): T {
+  return channel && BACKGROUND_REMOTE_INVOKE_CHANNELS.has(channel) ? runAsBackgroundDbRpc(fn) : fn();
+}
 /** 隧道回包必须低于 4MB 传输上限与 per-controller 4MB 准入；2MB 给 envelope 留余量。 */
 const REMOTE_SCHEDULE_INDEX_MAX_BYTES = 2 * 1024 * 1024;
 /**
@@ -2824,13 +2832,19 @@ function sanitizeMessageInvokeResult(
 async function authorizeRemoteBotResult(
   channel: string | undefined, args: unknown[] | undefined, result: InvokeResultPayload,
 ): Promise<InvokeResultPayload> {
-  if (!result.ok) return result;
-  try {
-    await assertRemoteBotInvocationAllowed(args ?? [], channel);
-    return { ok: true, result: await projectRemoteSessionResult(channel ?? '', result.result) };
-  } catch {
-    return { ok: false, error: { code: 'IPC_ERROR', message: '[NOT_FOUND] Session does not exist' } };
-  }
+  return withRemoteDbAdmission(channel, async () => {
+    if (!result.ok) return result;
+    try {
+      await assertRemoteBotInvocationAllowed(args ?? [], channel);
+      return { ok: true, result: await projectRemoteSessionResult(channel ?? '', result.result) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (isDbWorkerOverloadedError(message)) {
+        return { ok: false, error: { code: 'BACKPRESSURE', message } };
+      }
+      return { ok: false, error: { code: 'IPC_ERROR', message: '[NOT_FOUND] Session does not exist' } };
+    }
+  });
 }
 
 /** Revalidate cached/replayed replies without executing a mutation twice. */
@@ -3509,6 +3523,10 @@ export async function runInvoke(
   src: string,
   payload: InvokePayload | undefined,
 ): Promise<InvokeResultPayload> {
+  return withRemoteDbAdmission(payload?.channel, () => executeRemoteInvoke(src, payload));
+}
+
+async function executeRemoteInvoke(src: string, payload: InvokePayload | undefined): Promise<InvokeResultPayload> {
   if (!payload || typeof payload.channel !== 'string') {
     return { ok: false, error: { code: 'INTERNAL', message: 'malformed invoke payload' } };
   }
@@ -3720,16 +3738,10 @@ export async function runInvoke(
         historyView,
       },
       // provider:list 的首参只承载隧道能力协商，不进入本机 IPC handler。
-      // 对账 listing 走后台读配额，不占满写入名额。
-      () => {
-        const invoke = () => dispatchLocalInvoke(
-          payload.channel,
-          payload.channel === 'maker:provider:list' ? [] : args,
-        );
-        return BACKGROUND_REMOTE_INVOKE_CHANNELS.has(payload.channel)
-          ? runAsBackgroundDbRpc(invoke)
-          : invoke();
-      },
+      () => dispatchLocalInvoke(
+        payload.channel,
+        payload.channel === 'maker:provider:list' ? [] : args,
+      ),
     );
     if (hasRemoteBotSessionLookup()) await assertRemoteBotInvocationAllowed(args, payload.channel);
     if (!broadcastTap.isDataOwnerBroadcastScopeCurrent(invocationOwner)) throw new Error('[NOT_FOUND] Session does not exist');

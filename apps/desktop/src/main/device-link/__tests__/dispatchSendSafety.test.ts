@@ -45,6 +45,7 @@ vi.mock('../settings-store', () => ({
 import { __testing, runInvoke, wireInboundDispatch } from '../dispatch';
 import { __testing as registry } from '../invoke-registry';
 import { setRemoteBotSessionLookup } from '../remoteBotSessionBoundary';
+import { currentDbRpcAdmissionClass } from '../../localDb/client/rpcAdmission';
 import { getDeviceLinkInvokeContext } from '../invoke-context';
 import { HistoryViewController, type HistoryViewPage, type HistoryMessageSource } from '@cindy/maker-shared/message-window';
 import * as subscriptions from '../subscriptions';
@@ -944,5 +945,92 @@ describe('remote companion Session visibility at the device-link boundary', () =
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(oldClient.sendPush).not.toHaveBeenCalled();
     expect(newClient.sendPush).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('background database admission covers the complete remote list lifecycle', () => {
+  it.each(['local-db:sessions:list', 'local-db:bots:list', 'maker:list-active', 'local-db:sessions:interrupted-pending', 'maker:remote-resources:list'])(
+    'keeps %s handler and visibility checks in background admission', async (channel) => {
+      const admissions: string[] = [];
+      setRemoteBotSessionLookup(async () => {
+        admissions.push(currentDbRpcAdmissionClass());
+        return 'ordinary';
+      });
+      registry.register(channel, () => {
+        admissions.push(currentDbRpcAdmissionClass());
+        return channel === 'maker:remote-resources:list'
+          ? { items: [{ ref: { id: 's1', kind: 'bot' } }] } : [{ id: 's1' }];
+      });
+      expect(await runInvoke('ctrl-1', { channel, args: ['s1'] })).toMatchObject({ ok: true });
+      expect(admissions.length).toBeGreaterThanOrEqual(4);
+      expect(new Set(admissions)).toEqual(new Set(['background']));
+      expect(currentDbRpcAdmissionClass()).toBe('interactive');
+    },
+  );
+
+  it('keeps sending interactive while an unrelated background list is awaiting permission checks', async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const admissions: string[] = [];
+    setRemoteBotSessionLookup(async (id) => {
+      if (id === 'listing') await pending;
+      admissions.push(currentDbRpcAdmissionClass());
+      return 'ordinary';
+    });
+    registry.register('local-db:sessions:list', () => []);
+    registry.register('maker:send', () => { admissions.push(currentDbRpcAdmissionClass()); return {}; });
+    const list = runInvoke('ctrl-1', { channel: 'local-db:sessions:list', args: ['listing'] });
+    try {
+      expect(await runInvoke('ctrl-2', { channel: 'maker:send', args: ['s1', { text: 'hello' }] })).toMatchObject({ ok: true });
+      expect(new Set(admissions)).toEqual(new Set(['interactive']));
+    } finally { finish(); await list; }
+  });
+
+  it('rechecks cached and backpressured lists using background admission and fresh visibility', async () => {
+    const admissions: string[] = [];
+    let hidden = false;
+    setRemoteBotSessionLookup(async () => {
+      admissions.push(currentDbRpcAdmissionClass());
+      return hidden ? 'hidden' : 'ordinary';
+    });
+    const handler = vi.fn(() => [{ id: 's1' }]);
+    registry.register('local-db:sessions:list', handler);
+    const client = mkClient();
+    wireInboundDispatch(client as never);
+    const frame = client.onFrame.mock.calls[0][0];
+    const request = { v: PROTOCOL_VERSION, kind: 'invoke', src: 'ctrl-1', id: 'cached-list', payload: { channel: 'local-db:sessions:list', args: [] } };
+    frame(request);
+    await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(1));
+    admissions.length = 0;
+    hidden = true;
+    frame(request);
+    await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(2));
+    expect(client.sendInvokeResult.mock.calls[1][2]).toMatchObject({ ok: true, result: [] });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(admissions.length).toBeGreaterThan(0);
+    expect(new Set(admissions)).toEqual(new Set(['background']));
+
+    admissions.length = 0;
+    client.sendInvokeResult.mockImplementationOnce(() => { throw new DeviceLinkError('BACKPRESSURE', 'full'); });
+    __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'queued-list', { ok: true, result: [{ id: 's1' }] }, 'local-db:sessions:list', []);
+    __testing.flushRemoteInvokeResultOutbox();
+    await vi.waitFor(() => expect(__testing.remoteInvokeResultOutboxSize()).toBe(0));
+    expect(client.sendInvokeResult.mock.calls.at(-1)![2]).toMatchObject({ ok: true, result: [] });
+    expect(admissions.length).toBeGreaterThan(0);
+    expect(new Set(admissions)).toEqual(new Set(['background']));
+  });
+});
+
+
+it('reports DB overload during replay as backpressure without sending unchecked data', async () => {
+  const client = mkClient({ sendInvokeResult: vi.fn().mockImplementationOnce(() => { throw new DeviceLinkError('BACKPRESSURE', 'full'); }) });
+  __testing.setActiveClient(client as never);
+  __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'overloaded-list', { ok: true, result: [{ id: 'private' }] }, 'local-db:sessions:list', []);
+  setRemoteBotSessionLookup(async () => { throw new Error('db worker RPC queue overloaded: op="rawAll"'); });
+  __testing.flushRemoteInvokeResultOutbox();
+  await vi.waitFor(() => expect(__testing.remoteInvokeResultOutboxSize()).toBe(0));
+  expect(client.sendInvokeResult.mock.calls.at(-1)![2]).toEqual({
+    ok: false, error: { code: 'BACKPRESSURE', message: 'db worker RPC queue overloaded: op="rawAll"' },
   });
 });
