@@ -1250,7 +1250,10 @@ describe('compact model defaults upgrade', () => {
     const prefs = await upgrade();
     await prefs.setModelVisibility('pi', 'xd', 'fable-5-1', false);
     if (hasLegacy) expect(memStorage.getItem(markerKey)).toBeNull();
-    else expect(JSON.parse(memStorage.getItem(markerKey)!)).toMatchObject({ eligibleForDefaults: true, scopes: [] });
+    else expect(JSON.parse(memStorage.getItem(markerKey)!)).toMatchObject({
+      eligibleForDefaults: true,
+      scopes: provider.agents.map((agent) => JSON.stringify([provider.id, agent])),
+    });
     setOwnerClaim('owner-a', 1);
     await prefs.migrateModelVisibilityDefaults('owner-a', 1, [provider]);
     expect(prefs.isModelEnabled('pi', 'xd', { id: 'gemini', defaultEnabled: true })).toBe(true);
