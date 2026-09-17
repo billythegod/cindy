@@ -7217,6 +7217,13 @@
       "move": "지금 이동 (권장)",
       "download": "수동으로 다운로드"
     },
+    "aurManaged": {
+      "title": "AUR을 통해 업데이트하세요",
+      "description": "이 설치는 AUR/pacman으로 관리됩니다. 터미널에서 AUR 도우미로 업데이트하세요(예: yay -Syu). 앱은 종료되지 않으며 다운로드한 업데이트는 유지됩니다.",
+      "hint": "이 설치는 패키지 관리자가 관리합니다. 앱 내에서 .deb를 설치하지 않습니다.",
+      "details": "업데이트 방법 보기",
+      "confirm": "확인"
+    },
     "windowsRuntimeMissing": {
       "title": "Microsoft Visual C++ 런타임 필요",
       "description": "이 PC에는 업데이터에 필요한 Microsoft Visual C++ 런타임이 없습니다. 다운로드한 업데이트는 유지됩니다. Microsoft 공식 x64 런타임을 설치한 후 다시 확인해 주세요.",

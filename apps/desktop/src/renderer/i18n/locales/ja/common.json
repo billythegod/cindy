@@ -7217,6 +7217,13 @@
       "move": "今すぐ移動（推奨）",
       "download": "手動でダウンロード"
     },
+    "aurManaged": {
+      "title": "AUR 経由で更新してください",
+      "description": "このインストールは AUR/pacman で管理されています。ターミナルで AUR ヘルパーを使って更新してください（例: yay -Syu）。アプリは終了せず、ダウンロード済みの更新も保持されます。",
+      "hint": "このインストールはパッケージマネージャーで管理されています。アプリ内で .deb はインストールしません。",
+      "details": "更新方法を確認",
+      "confirm": "確認しました"
+    },
     "windowsRuntimeMissing": {
       "title": "Microsoft Visual C++ ランタイムが必要です",
       "description": "この PC にはアップデーターに必要な Microsoft Visual C++ ランタイムがありません。ダウンロード済みの更新は保持されます。Microsoft 公式の x64 ランタイムをインストールしてから、もう一度確認してください。",

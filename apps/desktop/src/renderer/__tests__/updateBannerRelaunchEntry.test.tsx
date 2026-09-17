@@ -14,7 +14,7 @@
  * 各有一条用例,少任何一条都会漏掉「点了稍后却重启」「装回旧补丁」「confirming 残留」。
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -103,6 +103,53 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+afterEach(() => document.documentElement.classList.remove('dark'));
+
+describe('AUR-managed update guidance', () => {
+  it.each([
+    { theme: 'light', collapsed: false },
+    { theme: 'dark', collapsed: false },
+    { theme: 'light', collapsed: true },
+    { theme: 'dark', collapsed: true },
+  ])('shows dismissible guidance in $theme mode, collapsed=$collapsed', async ({ theme, collapsed }) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    updateStatus.current = { status: 'ready', version: '1.2.3', errorCode: 'linux_aur_managed' };
+    render(<UpdateBanner isCollapsed={collapsed} />);
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('update.aurManaged.description')).toBeTruthy();
+    expect(anyActivityBlockingRelaunch).not.toHaveBeenCalled();
+    expect(relaunchToUpdate).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'update.aurManaged.confirm' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(screen.queryByText('update.banner.title')).toBeNull();
+    expect(screen.queryByText('update.banner.button')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'update.aurManaged.details' }));
+    await screen.findByRole('alertdialog');
+    expect(anyActivityBlockingRelaunch).not.toHaveBeenCalled();
+    expect(relaunchToUpdate).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it('shows guidance even when the banner was dismissed', async () => {
+    dismissState.dismissed = true;
+    updateStatus.current = { status: 'ready', version: '1.2.3', errorCode: 'linux_aur_managed' };
+    render(<UpdateBanner isCollapsed={false} />);
+    await screen.findByRole('alertdialog');
+    expect(relaunchToUpdate).not.toHaveBeenCalled();
+  });
+
+  it('invalidates a pending relaunch probe when AUR ownership is reported', async () => {
+    const settle = deferredProbe();
+    const view = render(<UpdateBanner isCollapsed={false} />);
+    fireEvent.click(screen.getByRole('button', { name: 'update.banner.ariaExpanded' }));
+    updateStatus.current = { status: 'ready', version: '1.2.3', errorCode: 'linux_aur_managed' };
+    view.rerender(<UpdateBanner isCollapsed={false} />);
+    await screen.findByRole('alertdialog');
+    settle(false);
+    await waitFor(() => expect(screen.queryByText('update.banner.confirmBusyHint')).toBeNull());
+    expect(relaunchToUpdate).not.toHaveBeenCalled();
+  });
+});
 
 describe('UpdateBanner relaunch entry', () => {
   it('prompts for the VC++ Runtime, keeps the banner, and rechecks on demand', async () => {

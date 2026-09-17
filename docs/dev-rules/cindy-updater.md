@@ -40,6 +40,23 @@ Tauri 实现）与 Electron 侧的更新服务（`apps/desktop/src/main/updateSe
 
 先读实际代码再决定实现；不要只凭文档或记忆猜测更新流程。
 
+## Linux AUR 安装边界
+
+应用内安装更新前，仅当 Linux 当前可执行文件的真实路径经
+`pacman -Qqo -- <exe>` 确认属于 `cindy-bin` 或 `cindy-cn-bin` 时，拦截现有 `.deb`
+安装路径并提示通过 AUR 助手更新。拦截发生在停止 Agent、写入更新标记、
+创建安装锁、启动提权脚本和退出应用之前；应用与已下载的更新均保留。
+
+不以「不是 dpkg 管理」或「存在 pacman 命令」作为拦截条件。查询失败、不属于这两个包、
+Ubuntu 官方 `.deb` 和手动解包安装均保持原有行为；Windows/macOS 不查询 pacman。
+
+此拦截不改变登录或密钥库选择，不安装依赖，也不修改外部 AUR 配方。Hyprland 的
+凭证后端策略以[凭证与本地存储规则](credentials-and-local-storage.md)为准。
+
+实现与回归：
+[linuxAurInstallation.ts](../../apps/desktop/src/main/linuxAurInstallation.ts)、
+[updateService.test.ts](../../apps/desktop/src/main/__tests__/updateService.test.ts)。
+
 ## Review 要点
 
 1. 改动是否触及更新器或更新服务？触及就必须先有 owner 确认，PR 说明写明。

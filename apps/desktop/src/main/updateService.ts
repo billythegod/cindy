@@ -66,6 +66,7 @@ import { throwIpcError } from './utils/ipcValidate';
 import { noteExpectedExit } from './startup-diagnostics';
 import { buildMacOSUpdateScript } from './updateScriptMacOS';
 import { buildLinuxUpdateScript, normalizeLinuxDebSha256 } from './updateScriptLinux';
+import { isLinuxAurInstallation } from './linuxAurInstallation';
 import { disposeAndroidAdb } from './mcp-integrations/android';
 import { abortIOSSimulatorOperationsForExit } from './mcp-integrations/ios-simulator-exit';
 import { getGhostNodeRuntimeBroker } from './cindy-brain/index';
@@ -1917,6 +1918,14 @@ async function executeRelaunchUnguarded(theme: 'light' | 'dark', checkForBinaryU
   // the durable attempt counter, or spawning anything so a missing Runtime
   // keeps both Cindy and the already-downloaded patch intact.
   if (!ensureWindowsUpdaterPrerequisites()) return;
+
+  if (process.platform === 'linux' && isLinuxAurInstallation(app.getPath('exe'))) {
+    log.info('AUR-managed installation: keeping app open and update staged; use the package manager');
+    isRelaunching = false;
+    autoRelaunchInProgress = false;
+    setStatus('ready', { version: readyVersion, errorCode: 'linux_aur_managed' });
+    return;
+  }
 
   // Gate *before* the updater is spawned, not inside forceQuit: once the
   // updater script is running it polls our pid and SIGKILLs us after 120s

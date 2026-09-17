@@ -47,6 +47,7 @@ const checkWindowsUpdaterPrerequisites = vi.fn<
 const stageBundledWindowsUpdaterRuntime = vi.fn<
   () => 'staged' | 'fallback-safe' | 'blocked'
 >(() => 'staged');
+const isLinuxAurInstallation = vi.fn(() => false);
 
 const logInfo = vi.fn();
 const logWarn = vi.fn();
@@ -156,6 +157,8 @@ vi.mock('../security/trustedAppRenderer', () => ({
   assertTrustedAppRendererEvent: vi.fn(),
 }));
 
+vi.mock('../linuxAurInstallation', () => ({ isLinuxAurInstallation }));
+
 
 vi.mock('../logger', () => ({
   createLogger: () => ({
@@ -256,6 +259,8 @@ beforeEach(() => {
   });
   stageBundledWindowsUpdaterRuntime.mockReset();
   stageBundledWindowsUpdaterRuntime.mockReturnValue('staged');
+  isLinuxAurInstallation.mockReset();
+  isLinuxAurInstallation.mockReturnValue(false);
   logInfo.mockReset();
   logWarn.mockReset();
   logError.mockReset();
@@ -291,6 +296,7 @@ describe('binary version checks after a user-requested update', () => {
       expect(fs.existsSync(markerPath)).toBe(false);
       ipcListeners.get('update-relaunch')?.({}, 'dark');
       await vi.waitFor(() => { expect(spawnProcess).toHaveBeenCalledOnce(); });
+      expect(isLinuxAurInstallation).not.toHaveBeenCalled();
       expect(JSON.parse(fs.readFileSync(markerPath, 'utf8'))).toMatchObject({ version: '0.0.65' });
       expect(consumeStartupBinaryUpdateMarker(TEST_USER_DATA, '0.0.65')).toBe(true);
       expect(fs.existsSync(markerPath)).toBe(false);
@@ -449,6 +455,71 @@ function linuxInstallerManifest(version = '0.0.65') {
 }
 
 describe('checkForUpdate Linux installer flow', () => {
+  it('keeps AUR installs open with the downloaded patch intact on repeated apply attempts', async () => {
+    isLinuxAurInstallation.mockReturnValue(true);
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, 'deb');
+      return { path: targetPath, size: 3 };
+    });
+    const service = await freshUpdateService('linux', 'x64');
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    service.initUpdateService();
+    try {
+      await service.checkForUpdate(linuxInstallerManifest());
+      const updatesPath = path.join(TEST_USER_DATA, 'updates');
+      const beforeFiles = fs.readdirSync(updatesPath);
+      const beforeData = beforeFiles.map((name) => fs.readFileSync(path.join(updatesPath, name)));
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        ipcListeners.get('update-relaunch')?.({}, 'dark');
+        await vi.waitFor(() => expect(isLinuxAurInstallation).toHaveBeenCalledTimes(attempt + 1));
+        expect(await ipcHandlers.get('update-get-status')?.({})).toMatchObject({
+          status: 'ready', version: '0.0.65', errorCode: 'linux_aur_managed',
+        });
+      }
+      expect(isLinuxAurInstallation).toHaveBeenCalledWith(TEST_EXE);
+      expect(spawnProcess).not.toHaveBeenCalled();
+      expect(appQuit).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(fs.readdirSync(updatesPath)).toEqual(beforeFiles);
+      expect(beforeFiles.map((name) => fs.readFileSync(path.join(updatesPath, name)))).toEqual(beforeData);
+      expect(fs.existsSync(path.join(TEST_USER_DATA, 'agent-binary-update-once.json'))).toBe(false);
+    } finally {
+      service.stopUpdateService();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('keeps the existing Ubuntu/non-AUR deb installer when ownership does not match', async () => {
+    vi.useFakeTimers();
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, 'deb');
+      return { path: targetPath, size: 3 };
+    });
+    const service = await freshUpdateService('linux', 'x64');
+    service.initUpdateService();
+    try {
+      const manifest = linuxInstallerManifest();
+      manifest.app.installer.sha256 = 'a'.repeat(64);
+      manifest.app.installer.size = 3;
+      await service.checkForUpdate(manifest);
+      ipcListeners.get('update-relaunch')?.({}, 'dark');
+      await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledOnce());
+      expect(isLinuxAurInstallation).toHaveBeenCalledWith(TEST_EXE);
+      const [command, args] = spawnProcess.mock.calls[0] as unknown as [string, string[]];
+      expect(command).toBe('/bin/bash');
+      expect(args[0]).toBe('-c');
+      expect(args[1]).toContain('PKEXEC=/usr/bin/pkexec');
+      expect(args[1]).toContain('apt-get install --yes --allow-downgrades');
+      expect(args[1]).toContain('dpkg --install');
+    } finally {
+      service.stopUpdateService();
+    }
+  });
+
   it('downloads the Linux installer .deb instead of a hotfix zip', async () => {
     readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
     download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {

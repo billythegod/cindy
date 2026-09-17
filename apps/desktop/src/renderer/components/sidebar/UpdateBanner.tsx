@@ -108,6 +108,7 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   const restoreFocusRef = useRef(false);
   const [showTranslocatedDialog, setShowTranslocatedDialog] = useState(false);
   const [showWindowsRuntimeDialog, setShowWindowsRuntimeDialog] = useState(false);
+  const [showLinuxAurDialog, setShowLinuxAurDialog] = useState(false);
   const { t } = useTranslation();
 
   const [showSpawnFailedDialog, setShowSpawnFailedDialog] = useState(false);
@@ -120,7 +121,12 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   const isSpawnFailed = status === 'error' && errorCode === 'updater_spawn_failed';
   const isWindowsRuntimeMissing =
     status === 'ready' && errorCode === 'windows_vc_runtime_missing';
+  const isLinuxAurManaged = status === 'ready' && errorCode === 'linux_aur_managed';
   const isPreparing = status === 'superseding';
+
+  useEffect(() => {
+    if (isLinuxAurManaged) setShowLinuxAurDialog(true);
+  }, [isLinuxAurManaged]);
 
   useEffect(() => {
     if (isWindowsRuntimeMissing) setShowWindowsRuntimeDialog(true);
@@ -137,11 +143,11 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   // 一旦不再是 ready(如被 superseding 顶掉 / 出错),复位确认态,避免残留一个
   // 指向旧补丁的「仍要重启」;同时作废在飞的探针 —— 它的结论建立在「当前补丁可装」之上。
   useEffect(() => {
-    if (status !== 'ready' || isWindowsRuntimeMissing) {
+    if (status !== 'ready' || isWindowsRuntimeMissing || isLinuxAurManaged) {
       relaunchEpochRef.current += 1;
       setConfirming(false);
     }
-  }, [status, isWindowsRuntimeMissing]);
+  }, [status, isWindowsRuntimeMissing, isLinuxAurManaged]);
 
   // 卸载时同样作废在飞的探针。卸载后 setConfirming 只是一次无效更新,但 handleRelaunch
   // 会真的把 app 重启掉 —— 这条 cleanup 不是防 React 警告,是防意外重启。
@@ -236,6 +242,10 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   // 卸载、已就绪补丁可能被 superseding 顶掉。少了它们,「点了稍后却重启」「装回旧补丁」
   // 「confirming 残留到下次唤回」三种都会真实发生。
   const handleRelaunchClick = async (): Promise<void> => {
+    if (isLinuxAurManaged) {
+      setShowLinuxAurDialog(true);
+      return;
+    }
     if (isWindowsRuntimeMissing) {
       setShowWindowsRuntimeDialog(true);
       return;
@@ -301,8 +311,21 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   // nothing because the patch has already been cleared).
   const isErrorOnly = isTranslocated || isSpawnFailed;
 
-  const withWindowsRuntimeDialog = (content: ReactNode) => (
+  const withPrerequisiteDialogs = (content: ReactNode) => (
     <>
+      {isLinuxAurManaged && (
+        <ConfirmDialog
+          open={showLinuxAurDialog}
+          onOpenChange={setShowLinuxAurDialog}
+          title={t('update.aurManaged.title')}
+          description={t('update.aurManaged.description')}
+          confirmText={t('update.aurManaged.confirm')}
+          showCancel={false}
+          autoFocusConfirm
+          contentSelectable
+          onConfirm={() => setShowLinuxAurDialog(false)}
+        />
+      )}
       {isWindowsRuntimeMissing && (
         <ConfirmDialog
           open={showWindowsRuntimeDialog}
@@ -363,9 +386,9 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   // The prerequisite dialog must not be suppressed by the normal busy/dismiss
   // rules. After the user chooses "later", the usual banner visibility rules
   // resume and clicking the update entry opens this dialog again.
-  if (!isCollapsed && hideExpandedBanner) return withWindowsRuntimeDialog(null);
+  if (!isCollapsed && hideExpandedBanner) return withPrerequisiteDialogs(null);
   if (isCollapsed && dismissed && reason === 'user' && (status === 'ready' || isPreparing)) {
-    return withWindowsRuntimeDialog(null);
+    return withPrerequisiteDialogs(null);
   }
 
   // ── Collapsed state: icon only ──
@@ -373,7 +396,7 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
     // 确认态(仅在有任务在跑时出现):上方 ✓(仍要重启,占据原 Flame 图标位置,鼠标零位移),
     // 下方 ✕(取消)。收起态没有文案位置,「会打断进行中的任务」只能落在 ✓ 的 tooltip 上。
     if (confirming && !isPreparing) {
-      return withWindowsRuntimeDialog(
+      return withPrerequisiteDialogs(
         <div className="flex flex-col items-center gap-0.5 border-t border-sidebar-border py-1.5">
           <Tip text={t('update.banner.confirmTooltip')} side="right">
             <button
@@ -406,12 +429,14 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
       );
     }
 
-    return withWindowsRuntimeDialog(
+    return withPrerequisiteDialogs(
       <div className="flex flex-col items-center border-t border-sidebar-border">
         <Tip
           text={isPreparing
             ? t('update.banner.preparingTooltip')
-            : t('update.banner.tooltipReady', { versionSuffix })}
+            : isLinuxAurManaged
+              ? t('update.aurManaged.details')
+              : t('update.banner.tooltipReady', { versionSuffix })}
           side="right"
         >
           <button
@@ -420,7 +445,9 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
             disabled={isPreparing}
             aria-label={isPreparing
               ? t('update.banner.preparingAria')
-              : t('update.banner.ariaCollapsed', { version: versionForAria })}
+              : isLinuxAurManaged
+                ? t('update.aurManaged.details')
+                : t('update.banner.ariaCollapsed', { version: versionForAria })}
             className={cn(
               'flex w-full items-center justify-center py-2',
               'transition-colors',
@@ -442,7 +469,7 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   }
 
   // ── Expanded state: full banner ──
-  return withWindowsRuntimeDialog(
+  return withPrerequisiteDialogs(
     <div className="flex select-none flex-col border-t border-sidebar-border">
       <div className="relative flex flex-col items-center gap-[10px] px-4 py-3">
         {/* X dismiss —— 右上角。error 态 body 本就隐藏,superseding 允许 dismiss。
@@ -472,7 +499,9 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
             ? t('update.banner.preparingTitle')
             : confirming
               ? t('update.banner.confirmTitle')
-              : t('update.banner.title', { version: version ?? '…' })}
+              : isLinuxAurManaged
+                ? t('update.aurManaged.title')
+                : t('update.banner.title', { version: version ?? '…' })}
         </p>
 
         {/* Subtitle + 「查看更新公告」文字链 —— 同一视觉组(gap-1),所以链接读作副标题的
@@ -492,7 +521,9 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
               ? t('update.banner.preparingSubtitle')
               : confirming
                 ? t('update.banner.confirmBusyHint')
-                : t('update.banner.subtitle')}
+                : isLinuxAurManaged
+                  ? t('update.aurManaged.hint')
+                  : t('update.banner.subtitle')}
           </p>
           {notesVersion && (
             <button
@@ -559,7 +590,9 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
           <button
             ref={relaunchTriggerRef}
             onClick={() => { void handleRelaunchClick(); }}
-            aria-label={t('update.banner.ariaExpanded', { version: version ?? '' })}
+            aria-label={isLinuxAurManaged
+              ? t('update.aurManaged.details')
+              : t('update.banner.ariaExpanded', { version: version ?? '' })}
             className={cn(
               'flex w-full items-center justify-center gap-2 rounded-full border py-2',
               'text-13 font-medium transition-colors',
@@ -567,7 +600,7 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
               'hover:bg-[var(--update-btn-hover)]',
             )}
           >
-            {t('update.banner.button')}
+            {isLinuxAurManaged ? t('update.aurManaged.details') : t('update.banner.button')}
           </button>
         )}
       </div>

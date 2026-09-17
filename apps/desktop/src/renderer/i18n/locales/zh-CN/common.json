@@ -7217,6 +7217,13 @@
       "move": "立即移动（推荐）",
       "download": "手动下载新版本"
     },
+    "aurManaged": {
+      "title": "请通过 AUR 更新",
+      "description": "当前安装由 AUR/pacman 管理，请在终端使用 AUR 助手更新（例如 yay -Syu）。应用不会退出，已下载的更新包会保留。",
+      "hint": "此安装由包管理器维护，不会在应用内安装 .deb。",
+      "details": "查看更新方式",
+      "confirm": "知道了"
+    },
     "windowsRuntimeMissing": {
       "title": "需要安装 Microsoft Visual C++ 运行库",
       "description": "这台电脑缺少更新程序所需的 Microsoft Visual C++ 运行库。已下载的更新包会保留；请安装微软官方 x64 运行库后重新检查。",
