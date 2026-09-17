@@ -78,7 +78,7 @@ import {
 } from './sim-metro.mjs';
 
 import { readSimEnvironment } from './lib/sim-environment.mjs';
-import { bootedSimulatorLinesForTarget, resolveMobileSimulatorBundleId, classifySimMetroListener, validateSimMetroIdentity } from './lib/sim-whoami.mjs';
+import { extractSimWhoamiUdidArgs, bootedSimulatorLinesForTarget, resolveMobileSimulatorBundleId, classifySimMetroListener, validateSimMetroIdentity } from './lib/sim-whoami.mjs';
 
 const mobileDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const worktreeRoot = resolve(mobileDir, '../..');
@@ -88,17 +88,7 @@ const { region, passthrough } = extractMobileDevRegionArgs(process.argv.slice(2)
 const clean = passthrough.includes('--clean');
 const forceBuild = passthrough.includes('--force-build');
 const buildOnly = passthrough.includes('--build-only');
-const simulatorUdidIndex = passthrough.indexOf('--udid');
-const simulatorUdid = simulatorUdidIndex >= 0
-  ? passthrough[simulatorUdidIndex + 1]?.trim().toUpperCase()
-  : null;
-if (
-  simulatorUdidIndex >= 0
-  && !/^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/.test(simulatorUdid ?? '')
-) {
-  console.error('✗ --udid 必须是精确的 Simulator UUID。');
-  process.exit(1);
-}
+const { simulatorUdid } = extractSimWhoamiUdidArgs(passthrough);
 const localConfigResult = ensureMobileLocalRegionConfig({ mobileDir });
 const localConfigStatus = formatMobileLocalConfigStatus(localConfigResult, worktreeRoot);
 if (localConfigStatus) console.log(localConfigStatus);

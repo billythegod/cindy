@@ -199,7 +199,7 @@ Before asking someone to retest, confirm which native app is installed:
 ```bash
 xcrun simctl list devices booted
 pnpm mobile:sim:whoami                    # Global(default)
-pnpm mobile:sim:whoami -- --region=global # global
+pnpm mobile:sim:whoami -- --region=cn     # China Mainland
 ```
 
 `mobile:sim:whoami` resolves the selected identity from `app.config.js` plus the

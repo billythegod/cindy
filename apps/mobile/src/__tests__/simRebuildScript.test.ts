@@ -53,8 +53,7 @@ describe('sim-rebuild script invariants', () => {
   });
 
   it('uses an exact simulator destination when the Host supplies a UDID', () => {
-    expect(source).toContain("passthrough.indexOf('--udid')");
-    expect(source).toContain('Simulator UUID');
+    expect(source).toContain('const { simulatorUdid } = extractSimWhoamiUdidArgs(passthrough);');
     expect(source).toContain('`platform=iOS Simulator,id=${simulatorUdid}`');
     expect(source).toContain("'-destination', simulatorDestination");
   });
