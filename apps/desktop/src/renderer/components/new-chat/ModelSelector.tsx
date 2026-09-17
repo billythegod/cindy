@@ -72,6 +72,7 @@ import { useConnectedSource } from '@/hooks/useConnectedSource';
 import { useGatewayModelPricing, useReferenceModelPricing } from '@/hooks/useModelPricing';
 import { useModelAccessStatus } from '@/hooks/useModelAccessStatus';
 import { useProviders } from '@/hooks/useProviders';
+import { LocalModelCatalogNotice } from './LocalModelCatalogNotice';
 import { providerDisplayName as sharedProviderDisplayName } from '@/lib/providerDisplayName';
 import {
   evictDeviceProviders,
@@ -2734,6 +2735,11 @@ function ModelSelectorContentView({
     [cc.capabilities, codex.capabilities, pi.capabilities, onFastModeChange, onUnifiedSelect, fastModeConfigurable],
   );
 
+  const localCatalogNotice = !deviceId && !providersOverride && localProviders.error
+    ? <LocalModelCatalogNotice failure={localProviders.error} onRetry={localProviders.refetch} /> : null;
+  if (localCatalogNotice && localProviders.loading) {
+    return <div className="w-[320px] max-w-full p-2">{localCatalogNotice}</div>;
+  }
   if (emptyState) return emptyState;
 
   const hasAnyModel = sections ? sections.length > 0 : (flatModels?.length ?? 0) > 0;
@@ -2845,6 +2851,7 @@ function ModelSelectorContentView({
               aria-label={t('newChat.modelSelector.search.placeholderAll')}
             />
           </div>
+          {localCatalogNotice && <div className="shrink-0 p-2">{localCatalogNotice}</div>}
           <UnifiedModelPanel
             localProviderUsage={!deviceId && !providersOverride}
             providers={providers}
@@ -3064,6 +3071,7 @@ function ModelSelectorContentView({
         </>
       )}
       {searchField}
+      {localCatalogNotice}
 
       {/* 模型列表 —— 单栏;分段(供应商)或 flat。 */}
       <div
