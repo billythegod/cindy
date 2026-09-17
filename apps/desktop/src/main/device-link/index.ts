@@ -11,6 +11,7 @@
  */
 
 import os from 'node:os';
+import { deviceName } from './deviceName';
 import { watchNetworkChanges } from './networkChanges';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
@@ -587,12 +588,6 @@ function recoverFromRelayAuthFailure(): void {
     .catch((err) => {
       log.warn('relay auth recovery refresh threw (non-fatal)', err);
     });
-}
-
-/** Windows 历史主机名可能带尾部空白/全大写,统一 trim;空值兜底 'Unknown Device' */
-function deviceName(): string {
-  const name = os.hostname().trim();
-  return name || 'Unknown Device';
 }
 
 function buildDeviceInfo(): DeviceInfo {
