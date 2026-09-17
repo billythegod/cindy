@@ -4099,6 +4099,7 @@ describe('Bot Session task end-to-end runtime', () => {
       if (!task.ok) throw new Error('missing task');
       await runtime.delegation.stopSessionTask('session-1', task.delegationId);
       expect(runtime.closeSession).toHaveBeenCalledTimes(1);
+      const locksBeforeRetry = withSessionLock.mock.calls.length;
       // Opening the visible task and sending directly does not reopen delegation.
       execution = replacement === 'new-turn'
         ? { instanceId: 'native-1', generation: 2 }
@@ -4106,10 +4107,38 @@ describe('Bot Session task end-to-end runtime', () => {
       await vi.advanceTimersByTimeAsync(2_000);
       expect(runtime.closeSession).toHaveBeenCalledTimes(1);
       expect(runtime.abortSession).toHaveBeenCalledTimes(1);
-      expect(withSessionLock).toHaveBeenCalledTimes(1);
+      expect(withSessionLock).toHaveBeenCalledTimes(locksBeforeRetry);
       expect(await runtime.delegation.getSessionTask('session-1', task.delegationId))
         .toMatchObject({ task: { status: 'cancelled', session_status: 'active' } });
     } finally { runtime.dispose(); vi.useRealTimers(); }
+  });
+
+  it.each((['cancel', 'pause', 'request-stop'] as const).flatMap(mode =>
+    [false, true].map(changeInsideLock => ({ mode, changeInsideLock })),
+  ))('does not apply first $mode to a newer direct execution (lock race: $changeInsideLock)', async ({ mode, changeInsideLock }) => {
+      await seedPair();
+      let execution = { instanceId: 'native', generation: 1 };
+      const discard = vi.fn(async () => undefined);
+      const runtime = createDelegationRuntime({ taskControl: true,
+        readSessionExecution: () => execution, discardDelegationQueuedInputs: discard,
+        withSessionLock: async (_id, operation) => {
+          execution = { instanceId: 'native', generation: 2 };
+          await operation();
+        },
+      });
+      try {
+        const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
+        if (!task.ok) throw new Error('missing task');
+        if (!changeInsideLock) execution = { instanceId: 'native', generation: 2 };
+        await runtime.delegation.stopSessionTask('session-1', task.delegationId, mode);
+        expect(runtime.abortSession).not.toHaveBeenCalled();
+        expect(runtime.stopTurn).not.toHaveBeenCalled();
+        expect(runtime.preparePause).not.toHaveBeenCalled();
+        expect(runtime.closeSession).not.toHaveBeenCalled();
+        expect(discard).toHaveBeenCalledWith(task.childSessionId, task.delegationId);
+        expect(await runtime.delegation.getSessionTask('session-1', task.delegationId))
+          .toMatchObject({ task: { status: 'cancelled', session_status: 'active' } });
+      } finally { runtime.dispose(); }
   });
 
   it.each(['done', 'error'] as const)('ignores a delayed %s from an earlier execution after same-Session continuation', async (outcome) => {
@@ -4381,6 +4410,32 @@ describe('Bot Session task end-to-end runtime', () => {
       expect(runtime.dispatch.mock.calls.some(([input]) => input.clientId?.startsWith(`bot-delegation-unpause:${task.delegationId}:`))).toBe(true);
       expect(runtime.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue.some(input => input.clientId.startsWith(`bot-delegation-unpause:${task.delegationId}:`))).toBe(true);
     } finally { runtime.dispose(); }
+  });
+
+  it('restores an owned supplement after the turn ended before its terminal receipt was saved', async () => {
+    await seedPair();
+    const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
+    const before = createDelegationRuntime({ taskControl: true, queueSnapshots,
+      readSessionExecution: () => ({ instanceId: 'before-restart', generation: 1 }) });
+    let after: ReturnType<typeof createDelegationRuntime> | undefined;
+    try {
+      const task = await before.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
+      if (!task.ok) throw new Error('missing task');
+      await before.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Queued supplement.' });
+      h.sqlite!.prepare('UPDATE sessions SET last_turn_ended_at = 10000 WHERE id = ?').run(task.childSessionId);
+      before.dispose();
+      const execution = { instanceId: 'after-restart', generation: 1 };
+      after = createDelegationRuntime({ taskControl: true, queueSnapshots, startTime: 11000,
+        readSessionExecution: () => execution });
+      await after.delegation.restore();
+      await vi.waitFor(() => expect(after!.started).toHaveLength(1));
+      expect(after.started[0].sessionId).toBe(task.childSessionId);
+      expect(after.dispatch).not.toHaveBeenCalled(); // Resume the saved input, never replay initial dispatch.
+      await after.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Supplement result.', hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Supplement result.' });
+    } finally { before.dispose(); after?.dispose(); }
   });
 
   it('binds a restored explicit resume queue to the new native execution', async () => {

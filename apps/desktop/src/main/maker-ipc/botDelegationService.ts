@@ -432,6 +432,30 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     return !!expected && current?.instanceId === expected.instanceId && current.generation === expected.generation;
   };
 
+  const matchesDelegatedExecution = (row: DelegationRow, allowIdle = false): boolean => {
+    if (!deps.readSessionExecution) return true;
+    if (!row.childSessionId) return false;
+    const current = deps.readSessionExecution(row.childSessionId);
+    if (!current) return allowIdle;
+    const receipt = parseRecord(row.permissionSnapshotJson).taskExecution as
+      (DelegationExecutionReceipt & { runSequence: number }) | undefined;
+    return receipt?.runSequence === row.runSequence && receipt.instanceId === current.instanceId
+      && receipt.generation === current.generation;
+  };
+
+  const controlDelegatedExecution = async (row: DelegationRow, operation: () => Promise<void>, allowIdle = false): Promise<boolean> => {
+    if (!row.childSessionId || !matchesDelegatedExecution(row, allowIdle)) return false;
+    let applied = false;
+    const guarded = async () => {
+      if (!matchesDelegatedExecution(row, allowIdle)) return;
+      await operation();
+      applied = true;
+    };
+    if (deps.withSessionLock) await deps.withSessionLock(row.childSessionId, guarded);
+    else await guarded();
+    return applied;
+  };
+
   // Store only a native turn actually accepted for this delegation run. A later
   // direct Session turn must never replace this receipt merely by becoming live.
   const executionSnapshot = (row: DelegationRow) => {
@@ -1549,6 +1573,15 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       return;
     }
 
+    if (deps.taskControl) {
+      await deps.taskControl.restoreInput(row.childSessionId);
+      if (hasPendingDelegationInput(row)) {
+        prepareQueuedResume(row);
+        await deps.taskControl.resumeInput(row.childSessionId);
+        return;
+      }
+    }
+
     if (
       child.activeTurnStartedAt !== null
       && child.lastTurnEndedAt !== null
@@ -1577,15 +1610,6 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         if (changed) await deliverCompletion({ ...row, status: 'failed', lastError });
       }
       return;
-    }
-
-    if (typeof resumedAt === 'number' && deps.taskControl) {
-      await deps.taskControl.restoreInput(row.childSessionId);
-      if (hasPendingDelegationInput(row)) {
-        prepareQueuedResume(row);
-        await deps.taskControl.resumeInput(row.childSessionId);
-        return;
-      }
     }
 
     const validation = await validateDispatchPlan(row);
@@ -2210,6 +2234,13 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     return cancelled;
   };
 
+  const finishCancelledDelegation = async (row: DelegationRow) => {
+    const changed = await cancelDelegationTree(row, 'Cancelled by the requesting Bot.', true, true);
+    if (!changed) return { ok: false as const, errorCode: 'ALREADY_TERMINAL' as const, message: '后台任务已由另一操作结束' };
+    return { ok: true as const, delegationId: row.id, childSessionId: row.childSessionId,
+      control: { state: 'terminal', queue_held: false, stop_status: deps.taskControl ? 'stopped' : 'unknown' } };
+  };
+
   const cancelDelegation = async (
     callerSessionId: string,
     delegationId: string,
@@ -2237,6 +2268,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         message: `后台任务已结束（${row.status}）`,
       };
     }
+    if (!matchesDelegatedExecution(row)) return finishCancelledDelegation(row);
     if (row.childSessionId) {
       if (deps.taskControl) {
         // Commit intent before changing the input/timer boundary. A failed write
@@ -2252,7 +2284,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       try {
         // A successful stop response means the active process has actually
         // accepted cancellation, not merely that the card changed color.
-        await deps.abortSession(row.childSessionId);
+        await controlDelegatedExecution(row, () => deps.abortSession(row.childSessionId!));
       } catch (error) {
         log.warn('Session task stop was not accepted by the child runtime', {
           delegationId,
@@ -2266,21 +2298,11 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         };
       }
     }
-    if (row.childSessionId && deps.taskControl?.isActive(row.childSessionId)) {
+    if (row.childSessionId && matchesDelegatedExecution(row) && deps.taskControl?.isActive(row.childSessionId)) {
       return { ok: true, delegationId, childSessionId: row.childSessionId,
         control: { state: 'cancelling', queue_held: true, stop_status: 'unconfirmed' } };
     }
-    const changed = await cancelDelegationTree(
-      row,
-      'Cancelled by the requesting Bot.',
-      true,
-      true,
-    );
-    if (!changed) {
-      return { ok: false, errorCode: 'ALREADY_TERMINAL', message: '后台任务已由另一操作结束' };
-    }
-    return { ok: true, delegationId, childSessionId: row.childSessionId,
-      control: { state: 'terminal', queue_held: false, stop_status: deps.taskControl ? 'stopped' : 'unknown' } };
+    return finishCancelledDelegation(row);
   };
 
   /**
@@ -3019,11 +3041,14 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       errorCode: 'UNSUPPORTED_CAPABILITY', message: 'Task control is unavailable in this runtime' };
     if (!isActiveDelegation(row.status as DelegationStatus)) return { ok: false as const,
       errorCode: 'ALREADY_TERMINAL', message: 'Task is already terminal' };
+    if (!matchesDelegatedExecution(row, true)) return finishCancelledDelegation(row);
     const existingPause = readTaskPause(row);
     if (existingPause && mode === 'request-stop') return { ok: true as const, childSessionId: row.childSessionId,
       control: taskControlView(row) };
     if (mode === 'request-stop') {
-      const result = await control.stop({ targetSessionId: row.childSessionId });
+      let result: Awaited<ReturnType<typeof control.stop>> = { ok: true, status: 'no-active-turn' };
+      const applied = await controlDelegatedExecution(row, async () => { result = await control.stop({ targetSessionId: row.childSessionId! }); }, true);
+      if (!applied) return finishCancelledDelegation(row);
       if (result.ok) {
         await getDbClient().drizzle.update(botDelegations).set({
           permissionSnapshotJson: JSON.stringify({ ...parseRecord(row.permissionSnapshotJson),
@@ -3055,10 +3080,19 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       }
       persisted = true;
       await control.waitForInputBoundary(row.childSessionId);
-      // Existing interaction wait is already a safe pause; keep its resolver for resume.
-      const result = (pending && pause.interactionOnly) || !control.isActive(row.childSessionId)
-        ? { ok: true as const, status: 'no-active-turn' as const }
-        : await control.stop({ targetSessionId: row.childSessionId });
+      // Keep both native stop and its recovery/goal side effects under the same
+      // reservation fence. A new direct turn must never inherit this pause.
+      let result: Awaited<ReturnType<typeof control.stop>> = { ok: true, status: 'no-active-turn' };
+      const applied = await controlDelegatedExecution(row, async () => {
+        result = (pending && pause.interactionOnly) || !control.isActive(row.childSessionId!)
+          ? { ok: true, status: 'no-active-turn' }
+          : await control.stop({ targetSessionId: row.childSessionId! });
+        if (result.ok) {
+          await control.preparePause(row.childSessionId!);
+          await control.flushInput(row.childSessionId!);
+        }
+      }, true);
+      if (!applied) return finishCancelledDelegation(row);
       if (!result.ok) {
         if (!existingPause) {
           await getDbClient().drizzle.update(botDelegations).set({ permissionSnapshotJson: row.permissionSnapshotJson,
@@ -3068,10 +3102,6 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         }
         return result;
       }
-      await control.preparePause(row.childSessionId);
-      // Confirm the retained queue is durable before acknowledging the pause.
-      // A failed write keeps the pause/token for retry, just like uncertain stop.
-      await control.flushInput(row.childSessionId);
       clearTimer(row.id);
       clearRetryTimer(row.id);
       clearInteractionRetryTimer(row.id);
@@ -3310,9 +3340,9 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         if (parseRecord(row.permissionSnapshotJson).taskCancelRequested === true) {
           if (row.childSessionId) {
             holdTaskInput(row.childSessionId, true);
-            await deps.abortSession(row.childSessionId);
+            await controlDelegatedExecution(row, () => deps.abortSession(row.childSessionId!));
           }
-          if (!row.childSessionId || !deps.taskControl?.isActive(row.childSessionId)) {
+          if (!row.childSessionId || !matchesDelegatedExecution(row) || !deps.taskControl?.isActive(row.childSessionId)) {
             await cancelDelegationTree(row, 'Cancelled by the requesting Bot.', true, true);
           }
           return;
