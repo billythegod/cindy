@@ -264,7 +264,9 @@ Session 任务遵守同一套机制与呈现契约：
   完成独立分支、目录与 Session 绑定；失败不得落回共享目录。只在 Shell 中新建 worktree
   不会修改任务登记或运行时 cwd；`check_session_task` 返回实际登记目录与项目归属。
   终态续接复用原 Session、完整历史、目录和分支，worktree 归属不迁移；每轮有独立的
-  投递与完成回执，重试不重放上一轮。已归档或删除的 Session 不因伙伴补充、回调或重启
+  投递与完成回执，重试不重放上一轮。终态事件携带原 Session 实例与执行代次，旧轮迟到事件
+  不得结算新轮；取消清理重试也须核对该身份，不能中止用户从任务列表直接开启的新执行。
+  已归档或删除的 Session 不因伙伴补充、回调或重启
   自动恢复或创建替身；旧版自动归档的记录也须经显式恢复后才能续接。
 - 补充输入返回 `queued_message_id`；`check_session_task` 返回调用 Session 自己投递的队列，
   可按消息 ID 查询 queued / consuming / dispatched / not-found / unavailable。队列恢复失败时

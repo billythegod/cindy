@@ -75,7 +75,16 @@ type DispatchResult =
     }
   | { ok: false; errorCode: string; message: string };
 
+export interface DelegationExecutionReceipt {
+  instanceId: string;
+  generation: number;
+}
+
 export interface BotDelegationServiceDeps {
+  /** Native reservation identity, including replacement Session instances. */
+  readSessionExecution?: (sessionId: string) => DelegationExecutionReceipt | null;
+  /** Non-expiring native-close fence shared with the Session send boundary. */
+  withSessionLock?: (sessionId: string, operation: () => Promise<void>) => Promise<void>;
   dispatch: (params: {
     targetSessionId: string;
     message: string;
@@ -393,11 +402,18 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     cleanupRetryTimers.delete(delegationId);
   };
 
+  const sameExecution = (sessionId: string, expected: DelegationExecutionReceipt | null | undefined): boolean => {
+    if (!deps.readSessionExecution) return true;
+    const current = deps.readSessionExecution(sessionId);
+    return !!expected && current?.instanceId === expected.instanceId && current.generation === expected.generation;
+  };
+
   const cleanupChildSession = async (
     delegationId: string,
     childSessionId: string,
     abortChild: boolean,
     runSequence: number,
+    execution = deps.readSessionExecution?.(childSessionId),
     attempt = 0,
   ): Promise<void> => {
     try {
@@ -405,8 +421,18 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         .from(botDelegations).where(and(eq(botDelegations.id, delegationId),
           eq(botDelegations.childSessionId, childSessionId))).limit(1);
       if (current?.completedAt == null || current.runSequence !== runSequence) return;
-      if (abortChild) await deps.abortSession(childSessionId);
-      await deps.closeSession?.(childSessionId);
+      // Stale retries must not even acquire the close fence: it rejects queued sends.
+      if (!sameExecution(childSessionId, execution)) return;
+      const cleanup = async () => {
+        if (!sameExecution(childSessionId, execution)) return;
+        if (abortChild) await deps.abortSession(childSessionId);
+        if (!sameExecution(childSessionId, execution)) return;
+        await deps.closeSession?.(childSessionId);
+      };
+      // Direct user sends do not change runSequence. Serialize the native
+      // identity check and cleanup with their reservation boundary as well.
+      if (deps.withSessionLock) await deps.withSessionLock(childSessionId, cleanup);
+      else await cleanup();
       clearCleanupRetryTimer(delegationId);
     } catch (error) {
       log.warn('Session task cleanup failed; scheduling retry', {
@@ -419,7 +445,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       const delay = Math.min(MAX_RETRY_DELAY_MS, 1_000 * 2 ** Math.min(attempt, 6));
       const timer = setTimeout(() => {
         cleanupRetryTimers.delete(delegationId);
-        void withTaskOperation(delegationId, () => cleanupChildSession(delegationId, childSessionId, abortChild, runSequence, attempt + 1));
+        void withTaskOperation(delegationId, () => cleanupChildSession(delegationId, childSessionId, abortChild, runSequence, execution, attempt + 1));
       }, delay);
       timer.unref?.();
       cleanupRetryTimers.set(delegationId, timer);
@@ -2975,6 +3001,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   const settleSessionUnserialized = async (params: {
     childSessionId: string;
     outcome: 'done' | 'error';
+    execution?: DelegationExecutionReceipt | null;
+    expectedRunSequence?: number;
     resultText?: string;
     error?: string;
     /** Captured synchronously at the terminal boundary, before queue drain can start the next turn. */
@@ -2989,6 +3017,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       .where(eq(botDelegations.childSessionId, params.childSessionId))
       .orderBy(desc(botDelegations.createdAt))
       .limit(1);
+    if (params.expectedRunSequence !== undefined && row?.runSequence !== params.expectedRunSequence) return;
+    if (params.execution !== undefined && (!sameExecution(params.childSessionId, params.execution) || row?.acceptedAt == null)) return;
     if (row && parseRecord(row.permissionSnapshotJson).taskCancelRequested === true && isActiveDelegation(row.status as DelegationStatus)) {
       if (!deps.taskControl?.isActive(params.childSessionId)) await cancelDelegationTree(row, 'Cancelled by the requesting Bot.', true, true);
       return;
@@ -3021,6 +3051,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
           return [];
         })).filter((artifact) => artifact.status !== 'deleted').slice(0, MAX_ARTIFACTS)
       : [];
+    // Artifact/history reads can yield while a direct user turn is reserved.
+    if (params.execution !== undefined && !sameExecution(params.childSessionId, params.execution)) return;
     const changed = await updateTerminal({
       delegationId: row.id,
       status,
@@ -3045,14 +3077,14 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       const [held] = await getDbClient().drizzle.select().from(botDelegations)
         .where(eq(botDelegations.childSessionId, params.childSessionId)).limit(1);
       if (held && parseRecord(held.permissionSnapshotJson).taskCancelRequested === true) {
-        void withTaskOperation(held.id, () => settleSessionUnserialized(params)).catch(error =>
+        void withTaskOperation(held.id, () => settleSessionUnserialized({ ...params, expectedRunSequence: held.runSequence })).catch(error =>
           log.warn('Task cancellation confirmation failed', { delegationId: held.id, error: String(error) }));
       }
       return;
     }
-    const [row] = await getDbClient().drizzle.select({ id: botDelegations.id }).from(botDelegations)
+    const [row] = await getDbClient().drizzle.select({ id: botDelegations.id, runSequence: botDelegations.runSequence }).from(botDelegations)
       .where(eq(botDelegations.childSessionId, params.childSessionId)).limit(1);
-    if (row) await withTaskOperation(row.id, () => settleSessionUnserialized(params));
+    if (row) await withTaskOperation(row.id, () => settleSessionUnserialized({ ...params, expectedRunSequence: row.runSequence }));
   };
 
   const restore = async (): Promise<void> => {

@@ -458,6 +458,9 @@ export function finishSessionTerminalEvent(
           const doneData = event.data as { result?: unknown; message?: unknown; reason?: unknown } | null;
           await deps.botDelegationServiceHolder?.settleSession({
             childSessionId: session.id,
+            execution: typeof event.sessionTurnGeneration === 'number'
+              ? { instanceId: event.sessionInstanceId ?? session.instanceId, generation: event.sessionTurnGeneration }
+              : null,
             outcome: isTerminalTurnErrorEvent(event) ? 'error' : 'done',
             resultText: typeof doneData?.result === 'string' ? doneData.result : '',
             error: [doneData?.message, doneData?.reason].find((value): value is string => typeof value === 'string' && value.length > 0),

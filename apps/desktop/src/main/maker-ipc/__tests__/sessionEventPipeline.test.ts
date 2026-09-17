@@ -1383,6 +1383,7 @@ describe('Bot adapters in the shared event pipeline', () => {
     await microtasks();
     expect(h.deps.botDelegationServiceHolder.settleSession).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       childSessionId: 'task', outcome: 'error', resultText: result,
+      execution: { instanceId: h.session.instanceId, generation: 4 },
       error: 'Pi reached the model output limit.',
     }));
     h.deps.autoResumeBookkeeping.consumeFailedTurnCompletionTail.mockReturnValue(true);

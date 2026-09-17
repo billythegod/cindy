@@ -3350,6 +3350,8 @@ describe('Bot Session task end-to-end runtime', () => {
   }
 
   function createDelegationRuntime(options: {
+    readSessionExecution?: Parameters<typeof createBotDelegationService>[0]['readSessionExecution'];
+    withSessionLock?: Parameters<typeof createBotDelegationService>[0]['withSessionLock'];
     closeSession?: Parameters<typeof createBotDelegationService>[0]['closeSession'];
     getWorktree?: Parameters<typeof createBotDelegationService>[0]['getWorktree'];
     withTransferredWorktree?: Parameters<typeof createBotDelegationService>[0]['withTransferredWorktree'];
@@ -3567,6 +3569,8 @@ describe('Bot Session task end-to-end runtime', () => {
     const flushInput = vi.fn(async (): Promise<void> => undefined);
     const closeSession = vi.fn(options.closeSession ?? (async () => undefined));
     const delegation = createBotDelegationService({
+      readSessionExecution: options.readSessionExecution,
+      withSessionLock: options.withSessionLock,
       prepareWorktree: options.prepareWorktree,
       getWorktree: options.getWorktree,
       reconcileWorktree: options.reconcileWorktree,
@@ -4068,6 +4072,77 @@ describe('Bot Session task end-to-end runtime', () => {
       expect(runtime.closeSession).toHaveBeenCalledTimes(1);
       expect(runtime.abortSession).toHaveBeenCalledTimes(1);
     } finally { runtime.dispose(); vi.useRealTimers(); }
+  });
+
+  it.each(['new-turn', 'new-instance'] as const)('does not retry cancellation cleanup against a direct %s', async (replacement) => {
+    await seedPair();
+    vi.useFakeTimers();
+    let execution = { instanceId: 'native-1', generation: 1 };
+    const withSessionLock = vi.fn(async (_id: string, operation: () => Promise<void>) => operation());
+    const runtime = createDelegationRuntime({
+      readSessionExecution: () => execution,
+      withSessionLock,
+      closeSession: async () => { throw new Error('close temporarily failed'); },
+    });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Work.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.delegation.stopSessionTask('session-1', task.delegationId);
+      expect(runtime.closeSession).toHaveBeenCalledTimes(1);
+      // Opening the visible task and sending directly does not reopen delegation.
+      execution = replacement === 'new-turn'
+        ? { instanceId: 'native-1', generation: 2 }
+        : { instanceId: 'native-2', generation: 1 };
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(runtime.closeSession).toHaveBeenCalledTimes(1);
+      expect(runtime.abortSession).toHaveBeenCalledTimes(1);
+      expect(withSessionLock).toHaveBeenCalledTimes(1);
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId))
+        .toMatchObject({ task: { status: 'cancelled', session_status: 'active' } });
+    } finally { runtime.dispose(); vi.useRealTimers(); }
+  });
+
+  it.each(['done', 'error'] as const)('ignores a delayed %s from an earlier execution after same-Session continuation', async (outcome) => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'First run.' });
+      if (!task.ok) throw new Error('missing task');
+      const previousExecution = execution;
+      await runtime.settleChild(task.childSessionId, 'First result.');
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Second run.' });
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome,
+        execution: previousExecution, resultText: 'Stale result.', error: 'Stale failure.' });
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId))
+        .toMatchObject({ task: { status: 'running' } });
+      expect(h.sqlite!.prepare('SELECT result_summary, last_error FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ result_summary: null, last_error: null });
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done',
+        execution, resultText: 'Second result.' });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Second result.' });
+    } finally { runtime.dispose(); }
+  });
+
+  it('ignores the prior terminal event while a continuation is queued before native reservation', async () => {
+    await seedPair();
+    let unavailable = false;
+    const execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution, transientUnavailable: () => unavailable });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'First run.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.settleChild(task.childSessionId, 'First result.');
+      unavailable = true;
+      expect(await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Continue.' }))
+        .toMatchObject({ ok: true, queued: true });
+      // Still generation 1: checking only the live native identity is insufficient.
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution, resultText: 'Old duplicate.' });
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId))
+        .toMatchObject({ task: { status: 'queued' } });
+    } finally { runtime.dispose(); }
   });
 
   it('rechecks explicit archive inside the continuation transaction', async () => {
