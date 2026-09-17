@@ -727,6 +727,8 @@ export interface BotsFinishDelegationArgs {
 
 export interface BotsFinishDelegationResult {
   id: string;
+  targetBotId: string | null;
+  runSequence: number;
   parentSessionId: string | null;
   childSessionId: string | null;
   status: 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'timed-out';

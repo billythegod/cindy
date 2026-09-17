@@ -226,6 +226,12 @@ Session 任务遵守同一套机制与呈现契约：
 - **统一状态机**：`queued → running ⇄ waiting → completed | failed | cancelled`。`waiting`
   表示子任务正在等权限、答案、计划确认或显式恢复；显式暂停另有持久控制标记，
   `check_session_task` 返回 `control` 区分暂停与交互等待，不把它们误报成执行超时。
+- **执行结束与归档分离**：`completed` 只表示本次委派执行正常返回，不证明用户目标已全部
+  完成；等待 CI、后台测试或外部反馈不等于归档。独立任务在正常返回、失败、超时或取消后
+  保留原 Session 的可见状态；正常返回不关闭运行句柄或后台工作，取消与超时仍停止执行。
+  归档／删除沿用用户显式操作，不依据 PR 是否存在或 GitHub 状态自动决定。
+  `check_session_task.session_status` 单独返回实际 Session 的 active／archived／deleted 状态，
+  与执行 `status`、暂停／取消 `control` 分别解读；终态恢复只补投回执，不重跑已结束执行。
 - **显式暂停恢复**：暂停先锁住输入，旧轮终态不交付完成回执；重启只恢复锁，不自动执行。
   恢复保留同一任务 ID、执行 Session 和历史，有队列先消费队列，无队列才投一次去重续接指令。
   旧轮停止未确认时拒绝恢复，禁止与迟到中断竞争；计时只补回实际等待时长。
@@ -257,10 +263,9 @@ Session 任务遵守同一套机制与呈现契约：
 - 项目执行显式传 `working_dir`，可用 `use_worktree=true` 在启动前复用现有 worktree 管理器
   完成独立分支、目录与 Session 绑定；失败不得落回共享目录。只在 Shell 中新建 worktree
   不会修改任务登记或运行时 cwd；`check_session_task` 返回实际登记目录与项目归属。
-  终态续接复用既有目录和分支，并将 worktree 管理器归属及数据库快照迁到新执行任务；
-  迁移先在原登记保存持久意图，提交后按数据库实际归属完成登记。提交回执丢失不盲目回滚，
-  重启、派发和续接重试会对账；数据库不可读或归属冲突时保留意图与目录，只阻止受影响执行，
-  不接管他人归属、不回收工作成果。
+  终态续接复用原 Session、完整历史、目录和分支，worktree 归属不迁移；每轮有独立的
+  投递与完成回执，重试不重放上一轮。已归档或删除的 Session 不因伙伴补充、回调或重启
+  自动恢复或创建替身；旧版自动归档的记录也须经显式恢复后才能续接。
 - 补充输入返回 `queued_message_id`；`check_session_task` 返回调用 Session 自己投递的队列，
   可按消息 ID 查询 queued / consuming / dispatched / not-found / unavailable。队列恢复失败时
   保留任务状态和结果，单独返回 `queue_error=QUEUE_UNAVAILABLE`；无法核实的消息不能报 not-found。

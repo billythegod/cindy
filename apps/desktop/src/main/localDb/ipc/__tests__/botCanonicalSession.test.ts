@@ -3350,6 +3350,7 @@ describe('Bot Session task end-to-end runtime', () => {
   }
 
   function createDelegationRuntime(options: {
+    closeSession?: Parameters<typeof createBotDelegationService>[0]['closeSession'];
     getWorktree?: Parameters<typeof createBotDelegationService>[0]['getWorktree'];
     withTransferredWorktree?: Parameters<typeof createBotDelegationService>[0]['withTransferredWorktree'];
     prepareWorktree?: Parameters<typeof createBotDelegationService>[0]['prepareWorktree'];
@@ -3564,6 +3565,7 @@ describe('Bot Session task end-to-end runtime', () => {
     const waitForInputBoundary = vi.fn(async () => undefined);
     const preparePause = vi.fn(async () => undefined);
     const flushInput = vi.fn(async (): Promise<void> => undefined);
+    const closeSession = vi.fn(options.closeSession ?? (async () => undefined));
     const delegation = createBotDelegationService({
       prepareWorktree: options.prepareWorktree,
       getWorktree: options.getWorktree,
@@ -3588,7 +3590,7 @@ describe('Bot Session task end-to-end runtime', () => {
       readCallerPermission: options.readCallerPermission,
       dispatch,
       abortSession,
-      closeSession: vi.fn(async () => undefined),
+      closeSession,
       broadcastSessionCreated: vi.fn(),
       resolveInteraction: options.resolveInteraction,
       hasPendingInput: (sessionId) => coordinator?.hasPendingQueuedWork(sessionId) || pendingTurns.some(
@@ -3639,7 +3641,7 @@ describe('Bot Session task end-to-end runtime', () => {
     };
 
     return {
-      delegation, coordinator,
+      delegation, coordinator, closeSession,
       heldInputs, steer, stopTurn, waitForInputBoundary, preparePause, flushInput,
       dispatch,
       abortSession,
@@ -3934,7 +3936,7 @@ describe('Bot Session task end-to-end runtime', () => {
       // Failure wakes the parent with the completion notice, never the child.
       expect(runtime.started.map((turn) => turn.sessionId)).toEqual(['session-1']);
       expect(h.sqlite!.prepare('SELECT permission_mode, status FROM sessions WHERE parent_session_id = ?')
-        .get('session-1')).toMatchObject({ permission_mode: 'ask', status: 'archived' });
+        .get('session-1')).toMatchObject({ permission_mode: 'ask', status: 'active' });
     } finally {
       select.mockRestore();
       runtime.dispose();
@@ -4011,6 +4013,86 @@ describe('Bot Session task end-to-end runtime', () => {
     }
   });
 
+  it.each(['done', 'error'] as const)('keeps the Session visible and background work alive after %s, without restarting on restore', async (outcome) => {
+    await seedPair();
+    const runtime = createDelegationRuntime();
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Wait for background checks.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome, resultText: 'Checks are still pending.' });
+      expect(runtime.closeSession).not.toHaveBeenCalled();
+      expect(runtime.abortSession).not.toHaveBeenCalled();
+      expect(h.sqlite!.prepare("SELECT id FROM sessions WHERE status = 'active' AND source = 'desktop'").all())
+        .toContainEqual({ id: task.childSessionId });
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId))
+        .toMatchObject({ task: { session_id: task.childSessionId, session_status: 'active', status: outcome === 'done' ? 'completed' : 'failed' } });
+      const before = runtime.started.length;
+      await runtime.delegation.restore();
+      expect(runtime.started).toHaveLength(before);
+    } finally { runtime.dispose(); }
+  });
+
+  it.each(['archived', 'deleted'] as const)('refuses continuation of a %s Session without creating a replacement', async (status) => {
+    await seedPair();
+    const runtime = createDelegationRuntime();
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Finish.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.settleChild(task.childSessionId, 'Done.');
+      h.sqlite!.prepare('UPDATE sessions SET status = ? WHERE id = ?').run(status, task.childSessionId);
+      const count = h.sqlite!.prepare('SELECT COUNT(*) AS n FROM sessions').get();
+      const before = runtime.started.length;
+      expect(await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Continue.' }))
+        .toMatchObject({ ok: false, errorCode: status.toUpperCase() });
+      expect(h.sqlite!.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual(count);
+      expect(runtime.started).toHaveLength(before);
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId))
+        .toMatchObject({ task: { session_id: task.childSessionId, session_status: status, status: 'completed' } });
+    } finally { runtime.dispose(); }
+  });
+
+  it('does not let a failed cancellation cleanup close a later continuation', async () => {
+    await seedPair();
+    vi.useFakeTimers();
+    const runtime = createDelegationRuntime({ closeSession: async () => { throw new Error('runtime close unavailable'); } });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Do the work.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.delegation.stopSessionTask('session-1', task.delegationId);
+      expect(runtime.closeSession).toHaveBeenCalledTimes(1);
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId))
+        .toMatchObject({ task: { status: 'cancelled', session_status: 'active' } });
+      expect(await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Continue with new instructions.' }))
+        .toMatchObject({ ok: true, childSessionId: task.childSessionId });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(runtime.closeSession).toHaveBeenCalledTimes(1);
+      expect(runtime.abortSession).toHaveBeenCalledTimes(1);
+    } finally { runtime.dispose(); vi.useRealTimers(); }
+  });
+
+  it('rechecks explicit archive inside the continuation transaction', async () => {
+    await seedPair();
+    let childId = '';
+    const originalTx = h.tx!;
+    h.tx = async (name, args) => {
+      if (name === 'bots.reopenDelegation') h.sqlite!.prepare("UPDATE sessions SET status = 'archived' WHERE id = ?").run(childId);
+      return originalTx(name, args);
+    };
+    const runtime = createDelegationRuntime();
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Finish.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.settleChild(task.childSessionId, 'Done.');
+      childId = task.childSessionId;
+      const before = runtime.started.length;
+      expect(await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Continue.' }))
+        .toMatchObject({ ok: false, errorCode: 'SESSION_TASK_STATE_CHANGED' });
+      expect(runtime.started).toHaveLength(before);
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId))
+        .toMatchObject({ task: { status: 'completed', session_status: 'archived' } });
+    } finally { h.tx = originalTx; runtime.dispose(); }
+  });
+
   it('binds a prepared worktree before first dispatch and rejects unavailable isolation', async () => {
     await seedPair();
     const workspace = join(h.userDataDir, 'task-project-worktree');
@@ -4033,7 +4115,7 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { unavailable.dispose(); }
   });
 
-  it('commits the worktree snapshot for each continuation and leaves no child when that transaction fails', async () => {
+  it('keeps the same worktree owner and Session across continuations, including a failed transaction', async () => {
     await seedPair();
     const workspace = join(h.userDataDir, 'continued-worktree');
     mkdirSync(workspace, { recursive: true });
@@ -4067,7 +4149,7 @@ describe('Bot Session task end-to-end runtime', () => {
         const previous = owner;
         const resumed = await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Continue.' });
         expect(resumed).toMatchObject({ ok: true, resumed: true });
-        expect(owner).not.toBe(previous);
+        expect(owner).toBe(previous);
         expect(h.sqlite!.prepare('SELECT working_dir AS cwd, worktree_path AS path FROM sessions WHERE id = ?').get(owner))
           .toEqual({ cwd: normalizeWorkingDirForStorage(workspace), path: workspace });
         expect(runtime.started.at(-1)?.sessionId).toBe(owner);
@@ -4865,7 +4947,14 @@ describe('Bot Session task end-to-end runtime', () => {
       );
       expect(continued).toMatchObject({ ok: true, resumed: true });
       if (!continued.ok || !continued.childSessionId) return;
-      expect(continued.childSessionId).not.toBe(started.childSessionId);
+      expect(continued.childSessionId).toBe(started.childSessionId);
+      expect(await runtime.delegation.listDelegations('session-1')).toMatchObject({
+        delegations: [expect.objectContaining({ id: started.delegationId, childSessionId: started.childSessionId, status: 'running' })],
+      });
+      expect(runtime.started.filter(turn => turn.sessionId === started.childSessionId)).toHaveLength(2);
+      expect(runtime.dispatch.mock.calls.at(-1)?.[0].clientId).toBe(`bot-delegation-start:${started.delegationId}:2`);
+      expect(h.sqlite!.prepare('SELECT content FROM messages WHERE session_id = ? AND role = ?').all(started.childSessionId, 'assistant'))
+        .toContainEqual({ content: '第一版结果。' });
       await runtime.settleChild(continued.childSessionId, '第二版结果，含风险清单。');
 
       const receipts = h.sqlite!.prepare(

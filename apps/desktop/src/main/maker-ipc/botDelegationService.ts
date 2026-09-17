@@ -397,9 +397,14 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     delegationId: string,
     childSessionId: string,
     abortChild: boolean,
+    runSequence: number,
     attempt = 0,
   ): Promise<void> => {
     try {
+      const [current] = await getDbClient().drizzle.select({ completedAt: botDelegations.completedAt, runSequence: botDelegations.runSequence })
+        .from(botDelegations).where(and(eq(botDelegations.id, delegationId),
+          eq(botDelegations.childSessionId, childSessionId))).limit(1);
+      if (current?.completedAt == null || current.runSequence !== runSequence) return;
       if (abortChild) await deps.abortSession(childSessionId);
       await deps.closeSession?.(childSessionId);
       clearCleanupRetryTimer(delegationId);
@@ -414,7 +419,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       const delay = Math.min(MAX_RETRY_DELAY_MS, 1_000 * 2 ** Math.min(attempt, 6));
       const timer = setTimeout(() => {
         cleanupRetryTimers.delete(delegationId);
-        void cleanupChildSession(delegationId, childSessionId, abortChild, attempt + 1);
+        void withTaskOperation(delegationId, () => cleanupChildSession(delegationId, childSessionId, abortChild, runSequence, attempt + 1));
       }, delay);
       timer.unref?.();
       cleanupRetryTimers.set(delegationId, timer);
@@ -850,14 +855,16 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         pendingInteraction: null,
       });
       if (updated.childSessionId) {
-        // 子任务归档由 bots.finishDelegation 在同一事务内完成(见该 tx op 的注释),
-        // 不再另走通用 sessions.setStatus —— 那条通道对 source='bot' 的行会拒单,
-        // 归档失败也不会被吞掉:任何失败都会让整个终态事务回滚并往上抛。
-        await cleanupChildSession(
-          params.delegationId,
-          updated.childSessionId,
-          params.abortChild === true,
-        );
+        // A normal turn boundary must not close the independent Session or its
+        // background work. Explicit cancellation/timeout still stops execution.
+        if (params.abortChild || params.status === 'cancelled' || updated.targetBotId !== null) {
+          await cleanupChildSession(
+            params.delegationId,
+            updated.childSessionId,
+            params.abortChild === true,
+            updated.runSequence,
+          );
+        }
         holdTaskInput(updated.childSessionId, false);
       }
     }
@@ -1238,7 +1245,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
    * 去程投递失败到无法自愈时的收口：委派立刻变成 `failed`，并把人话原因送回发起方。
    *
    * 单独抽出来是因为这条路径有三件事必须一起发生，缺一件就退化成「静默挂起」：
-   * 收口 delegation 行（任务卡据此翻终态）、中止并归档子任务、把失败当作一次结果
+   * 收口 delegation 行（任务卡据此翻终态）、停止失败执行但保留 Session、把失败当作一次结果
    * 回传（发起方的对话里必须出现这句话，而不是只在日志里）。
    */
   async function failDelegationDispatch(
@@ -1300,7 +1307,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       targetSessionId: row.childSessionId,
       message: buildDelegationPrompt(row),
       persistedContent: row.objective,
-      clientId: `bot-delegation-start:${row.id}`,
+      clientId: `bot-delegation-start:${row.id}${row.runSequence > 1 ? `:${row.runSequence}` : ''}`,
       onAccepted: async () => {
         const acceptedAt = now();
         const [accepted] = await db
@@ -2285,8 +2292,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   };
 
   /**
-   * 已结束任务收到继续消息时会另起一条执行 Session，但复用原任务 id。旧 Session
-   * 已归档，新 Session 重新进入 queued；卡片、停止、状态查询与后续结果仍指向同一任务。
+   * Continue in the same visible Session, preserving history, worktree ownership
+   * and callback targets. An archived/deleted Session needs explicit restoration.
    */
   const reopenTerminalDelegation = async (
     callerSessionId: string,
@@ -2324,6 +2331,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const db = getDbClient().drizzle;
     const [oldChild] = await db
       .select({
+        status: sessions.status,
         title: sessions.title,
         workingDir: sessions.workingDir,
         worktreePath: sessions.worktreePath,
@@ -2353,6 +2361,11 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       };
     }
 
+    if (oldChild.status !== 'active') {
+      return { ok: false, errorCode: oldChild.status === 'deleted' ? 'DELETED' : 'ARCHIVED',
+        message: oldChild.status === 'deleted' ? 'The Session was deleted and cannot be continued.' : 'Restore the existing Session before continuing this task.' };
+    }
+
     await deps.reconcileWorktree?.(row.childSessionId);
     const worktreePath = deps.getWorktree?.(row.childSessionId)?.path ?? oldChild.worktreePath;
     const reopenedAt = now();
@@ -2369,18 +2382,10 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       row.resultSummary ? `Previous result:\n${row.resultSummary.slice(0, 4_000)}` : '',
       `Requester follow-up:\n${trimmed}`,
     ].filter(Boolean).join('\n\n').slice(0, MAX_OBJECTIVE_CHARS);
-    const childSessionId = resolveBusinessSessionId(undefined);
+    const childSessionId = row.childSessionId;
     try {
       clearCompletionRetryTimer(row.id);
       await completionInFlight.get(row.id)?.catch(() => undefined);
-      await ensureProjectGitInitialized({
-        workingDir: oldChild.workingDir,
-        workspaceKind: oldChild.workspaceKind ?? 'dialogue',
-        remoteHostId: null,
-        sessionId: childSessionId,
-        autoSnapshotEnabled: readGitSafetySettings().autoSnapshotEnabled,
-        source: 'bot-delegation',
-      });
       const commitReopen = () => getDbClient().tx('bots.reopenDelegation', {
         maxActiveChildren,
         delegationId: row.id,
@@ -2413,13 +2418,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         reopenedAt,
         worktreePath,
       });
-      if (worktreePath && !deps.withTransferredWorktree) {
-        throw new Error('Task worktree transfer is unavailable');
-      }
-      const reopened = worktreePath
-        ? await deps.withTransferredWorktree!(row.childSessionId, childSessionId, worktreePath, commitReopen,
-          { delegationId: row.id, requestingBotId: callerBotId })
-        : await commitReopen();
+      const reopened = await commitReopen();
       if (!reopened.reopened) {
         await deliverCompletion({
           ...row,
@@ -2435,7 +2434,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
           message: '后台任务状态刚刚发生变化，请重新查看后再继续',
         };
       }
-      deps.broadcastSessionCreated?.(childSessionId);
+      clearCleanupRetryTimer(row.id);
       emitChanged({
         delegationId: row.id,
         parentSessionId: callerSessionId,
@@ -2632,7 +2631,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     }
     const [child] = row.childSessionId
       ? await getDbClient().drizzle
-        .select({ title: sessions.title, workingDir: sessions.workingDir, workspaceKind: sessions.workspaceKind })
+        .select({ title: sessions.title, status: sessions.status, workingDir: sessions.workingDir, workspaceKind: sessions.workspaceKind })
         .from(sessions)
         .where(eq(sessions.id, row.childSessionId))
         .limit(1)
@@ -2668,6 +2667,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       task: {
         task_id: row.id,
         session_id: row.childSessionId,
+        session_status: child?.status ?? null,
         status: sessionTaskViewStatus(row),
         control: taskControlView(row),
         working_dir: child?.workingDir ?? null,
