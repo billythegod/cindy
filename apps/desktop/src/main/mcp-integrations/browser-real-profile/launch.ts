@@ -91,6 +91,19 @@ export function isOwnLiveManagedBrowser(data: unknown, runtimeDir: string): bool
   return isOurManagedBrowser(data, runtimeDir);
 }
 
+/**
+ * Whether prepared snapshot diagnostics should still be reported for this
+ * status payload. Own live occupancy always retains. `running: false` means
+ * the managed browser is gone. `running: true` without a pid is incomplete
+ * occupancy right after start, not proof of exit.
+ */
+function retainsPreparedSnapshot(data: unknown, runtimeDir: string): boolean {
+  if (isOwnLiveManagedBrowser(data, runtimeDir)) return true;
+  if (asRecord(data).running !== true) return false;
+  const pid = asRecord(data).pid;
+  return typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0;
+}
+
 export function activeManagedProfileName(useRealProfile: boolean): string {
   return useRealProfile ? REAL_MANAGED_PROFILE : MANAGED_PROFILE;
 }
@@ -214,27 +227,15 @@ export function wrapRuntimeWithRealProfile(
       }
 
       const result = await inner.call(withActiveBrowserProfile(request, deps.isEnabled()));
-      if (request.action === 'stop') {
-        // Snapshot state follows this Cindy's live managed browser, not inner
-        // stop.ok. Vendored stop can return success before Chrome exits;
-        // ExternalChromeBackend then fails the stop as unverified. Clearing
-        // on ok would drop applied/warnings while the copied profile is still
-        // serving. Drop diagnostics only once we no longer own a live process.
-        let stillLive = false;
-        try {
-          const after = await inner.call(
-            withActiveBrowserProfile({ action: 'status' }, deps.isEnabled()),
-          );
-          stillLive = isOwnLiveManagedBrowser(after.data, deps.getRuntimeDir());
-        } catch {
-          // Keep snapshot state unless we can prove the browser is gone.
-        }
-        if (!stillLive) {
+      if (request.action === 'status' && result.ok) {
+        // Unique occupancy owner: later status, not inner stop.ok. Vendored
+        // stop returns before Chrome exits; ExternalChromeBackend then verifies
+        // liveness. A stop-time probe would freeze stillLive=true with no path
+        // back to clear after the outer layer proves the process is gone.
+        if (lastApplied && !retainsPreparedSnapshot(result.data, deps.getRuntimeDir())) {
           lastApplied = null;
           lastWarnings = [];
         }
-      }
-      if (request.action === 'status' && result.ok) {
         return {
           ...result,
           data: annotateStatusData(result.data, hint()),

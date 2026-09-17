@@ -31,6 +31,14 @@ function fakeInner(state: { running: boolean; headless?: boolean; starts: number
         state.running = true;
         return result('start', { running: true });
       }
+      if (request.action === 'open') {
+        state.running = true;
+        return result('open', { running: true });
+      }
+      if (request.action === 'stop') {
+        state.running = false;
+        return result('stop', { stopped: true });
+      }
       return result(request.action, {});
     },
   };
@@ -301,7 +309,6 @@ describe('wrapRuntimeWithRealProfile', () => {
     expect((await wrapped.call({ action: 'start' })).ok).toBe(true);
     expect(snapshot).toHaveBeenCalledOnce();
     live = false;
-    expect((await wrapped.call({ action: 'stop' })).ok).toBe(true);
     expect((await wrapped.call({ action: 'status' })).data).toMatchObject({
       realProfile: { applied: false, source: null },
     });
