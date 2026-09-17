@@ -149,11 +149,13 @@ deny-delete error does not hang the pre-window loop. The unelevated parent
 forwards `--install-writable true|false` across UAC so the elevated child
 does not treat `--elevated` as proof that a per-user install is protected.
 A denied write probe still pins the install as writable when the same-login
-medium token can modify the directory, even if Administrators own it.
-Ownership alone is not enough. After Cindy exits, Retry opens a non-reparse
-directory handle, revalidates its identity after the settle delay, and
-writes backup/copy/rollback through that pinned path so a swapped junction
-cannot receive elevated files.
+medium token can modify the directory or an existing `Cindy.exe`, even if
+Administrators own the tree. Ownership alone is not enough. After Cindy
+exits, Retry opens a non-reparse directory handle and writes backup/copy/
+rollback through that path, refusing descendant junctions so a swapped
+`resources` reparse cannot receive elevated files. Windows startup waits
+past 30s on a sharing violation only while the recorded updater PID is
+alive; antivirus or other deny-delete handles stop after the timeout.
 
 A successful rollback retains the isolated zip for retry and does not relaunch
 Cindy while Retry remains available. Isolation before the outer digest check

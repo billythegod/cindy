@@ -42,11 +42,25 @@ describe('Windows update lock wait', () => {
         elapsedMs: 45_000,
         maxWaitMs: 30_000,
         holderPid: 4242,
-        holderAlive: false,
+        holderAlive: true,
         unlinkFailed: true,
         sharingViolation: true,
       }),
     ).toBe(true);
+  });
+
+  it('stops waiting after the timeout when a sharing violation is not from a live updater PID', () => {
+    expect(
+      shouldKeepWaitingForWindowsUpdateLock({
+        lockExists: true,
+        elapsedMs: 45_000,
+        maxWaitMs: 30_000,
+        holderPid: 4242,
+        holderAlive: false,
+        unlinkFailed: true,
+        sharingViolation: true,
+      }),
+    ).toBe(false);
   });
 
   it('treats EBUSY as the updater-owned sharing violation', () => {

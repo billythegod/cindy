@@ -316,7 +316,7 @@ fn launch_app_exe(args: &CliArgs, exe: &Path) -> io::Result<AppLaunch> {
             install_writable_for_staging(
                 args.elevated,
                 medium_integrity_needs_elevation(&args.app_dir),
-                install_is_user_owned(&args.app_dir),
+                install_is_user_owned_for(&args.app_dir, &args.exe_name),
             ),
         ),
     ) {
@@ -566,11 +566,11 @@ pub(crate) fn install_writable_for_staging(
 /// Ownership alone is not enough: an Administrators-owned directory can still
 /// grant the current user modify access. Unknown AccessCheck fails toward
 /// High-IL staging instead of treating the tree as protected.
-pub(crate) fn install_is_user_owned(app_dir: &Path) -> bool {
-    install_is_medium_writable_from_access(
+pub(crate) fn install_is_user_owned_for(app_dir: &Path, exe_name: &str) -> bool {
+    install_is_medium_writable_from_file_access(
         directory_medium_token_can_modify(app_dir),
-        directory_owned_by_current_user(app_dir),
-    )
+        existing_install_files_medium_writable(app_dir, exe_name),
+    ) || matches!(directory_owned_by_current_user(app_dir), Some(true))
 }
 
 pub(crate) fn install_is_medium_writable_from_access(
@@ -578,6 +578,27 @@ pub(crate) fn install_is_medium_writable_from_access(
     owned_by_current_user: Option<bool>,
 ) -> bool {
     !matches!(medium_can_modify, Some(false)) || matches!(owned_by_current_user, Some(true))
+}
+
+/// Directory FILE_ADD_FILE can be denied while Cindy.exe itself remains
+/// writable. That still needs High-IL staging and a de-elevated launch.
+pub(crate) fn install_is_medium_writable_from_file_access(
+    directory_can_modify: Option<bool>,
+    files_can_modify: Option<bool>,
+) -> bool {
+    !matches!(directory_can_modify, Some(false)) || matches!(files_can_modify, Some(true))
+}
+
+fn existing_install_files_medium_writable(app_dir: &Path, exe_name: &str) -> Option<bool> {
+    #[cfg(windows)]
+    {
+        existing_install_files_medium_writable_windows(app_dir, exe_name)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app_dir, exe_name);
+        None
+    }
 }
 
 fn directory_medium_token_can_modify(app_dir: &Path) -> Option<bool> {
@@ -627,7 +648,7 @@ pub(crate) fn pin_install_writable(args: &mut CliArgs) {
     args.install_writable = Some(install_writable_for_staging(
         args.elevated,
         !args.elevated && medium_integrity_needs_elevation(&args.app_dir),
-        install_is_user_owned(&args.app_dir),
+        install_is_user_owned_for(&args.app_dir, &args.exe_name),
     ));
 }
 
@@ -640,7 +661,7 @@ pub(crate) fn staging_dirs(args: &CliArgs) -> (PathBuf, PathBuf) {
     let probed = install_writable_for_staging(
         args.elevated,
         !args.elevated && medium_integrity_needs_elevation(&args.app_dir),
-        install_is_user_owned(&args.app_dir),
+        install_is_user_owned_for(&args.app_dir, &args.exe_name),
     );
     staging_dirs_for(args, process_elevated, resolved_install_writable(args, probed))
 }
@@ -1696,6 +1717,7 @@ fn rollback_into_pinned<F: FnMut(u64, u64)>(
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
+        let target = app_dir.join(rel)?;
         copy_with_retry(entry.path(), &target)?;
         on_progress((idx as u64) + 1, total);
     }
@@ -1720,10 +1742,12 @@ pub(crate) fn copy_tree_into_pinned<F: FnMut(u64, u64)>(
         let target = dst.join(rel)?;
         if entry.file_type().is_dir() {
             fs::create_dir_all(&target)?;
+            dst.join(rel)?;
         } else {
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
+            let target = dst.join(rel)?;
             copy_with_retry(entry.path(), &target)?;
         }
         on_progress((idx as u64) + 1, total);
@@ -1950,7 +1974,7 @@ impl PinnedInstallDir {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
     }
 
-    fn join(&self, rel: &Path) -> io::Result<PathBuf> {
+    pub(crate) fn join(&self, rel: &Path) -> io::Result<PathBuf> {
         self.ensure()?;
         if rel.is_absolute() {
             return Err(io::Error::new(
@@ -1958,7 +1982,26 @@ impl PinnedInstallDir {
                 format!("refusing absolute install path {}", rel.display()),
             ));
         }
-        Ok(self.path.join(rel))
+        let mut cur = self.path.clone();
+        for component in rel.components() {
+            match component {
+                std::path::Component::Normal(name) => cur.push(name),
+                std::path::Component::CurDir => continue,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("refusing install path component {}", rel.display()),
+                    ));
+                }
+            }
+            if cur.exists() && is_reparse_point(&cur) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("install path is a reparse point: {}", cur.display()),
+                ));
+            }
+        }
+        Ok(cur)
     }
 }
 
@@ -2017,6 +2060,57 @@ fn directory_grants_add_file(app_dir: &Path) -> Option<bool> {
             std::ptr::null(),
             OPEN_EXISTING,
             FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE || handle.is_null() {
+        let err = io::Error::last_os_error();
+        if err.kind() == io::ErrorKind::PermissionDenied {
+            return Some(false);
+        }
+        return None;
+    }
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    Some(true)
+}
+
+#[cfg(windows)]
+fn existing_install_files_medium_writable_windows(app_dir: &Path, exe_name: &str) -> Option<bool> {
+    let exe = app_dir.join(exe_name);
+    if !exe.exists() {
+        return None;
+    }
+    let check = || file_grants_generic_write(&exe);
+    if process_is_elevated() {
+        with_medium_integrity(check).flatten()
+    } else {
+        check()
+    }
+}
+
+#[cfg(windows)]
+fn file_grants_generic_write(path: &Path) -> Option<bool> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING,
+    };
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
             std::ptr::null_mut(),
         )
     };
@@ -2942,6 +3036,24 @@ mod tests {
     }
 
     #[test]
+    fn pinned_join_rejects_a_descendant_junction() {
+        let temp = TestDir::new();
+        let app_dir = temp.0.join("Cindy");
+        fs::create_dir(&app_dir).unwrap();
+        let identity = super::capture_install_dir_identity(&app_dir).expect("capture");
+        let handle = super::open_install_dir_handle(&app_dir, &identity).expect("pin");
+        let planted = temp.0.join("planted");
+        fs::create_dir(&planted).unwrap();
+        std::os::unix::fs::symlink(&planted, app_dir.join("resources")).unwrap();
+        let error = handle.join(Path::new("resources/app.asar")).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            !planted.join("app.asar").exists(),
+            "join must refuse a descendant junction before create_dir_all/fs::copy: {error}"
+        );
+    }
+
+    #[test]
     fn successful_rollback_relaunches_when_final_retry_validation_fails() {
         assert!(
             should_relaunch_after_abandoning_retry(false, false, false, true),
@@ -3615,6 +3727,14 @@ mod tests {
         assert!(
             super::install_is_medium_writable_from_access(Some(false), Some(true)),
             "current-user ownership still counts as medium-writable"
+        );
+        assert!(
+            super::install_is_medium_writable_from_file_access(Some(false), Some(true)),
+            "a medium-writable Cindy.exe is unprotected even when app_dir denies FILE_ADD_FILE"
+        );
+        assert!(
+            !super::install_is_medium_writable_from_file_access(Some(false), Some(false)),
+            "directory and executable both denied remain protected"
         );
         let temp = TestDir::new();
         let mut args = test_args();
