@@ -15,10 +15,10 @@ import { createLogger, initLogger } from './logger.js';
 import { beginDesktopDevInstance, type DesktopDevMode } from './devStartupStatus.js';
 import { ensureSystemBinPathForMachineId } from './deviceId.js';
 import { configureLinuxPasswordStore } from './linuxPasswordStore.js';
-import { findLinuxUserInstallation, linuxUserDesktopName } from './linuxInstallation.js';
+import { recognizeLinuxUserInstallation, linuxUserDesktopName } from './linuxInstallation.js';
 
 if (process.platform === 'linux' && app.isPackaged) {
-  const installation = findLinuxUserInstallation(app.getPath('exe'), os.homedir(), process.getuid?.() ?? -1);
+  const installation = recognizeLinuxUserInstallation(app.getPath('exe'), os.homedir(), process.getuid?.() ?? -1);
   if (installation) app.setDesktopName(linuxUserDesktopName(installation.prefix));
 }
 

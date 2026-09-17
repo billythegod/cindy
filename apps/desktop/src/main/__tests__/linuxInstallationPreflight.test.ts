@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findLinuxUserInstallation } from '../linuxInstallation';
+import { findLinuxUserInstallation, linuxUserDesktopName, recognizeLinuxUserInstallation } from '../linuxInstallation';
 
 // In-memory filesystem answers keep ownership/ACL cases deterministic on all
 // hosts, including root and Windows where chmod cannot model Linux access.
@@ -20,6 +20,11 @@ describe('Linux user installation preflight', () => {
     isSymbolicLink: () => type === 'link',
   }) as fs.Stats;
   const find = () => findLinuxUserInstallation(exe, home, uid);
+  const recognize = () => recognizeLinuxUserInstallation(exe, home, uid);
+  const desktopName = () => {
+    const installation = recognize();
+    return installation && linuxUserDesktopName(installation.prefix);
+  };
 
   beforeEach(() => {
     entries.clear();
@@ -55,23 +60,43 @@ describe('Linux user installation preflight', () => {
   });
 
   it.each(['', 'releases', '.install.lock'])('rejects denied access to %s until repaired', (name) => {
+    const identity = desktopName();
+    expect(identity).not.toBeNull();
     const target = path.join(prefix, name);
     denied.add(target);
     expect(find()).toBeNull();
+    expect(desktopName()).toBe(identity);
     denied.delete(target);
     expect(find()).not.toBeNull();
+    expect(desktopName()).toBe(identity);
   });
 
   it.each(['releases', '.install.lock'])('rejects foreign ownership and symlinks at %s', (name) => {
     const target = path.join(prefix, name);
     entries.set(target, stat(name === 'releases' ? 'directory' : 'file', uid + 1));
     expect(find()).toBeNull();
+    expect(recognize()).not.toBeNull();
     entries.set(target, stat('link'));
     expect(find()).toBeNull();
+    expect(recognize()).not.toBeNull();
   });
 
   it('rejects a non-link previous destination before activation', () => {
     entries.set(path.join(prefix, 'previous'), stat('directory'));
+    expect(find()).toBeNull();
+    expect(recognize()).not.toBeNull();
+  });
+
+  it('recognizes identity without probing update write access', () => {
+    expect(recognize()).toEqual({ prefix, current, region: 'global' });
+    expect(fs.accessSync).not.toHaveBeenCalled();
+  });
+
+  it.each(['marker contents', 'marker owner', 'current target'])('rejects invalid %s for both identity and update', (invalid) => {
+    if (invalid === 'marker contents') vi.mocked(fs.readFileSync).mockReturnValue('not-cindy');
+    if (invalid === 'marker owner') entries.set(path.join(prefix, '.cindy-user-install'), stat('file', uid + 1));
+    if (invalid === 'current target') vi.mocked(fs.readlinkSync).mockReturnValue('releases/another-release');
+    expect(recognize()).toBeNull();
     expect(find()).toBeNull();
   });
 });

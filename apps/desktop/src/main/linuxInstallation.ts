@@ -20,7 +20,8 @@ export interface LinuxUserInstallation {
   region: 'global' | 'cn';
 }
 
-export function findLinuxUserInstallation(
+/** Recognize the stable desktop identity without requiring update access. */
+export function recognizeLinuxUserInstallation(
   exePath: string, home: string, uid: number,
 ): LinuxUserInstallation | null {
   try {
@@ -40,6 +41,18 @@ export function findLinuxUserInstallation(
     const current = fs.readlinkSync(path.join(prefix, 'current'));
     if (!/^releases\/[A-Za-z0-9.+-]+$/.test(current)) return null;
     if (fs.realpathSync(path.join(prefix, current)) !== release) return null;
+    return { prefix, current, region };
+  } catch { return null; }
+}
+
+/** Strict preflight for self-update, checked again before stopping work. */
+export function findLinuxUserInstallation(
+  exePath: string, home: string, uid: number,
+): LinuxUserInstallation | null {
+  const installation = recognizeLinuxUserInstallation(exePath, home, uid);
+  if (!installation) return null;
+  const { prefix } = installation;
+  try {
     // Check the paths the installer actually writes before stopping active
     // work. A writable prefix alone says nothing about staging or flock.
     const releasesPath = path.join(prefix, 'releases');
@@ -60,7 +73,7 @@ export function findLinuxUserInstallation(
         fs.accessSync(entryPath, fs.constants.W_OK);
       } else if (!entry.isSymbolicLink()) return null;
     }
-    return { prefix, current, region };
+    return installation;
   } catch { return null; }
 }
 
