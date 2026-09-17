@@ -8991,7 +8991,8 @@ export class CodexAgent extends BaseAgent {
           && decision.dismissed !== true
         ) {
           live.continuationStarted = true;
-          void startAskUserContinuation(live, decision.answers ?? {}, continuationAutoReviewIntent);
+          // Pass the applied, normalized snapshot so send can reuse this transition.
+          void startAskUserContinuation(live, decision.answers ?? {}, currentAutoReviewIntent);
         } else if (live?.detached && decision.dismissed === true) {
           finishInteractionWithoutFollowUp(requestId);
         }
@@ -12620,7 +12621,15 @@ export class CodexAgent extends BaseAgent {
         const autoReviewIntent = (sendOpts as CodexInternalSendOptions | undefined)?.[
           CODEX_AUTO_REVIEW_INTENT
         ];
-        setAutoReviewIntent(autoReviewIntent ?? appendAutoReviewUserIntent(priorAutoReviewIntent(), message.content, sendOpts), { authority: autoReviewContext() });
+        // A detached answer is applied immediately, including revocations while waiting
+        // for a yielded tool. Reusing that exact snapshot is not a second user input.
+        // Intervening input or a different authority still requires a fresh transition.
+        if (
+          autoReviewIntent !== currentAutoReviewIntent
+          || JSON.stringify(currentAutoReviewAuthority ?? null) !== JSON.stringify(autoReviewContext() ?? null)
+        ) {
+          setAutoReviewIntent(autoReviewIntent ?? appendAutoReviewUserIntent(priorAutoReviewIntent(), message.content, sendOpts), { authority: autoReviewContext() });
+        }
         assertCurrentHost('turn/start');
         // 本条消息的计划意图:sendOpts.planMode 是点击发送瞬间的快照(排队行透传),
         // 权威于 agent 当前武装态;undefined 走旧语义(消耗武装态)。一次性语义:
