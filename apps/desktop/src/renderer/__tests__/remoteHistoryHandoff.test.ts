@@ -4,6 +4,7 @@ import {
 } from '@cindy/maker-shared/message-window';
 import { buildRenderItems, groupWorkRuns } from '../components/chat/MessageStream';
 import type { HistoryChatMessage } from '../lib/makerChatStore';
+import { confirmRemoteUsers, projectRemoteUsers, reserveRemoteUser } from '../lib/remoteUserHandoff';
 
 const row = (clientId: string, isStreaming = false): HistoryChatMessage => ({
   id: clientId, clientId, role: clientId === 'user' ? 'user' : 'assistant',
@@ -20,6 +21,7 @@ function fixture() {
   });
   const handoff = new HistoryViewHandoff<HistoryChatMessage>((message) => message.isStreaming === true);
   const render = (raw: HistoryChatMessage[]) => {
+    raw = projectRemoteUsers(raw);
     const snapshot = view.getSnapshot();
     const state = handoff.reconcile(snapshot, raw);
     const build = (rows: readonly HistoryChatMessage[]) => groupWorkRuns(buildRenderItems([...rows]).items, false);
@@ -27,7 +29,7 @@ function fixture() {
       view, snapshot, liveMessages: raw, streaming: false,
       isLive: (message) => message.isStreaming === true,
       pendingHandoff: state.pending,
-      isLocalUser: (message) => message.role === 'user' && (message.isPendingPersist === true || !!message.blockedByGhost),
+      isLocalUser: (message) => message.role === 'user' && (message.isPendingPersist === true || !!message.blockedByGhost || !!message.localSendPrecedingClientIds),
       build,
       structure: {
         placeholder: () => { throw new Error('This fixture contains prose only'); },
@@ -42,6 +44,40 @@ function fixture() {
 }
 
 describe('desktop remote history uses the shared live-to-history handoff', () => {
+  it.each([false, true])('keeps a sent user through DB echo and stale history, ready=%s', async (ready) => {
+    const { view, render, setSource } = fixture();
+    if (ready) await view.refresh();
+    const pending = reserveRemoteUser({ ...row('sent'), role: 'user' as const, content: 'sent text', isPendingPersist: true }, [row('user')]);
+    expect(render([row('user'), pending]).text).toContain('sent text');
+    const echo = { ...pending, isPendingPersist: undefined, id: 'db-sent' };
+    await view.refresh();
+    expect(render([row('user'), echo]).items.filter((item) => item.type === 'message' && item.message.clientId === 'sent')).toHaveLength(1);
+    const authoritative = { ...row('sent'), role: 'user' as const, content: 'authoritative sent' };
+    setSource([row('user'), authoritative]);
+    await view.refresh();
+    const confirmed = confirmRemoteUsers([echo], new Set(['sent']));
+    expect(confirmed[0].localSendPrecedingClientIds).toBeUndefined();
+    expect(render(confirmed).text).toContain('authoritative sent');
+    setSource([]);
+    await view.refresh();
+    expect(render(confirmed).text).not.toContain('sent text');
+    expect(render([]).items).toEqual([]);
+    view.setActive(false);
+  });
+
+  it.each(['2000-01-01', '2040-01-01'])('keeps user before its reply regardless of controller clock %s', async (createdAt) => {
+    const { view, render } = fixture();
+    await view.refresh();
+    const pending = reserveRemoteUser({ ...row('sent'), role: 'user' as const, createdAt }, [row('user')]);
+    const answer = row('answer', true);
+    // Raw store may have sorted the host reply ahead of the controller's user row.
+    const result = render([row('user'), answer, pending]);
+    expect(result.items.filter((item) => item.type === 'message').map((item) => item.message.clientId)).toEqual(['user', 'sent', 'answer']);
+    const second = reserveRemoteUser({ ...row('second'), role: 'user' as const }, [row('user'), pending, answer]);
+    expect(projectRemoteUsers([row('user'), second, answer, pending]).map((item) => item.clientId)).toEqual(['user', 'sent', 'answer', 'second']);
+    view.setActive(false);
+  });
+
   it('keeps finalized prose through the first stale page and takes over once by clientId', async () => {
     const { view, render, setSource } = fixture();
     expect(render([row('answer', true)]).text).toContain('visible answer');

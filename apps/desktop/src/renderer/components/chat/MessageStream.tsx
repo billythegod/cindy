@@ -74,6 +74,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { BrandLoadingMark } from '@/components/branding/BrandLoadingMark';
 import { useMessageNavRailPreference } from '@/hooks/useMessageNavRailPreference';
 import { HISTORY_GAP_SPLIT_MS } from '@/lib/historyGap';
+import { projectRemoteUsers } from '@/lib/remoteUserHandoff';
 import { resolveToolFilePath, type KnownLocalFileRef } from '@/lib/localPathResolver';
 import { collectGeneratedFiles, type GeneratedFileRef } from '@/lib/generatedFiles';
 import { useTurnChangeSets } from './useTurnChangeSets';
@@ -2544,6 +2545,7 @@ export function MessageStream({
 }: MessageStreamProps) {
   const { i18n, t } = useTranslation();
   const historyView = sessionId ? getRemoteHistoryView(sessionId) : undefined;
+  const displayMessages = useMemo(() => historyView ? projectRemoteUsers(messages) : messages, [historyView, messages]);
   const historySnapshot = useSyncExternalStore(
     historyView?.subscribe ?? (() => () => undefined),
     historyView?.getSnapshot ?? (() => null),
@@ -2554,9 +2556,9 @@ export function MessageStream({
   ), [historyView]);
   // Observe live rows before the first history page too: a stream can finish
   // while that page is in flight. Local tasks retain their existing path.
-  const historyLiveMessages = useMemo(() => historyView ? messages.map((row) => ({
+  const historyLiveMessages = useMemo(() => historyView ? displayMessages.map((row) => ({
     ...row, id: row.id ?? row.clientId, createdAt: row.createdAt ?? '',
-  })) : [], [historyView, messages]);
+  })) : [], [historyView, displayMessages]);
   const handoff = useMemo(() => historySnapshot
     ? historyHandoff.reconcile(historySnapshot, historyLiveMessages) : null,
   [historyHandoff, historySnapshot, historyLiveMessages]);
@@ -2765,7 +2767,7 @@ export function MessageStream({
   // parsed image targets without retaining state beyond the session mount.
   const markdownImageTargetCacheRef = useRef<MarkdownImageTargetCache>(new Map());
   const { items: ungroupedRenderItems, singleResultMap } = useMemo(() => {
-    const built = buildRenderItems(messages, taskUpdates, ghostCardSnapshot, {
+    const built = buildRenderItems(displayMessages, taskUpdates, ghostCardSnapshot, {
       historyWindowIncomplete: !historyLoaded || Boolean(hasMoreMessages) || historyWindowHasIsland,
       turnChangeSets,
       workingDir,
@@ -2778,7 +2780,7 @@ export function MessageStream({
         view: historyView, snapshot: historySnapshot, liveMessages: historyLiveMessages, streaming: isSessionStreaming,
         isLive: (row) => row.isStreaming === true,
         pendingHandoff: handoff?.pending,
-        isLocalUser: (row) => row.role === 'user' && (row.isPendingPersist === true || !!row.blockedByGhost),
+        isLocalUser: (row) => row.role === 'user' && (row.isPendingPersist === true || !!row.blockedByGhost || !!row.localSendPrecedingClientIds),
         build: (rows) => {
           const chunk = buildRenderItems([...rows], taskUpdates, ghostCardSnapshot, {
             historyWindowIncomplete: true, workingDir,
@@ -2812,7 +2814,7 @@ export function MessageStream({
       singleResultMap: built.singleResultMap,
     };
   }, [
-    messages,
+    displayMessages,
     historyView,
     historySnapshot,
     historyLiveMessages,
