@@ -647,6 +647,7 @@ const REMOTE_INVOKE_IN_FLIGHT_LIMIT = 64;
 /** Host DB admission is independent of whether a read can share an in-flight snapshot. */
 const BACKGROUND_REMOTE_INVOKE_CHANNELS: ReadonlySet<string> = new Set([
   'local-db:sessions:list',
+  'local-db:sessions:get-many',
   'local-db:sessions:interrupted-pending',
   'maker:list-active',
   'local-db:bots:list',
@@ -3531,10 +3532,10 @@ export async function runInvoke(
   payload: InvokePayload | undefined,
   timing = new RemoteInvokeTiming(),
 ): Promise<InvokeResultPayload> {
-  return withRemoteDbAdmission(payload?.channel, () => executeRemoteInvoke(src, payload));
+  return withRemoteDbAdmission(payload?.channel, () => executeRemoteInvoke(src, payload, timing));
 }
 
-async function executeRemoteInvoke(src: string, payload: InvokePayload | undefined): Promise<InvokeResultPayload> {
+async function executeRemoteInvoke(src: string, payload: InvokePayload | undefined, timing: RemoteInvokeTiming): Promise<InvokeResultPayload> {
   if (!payload || typeof payload.channel !== 'string') {
     return { ok: false, error: { code: 'INTERNAL', message: 'malformed invoke payload' } };
   }

@@ -950,7 +950,7 @@ describe('remote companion Session visibility at the device-link boundary', () =
 
 
 describe('background database admission covers the complete remote list lifecycle', () => {
-  it.each(['local-db:sessions:list', 'local-db:bots:list', 'maker:list-active', 'local-db:sessions:interrupted-pending', 'maker:remote-resources:list'])(
+  it.each(['local-db:sessions:list', 'local-db:sessions:get-many', 'local-db:bots:list', 'maker:list-active', 'local-db:sessions:interrupted-pending', 'maker:remote-resources:list'])(
     'keeps %s handler and visibility checks in background admission', async (channel) => {
       const admissions: string[] = [];
       setRemoteBotSessionLookup(async () => {

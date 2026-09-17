@@ -41,6 +41,6 @@ describe('batch DB visibility', () => {
     h.current = false;
     const result = await readRemoteBotSessionAccessBatch(['ordinary', ...ids], 'session');
     expect([...result.values()].every((value) => value === 'hidden')).toBe(true);
-    expect(select).toHaveBeenCalledTimes(1);
+    expect(select).not.toHaveBeenCalled();
   });
 });
