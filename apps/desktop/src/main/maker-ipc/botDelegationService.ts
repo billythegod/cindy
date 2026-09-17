@@ -3223,7 +3223,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   };
 
   const pendingExecutionInputs = new Map<string, {
-    execution: DelegationExecutionReceipt | null; clientIds: string[]; runSequence?: number;
+    execution: DelegationExecutionReceipt | null; clientIds: string[]; runSequence?: number; acceptedClientId?: string;
   }>();
 
   const hasPendingDelegationInput = (row: DelegationRow): boolean => {
@@ -3263,9 +3263,10 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
 
   // Only delegation-owned entries from a validated terminal/resume boundary
   // can adopt a new receipt. Ordinary direct Session input remains independent.
-  const acceptQueuedSessionInput = async (childSessionId: string, clientId: string): Promise<void> => {
+  const acceptQueuedSessionInput = async (childSessionId: string, clientId: string, supersedesClientId?: string): Promise<void> => {
     const boundary = pendingExecutionInputs.get(childSessionId);
-    if (!boundary?.clientIds.includes(clientId)) return;
+    if (!boundary || (!boundary.clientIds.includes(clientId)
+      && (!supersedesClientId || !boundary.clientIds.includes(supersedesClientId)))) return;
     const execution = deps.readSessionExecution?.(childSessionId);
     if (!execution) throw new Error('Delegated queued input has no native execution receipt');
     const db = getDbClient().drizzle;
@@ -3295,9 +3296,19 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         .returning({ id: botDelegations.id });
       if (!accepted) throw new Error('Delegated queued execution receipt was not committed');
     }
-    // The callback is awaited before vendor dispatch. Errors retain this boundary
-    // for retry; never allow a turn to run with an uncommitted delegation receipt.
-    if (pendingExecutionInputs.get(childSessionId) === boundary) pendingExecutionInputs.delete(childSessionId);
+    // Acceptance can still roll back before vendor dispatch. Retain the boundary
+    // and its durable CAS predecessor so a retry can reserve another generation.
+    if (pendingExecutionInputs.get(childSessionId) === boundary) pendingExecutionInputs.set(childSessionId, {
+      ...boundary, execution, acceptedClientId: clientId,
+      clientIds: boundary.clientIds.includes(clientId) ? boundary.clientIds : [...boundary.clientIds, clientId],
+    });
+  };
+
+  const confirmQueuedSessionInputDispatched = (childSessionId: string, clientId: string): void => {
+    // A fast terminal event may already have installed the next queue boundary.
+    if (pendingExecutionInputs.get(childSessionId)?.acceptedClientId === clientId) {
+      pendingExecutionInputs.delete(childSessionId);
+    }
   };
 
   const restore = async (): Promise<void> => {
@@ -3417,6 +3428,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     cancelDelegationsForBot,
     settleSession,
     acceptQueuedSessionInput,
+    confirmQueuedSessionInputDispatched,
     handleInteractionStart,
     handleInteractionEnd,
     restore,

@@ -3535,9 +3535,10 @@ describe('Bot Session task end-to-end runtime', () => {
         options.onNativeStarted?.(id);
         return { kind: 'session-dispatch', source: 'fixture-native-turn', dispatched: true };
       },
+      onDispatchedUserTurn: async (id, item) => { delegation.confirmQueuedSessionInputDispatched(id, item.clientId); },
       onAcceptedQueuedMessage: async (id, item) => {
         await acceptedCallbacks.get(item.clientId)?.();
-        if (options.readSessionExecution) await delegation.acceptQueuedSessionInput(id, item.clientId);
+        if (options.readSessionExecution) await delegation.acceptQueuedSessionInput(id, item.clientId, item.supersedesUserClientId);
       },
     }) : undefined;
     const dispatch = vi.fn(async (params: Parameters<typeof dispatchDirect>[0]) => {
@@ -4369,6 +4370,34 @@ describe('Bot Session task end-to-end runtime', () => {
         resultText: 'Queued result.', hadPendingInputAtTerminal: false });
       expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
         .toEqual({ status: 'completed', result_summary: 'Queued result.' });
+    } finally { runtime.dispose(); }
+  });
+
+  it.each([false, true])('retains accepted but undispatched input for retry (cloned: %s)', async cloned => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Retry queued work.' });
+      if (!task.ok) throw new Error('missing task');
+      const originalId = `bot-delegation-interject:${task.delegationId}:retry`;
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        hadPendingInputAtTerminal: true, pendingInputClientIds: [originalId] });
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, originalId);
+      // No dispatch receipt: native reservation was cancelled after acceptance.
+      execution = { instanceId: 'replacement-native', generation: 1 };
+      const retryId = cloned ? 'manual-retry-clone' : originalId;
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, retryId, cloned ? originalId : undefined);
+      runtime.delegation.confirmQueuedSessionInputDispatched(task.childSessionId, retryId);
+      const dispatchedExecution = execution;
+      execution = { instanceId: 'replacement-native', generation: 2 };
+      // A consumed boundary cannot be used to attach a later direct execution.
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, retryId);
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution: dispatchedExecution,
+        resultText: 'Retried result.', hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Retried result.' });
     } finally { runtime.dispose(); }
   });
 
