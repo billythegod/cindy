@@ -8,7 +8,11 @@
 
 import { useMemo } from 'react';
 
-import { addCompatibleRegionalMoney, type RegionalMoney } from '../../shared/regionalMoney';
+import {
+  addCompatibleRegionalMoney,
+  DEFAULT_USAGE_CURRENCY,
+  type RegionalMoney,
+} from '../../shared/regionalMoney';
 import { useSessionEstimatedValue } from './useSessionEstimatedValue';
 import { useSessionSpend } from './useSessionSpend';
 
@@ -22,15 +26,22 @@ export function combineSessionUsageMoney(
   actualMoney: RegionalMoney | null,
   estimatedValueMoney: RegionalMoney | null,
 ): SessionUsageMoney {
+  // 旧 turnCostUsd 没有可靠币种，继续沿用原有兼容边界；仅结构化估值可独立展示。
+  const legacyCurrency = actualMoney?.currency ?? DEFAULT_USAGE_CURRENCY;
+  const displayedEstimate =
+    estimatedValueMoney?.estimateReasons?.includes('legacy-usd') &&
+    estimatedValueMoney.currency !== legacyCurrency
+      ? null
+      : estimatedValueMoney;
   // 零费用只是占位，不能用它的区域币种过滤实际存在的订阅估值。
   // 异币种保留各自金额供 UI 分别展示，不换算、不伪造合计。
-  const values = [actualMoney, estimatedValueMoney].filter((money): money is RegionalMoney =>
+  const values = [actualMoney, displayedEstimate].filter((money): money is RegionalMoney =>
     Boolean(money && money.amount > 0),
   );
   const currency = values[0]?.currency;
   return {
     actualMoney,
-    estimatedValueMoney,
+    estimatedValueMoney: displayedEstimate,
     totalMoney:
       currency && values.every((money) => money.currency === currency)
         ? addCompatibleRegionalMoney(values, currency)

@@ -249,6 +249,24 @@ describe('combineSessionUsageMoney', () => {
     expect(result.totalMoney?.amount).toBeCloseTo(1.259804, 10);
   });
 
+  it.each([0, 1])('keeps ambiguous legacy USD hidden against a CNY balance of %s', (amount) => {
+    const result = combineSessionUsageMoney(
+      { amount, currency: 'CNY', approximate: false, kind: 'actual-cost' },
+      { ...usdEstimate(1), estimateReasons: ['legacy-usd', 'subscription-value'] },
+    );
+    expect(result.estimatedValueMoney).toBeNull();
+    if (amount > 0) expect(result.totalMoney).toMatchObject({ amount, currency: 'CNY' });
+    else expect(result.totalMoney).toBeNull();
+  });
+
+  it('preserves legacy USD estimates within a matching USD ledger', () => {
+    const result = combineSessionUsageMoney(
+      { amount: 0, currency: 'USD', approximate: false, kind: 'actual-cost' },
+      { ...usdEstimate(1), estimateReasons: ['legacy-usd', 'subscription-value'] },
+    );
+    expect(result.totalMoney).toMatchObject({ amount: 1, currency: 'USD' });
+  });
+
   it('preserves different currencies separately without inventing a combined total', () => {
     const result = combineSessionUsageMoney(
       {
@@ -262,7 +280,7 @@ describe('combineSessionUsageMoney', () => {
         currency: 'USD',
         approximate: true,
         kind: 'value-estimate',
-        estimateReasons: ['legacy-usd', 'subscription-value'],
+        estimateReasons: ['reference-price', 'subscription-value'],
       },
     );
 
