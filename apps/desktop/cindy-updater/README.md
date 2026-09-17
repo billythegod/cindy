@@ -148,10 +148,14 @@ sharing violation (Retry still owns `FILE_SHARE_READ`); an ACL or third-party
 deny-delete error does not hang the pre-window loop. The unelevated parent
 forwards `--install-writable true|false` across UAC so the elevated child
 does not treat `--elevated` as proof that a per-user install is protected.
-A denied write probe still pins the install as writable unless `app_dir`
-lives under a known protected system root (Program Files, Windows, or
-ProgramData). Custom same-user-writable directories, including outside the
-profile, keep High-IL ProgramData staging and a de-elevated Close launch.
+A denied write probe still pins the install as writable unless the
+directory owner is not the current user. Path prefixes such as Program
+Files or ProgramData are not enough: a user-owned custom directory under
+those roots keeps High-IL ProgramData staging and a de-elevated launch.
+After Cindy exits, Retry captures the install directory's identity
+(non-reparse, device/inode or volume/file index) and revalidates it after
+the settle delay and immediately before backup, copy, and rollback so a
+swapped junction cannot receive elevated writes.
 
 A successful rollback retains the isolated zip for retry and does not relaunch
 Cindy while Retry remains available. Isolation before the outer digest check

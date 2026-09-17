@@ -562,40 +562,31 @@ pub(crate) fn install_writable_for_staging(
     !cli_elevated && (!medium_integrity_needs_elevation || user_owned)
 }
 
-/// True when `app_dir` is not under a known protected system root. Custom
-/// same-user-writable installs (including outside the profile) stay writable
-/// across a spoofed PermissionDenied probe: High-IL staging and a de-elevated
-/// launch, not protected `app_dir` staging.
+/// True when `app_dir` is user-owned. Path prefixes alone are not enough:
+/// a custom directory under ProgramData/Program Files can still be writable
+/// by the same-login medium token. Unknown owner fails toward High-IL staging.
 pub(crate) fn install_is_user_owned(app_dir: &Path) -> bool {
-    !install_is_protected_system_for(app_dir, &protected_system_roots())
+    install_is_user_owned_from_owner(directory_owned_by_current_user(app_dir))
+}
+
+pub(crate) fn install_is_user_owned_from_owner(owned_by_current_user: Option<bool>) -> bool {
+    !matches!(owned_by_current_user, Some(false))
+}
+
+fn directory_owned_by_current_user(app_dir: &Path) -> Option<bool> {
+    #[cfg(windows)]
+    {
+        directory_owned_by_current_user_windows(app_dir)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app_dir;
+        None
+    }
 }
 
 pub(crate) fn install_is_protected_system_for(app_dir: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|root| windows_path_is_within(app_dir, root))
-}
-
-fn protected_system_roots() -> Vec<PathBuf> {
-    #[cfg(windows)]
-    {
-        [
-            known_folder_program_files(),
-            known_folder_program_files_x86(),
-            known_folder_windows(),
-            known_folder_program_data(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
-    }
-    #[cfg(not(windows))]
-    {
-        vec![
-            PathBuf::from(r"C:\Program Files"),
-            PathBuf::from(r"C:\Program Files (x86)"),
-            PathBuf::from(r"C:\Windows"),
-            PathBuf::from(r"C:\ProgramData"),
-        ]
-    }
 }
 
 /// Case-insensitive Windows path prefix, used even when this crate is tested
@@ -688,21 +679,6 @@ pub(crate) fn program_data_dir() -> PathBuf {
 #[cfg(windows)]
 fn known_folder_program_data() -> Option<PathBuf> {
     known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_ProgramData)
-}
-
-#[cfg(windows)]
-fn known_folder_program_files() -> Option<PathBuf> {
-    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_ProgramFiles)
-}
-
-#[cfg(windows)]
-fn known_folder_program_files_x86() -> Option<PathBuf> {
-    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_ProgramFilesX86)
-}
-
-#[cfg(windows)]
-fn known_folder_windows() -> Option<PathBuf> {
-    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Windows)
 }
 
 #[cfg(windows)]
@@ -1127,13 +1103,21 @@ fn run_inner<F: FnMut(InstallerEvent)>(
         ));
     }
     emit(InstallerEvent::AppExited);
-    if is_reparse_point(&args.app_dir) {
+    let identity = capture_install_dir_identity(&args.app_dir).map_err(|error| {
+        InstallerFailure::new(
+            format!("无法钉住安装目录 {}：{error}", args.app_dir.display()),
+            false,
+        )
+    })?;
+    if identity.is_reparse {
         return Err(InstallerFailure::new(
             format!("安装目录是重解析点，拒绝继续：{}", args.app_dir.display()),
             false,
         ));
     }
     std::thread::sleep(FS_SETTLE_DELAY);
+    ensure_install_dir_unchanged(&identity, &args.app_dir)
+        .map_err(|error| InstallerFailure::new(error, false))?;
 
     // 1.2. Terminate lingering processes that run FROM app_dir. pid_wait only
     //      covers the one main-process PID, but executables living inside the
@@ -1271,6 +1255,8 @@ fn run_inner<F: FnMut(InstallerEvent)>(
         Phase::BackingUp,
         "备份当前版本…".into(),
     ));
+    ensure_install_dir_unchanged(&identity, &args.app_dir)
+        .map_err(|error| InstallerFailure::new(error, true))?;
     ensure_staging_directory(&backup_dir, args)
         .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
     logger::info(format!("[installer] backup_dir={}", backup_dir.display()));
@@ -1288,6 +1274,8 @@ fn run_inner<F: FnMut(InstallerEvent)>(
     //      Wrapped so any failure triggers rollback before bubbling out.
     let install_result: anyhow::Result<()> = (|| {
         // 4. Copy new files over app_dir.
+        ensure_install_dir_unchanged(&identity, &args.app_dir)
+            .map_err(|error| anyhow::anyhow!(error))?;
         copy_tree(&extract_dir, &args.app_dir, |done, total| {
             let pct = if total == 0 { -1 } else { (done * 100 / total).min(100) as i32 };
             emit(InstallerEvent::Progress(
@@ -1355,6 +1343,9 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                 Phase::RollingBack,
                 "更新失败，正在回滚到旧版本…".into(),
             ));
+            if let Err(error) = ensure_install_dir_unchanged(&identity, &args.app_dir) {
+                return Err(InstallerFailure::new(error, false));
+            }
             match rollback(&backup_dir, &args.app_dir, |done, total| {
                 let pct = if total == 0 { -1 } else { (done * 100 / total).min(100) as i32 };
                 emit(InstallerEvent::Progress(
@@ -1819,6 +1810,178 @@ pub(crate) fn create_protected_staging_tree(
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstallDirIdentity {
+    pub is_reparse: bool,
+    device: u64,
+    inode: u64,
+}
+
+pub(crate) fn capture_install_dir_identity(path: &Path) -> io::Result<InstallDirIdentity> {
+    let meta = fs::symlink_metadata(path)?;
+    if !meta.is_dir() && !meta.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("install path is not a directory: {}", path.display()),
+        ));
+    }
+    Ok(InstallDirIdentity {
+        is_reparse: is_reparse_point(path),
+        device: file_device(&meta),
+        inode: file_inode(&meta),
+    })
+}
+
+pub(crate) fn install_dir_identity_unchanged(
+    expected: &InstallDirIdentity,
+    path: &Path,
+) -> bool {
+    match capture_install_dir_identity(path) {
+        Ok(actual) => {
+            !actual.is_reparse
+                && !expected.is_reparse
+                && actual.device == expected.device
+                && actual.inode == expected.inode
+        }
+        Err(_) => false,
+    }
+}
+
+fn ensure_install_dir_unchanged(
+    expected: &InstallDirIdentity,
+    path: &Path,
+) -> Result<(), String> {
+    if install_dir_identity_unchanged(expected, path) {
+        Ok(())
+    } else {
+        Err(format!(
+            "安装目录在更新过程中被替换或变成重解析点，拒绝继续：{}",
+            path.display()
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn file_device(meta: &fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.dev()
+}
+
+#[cfg(unix)]
+fn file_inode(meta: &fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.ino()
+}
+
+#[cfg(windows)]
+fn file_device(meta: &fs::Metadata) -> u64 {
+    use std::os::windows::fs::MetadataExt;
+    meta.volume_serial_number().unwrap_or(0) as u64
+}
+
+#[cfg(windows)]
+fn file_inode(meta: &fs::Metadata) -> u64 {
+    use std::os::windows::fs::MetadataExt;
+    meta.file_index().unwrap_or(0)
+}
+
+#[cfg(windows)]
+fn directory_owned_by_current_user_windows(app_dir: &Path) -> Option<bool> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, LocalFree, ERROR_SUCCESS};
+    use windows_sys::Win32::Security::{
+        EqualSid, GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::Security::Authorization::{
+        GetNamedSecurityInfoW, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let wide: Vec<u16> = app_dir
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut owner = std::ptr::null_mut();
+    let mut sd = std::ptr::null_mut();
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut sd,
+        )
+    };
+    if status != ERROR_SUCCESS || owner.is_null() {
+        if !sd.is_null() {
+            unsafe {
+                let _ = LocalFree(sd);
+            }
+        }
+        return None;
+    }
+    struct SdGuard(*mut core::ffi::c_void);
+    impl Drop for SdGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    let _ = LocalFree(self.0);
+                }
+            }
+        }
+    }
+    let _sd = SdGuard(sd);
+
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return None;
+        }
+        struct TokenGuard(HANDLE);
+        impl Drop for TokenGuard {
+            fn drop(&mut self) {
+                if !self.0.is_null() {
+                    unsafe {
+                        let _ = CloseHandle(self.0);
+                    }
+                }
+            }
+        }
+        let token = TokenGuard(token);
+        let mut returned = 0u32;
+        GetTokenInformation(
+            token.0,
+            TokenUser,
+            std::ptr::null_mut(),
+            0,
+            &mut returned,
+        );
+        if returned == 0 {
+            return None;
+        }
+        let mut buffer = vec![0u8; returned as usize];
+        if GetTokenInformation(
+            token.0,
+            TokenUser,
+            buffer.as_mut_ptr().cast(),
+            returned,
+            &mut returned,
+        ) == 0
+        {
+            return None;
+        }
+        let user = &*(buffer.as_ptr() as *const TOKEN_USER);
+        if user.User.Sid.is_null() {
+            return None;
+        }
+        Some(EqualSid(owner, user.User.Sid) != 0)
+    }
 }
 
 fn verify_trusted_ancestor(path: &Path) -> io::Result<()> {
@@ -2525,6 +2688,66 @@ mod tests {
     }
 
     #[test]
+    fn install_dir_identity_rejects_a_swapped_reparse_point() {
+        let temp = TestDir::new();
+        let app_dir = temp.0.join("Cindy");
+        fs::create_dir(&app_dir).unwrap();
+        let identity = super::capture_install_dir_identity(&app_dir).expect("capture");
+        assert!(
+            !identity.is_reparse,
+            "a normal install directory must not look like a junction"
+        );
+        assert!(super::install_dir_identity_unchanged(&identity, &app_dir));
+
+        fs::remove_dir(&app_dir).unwrap();
+        let planted = temp.0.join("planted");
+        fs::create_dir(&planted).unwrap();
+        std::os::unix::fs::symlink(&planted, &app_dir).unwrap();
+        assert!(
+            !super::install_dir_identity_unchanged(&identity, &app_dir),
+            "elevated Retry must not copy through a junction swapped in after the first check"
+        );
+        assert!(
+            super::capture_install_dir_identity(&app_dir)
+                .expect("capture junction")
+                .is_reparse
+        );
+    }
+
+    #[test]
+    fn elevated_retry_revalidates_app_dir_after_the_settle_delay() {
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("fn run_inner")
+            .expect("run_inner");
+        let end = source[start..]
+            .find("copy_tree(&extract_dir, &args.app_dir")
+            .expect("copy_tree follows identity checks");
+        let body = &source[start..start + end];
+        assert!(
+            body.contains("capture_install_dir_identity"),
+            "pin app_dir before the settle delay, not only as a one-shot reparse check:\n{body}"
+        );
+        let sleep = body
+            .find("FS_SETTLE_DELAY")
+            .expect("settle delay");
+        let after = &body[sleep..];
+        assert!(
+            after.contains("ensure_install_dir_unchanged"),
+            "revalidate the pinned directory after the two-second window a junction can be planted:\n{after}"
+        );
+        let copy = source
+            .find("copy_tree(&extract_dir, &args.app_dir")
+            .expect("copy_tree");
+        let before_copy = &source[start..copy];
+        assert!(
+            before_copy.rfind("ensure_install_dir_unchanged")
+                > before_copy.rfind("snapshot_overwritten_files"),
+            "revalidate app_dir immediately before copy_tree, not only after Cindy exits:\n{before_copy}"
+        );
+    }
+
+    #[test]
     fn successful_rollback_relaunches_when_final_retry_validation_fails() {
         assert!(
             should_relaunch_after_abandoning_retry(false, false, false, true),
@@ -3182,6 +3405,18 @@ mod tests {
                 ],
             ),
             "Windows system directories are protected"
+        );
+        assert!(
+            super::install_is_user_owned_from_owner(Some(true)),
+            "a user-owned directory under ProgramData must not pin as protected"
+        );
+        assert!(
+            !super::install_is_user_owned_from_owner(Some(false)),
+            "an Administrators-owned Program Files install may use protected staging"
+        );
+        assert!(
+            super::install_is_user_owned_from_owner(None),
+            "if owner cannot be read, fail toward High-IL staging instead of app_dir staging"
         );
         let temp = TestDir::new();
         let mut args = test_args();
