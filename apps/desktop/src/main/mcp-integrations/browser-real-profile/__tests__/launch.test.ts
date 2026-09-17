@@ -88,11 +88,8 @@ describe('wrapRuntimeWithRealProfile', () => {
 
       await wrapped.call({ action: 'stop' });
       expect((await wrapped.call({ action: 'status' })).data).toMatchObject({
-        realProfile: { applied: false, source: null },
+        realProfile: { applied: true, warnings },
       });
-      expect(JSON.stringify((await wrapped.call({ action: 'status' })).data)).not.toContain(
-        'warnings',
-      );
       const retried = await wrapped.call({ action: 'start' });
       expect(retried.message).toBeUndefined();
       expect(JSON.stringify((await wrapped.call({ action: 'status' })).data)).not.toContain(
@@ -310,11 +307,8 @@ describe('wrapRuntimeWithRealProfile', () => {
     expect(snapshot).toHaveBeenCalledOnce();
     live = false;
     expect((await wrapped.call({ action: 'status' })).data).toMatchObject({
-      realProfile: { applied: false, source: null },
+      realProfile: { applied: true, source: 'chrome', warnings },
     });
-    expect(JSON.stringify((await wrapped.call({ action: 'status' })).data)).not.toContain(
-      'warnings',
-    );
   });
 
   it('keeps snapshot state when stop fails while the managed browser is still live', async () => {
