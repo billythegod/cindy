@@ -9903,7 +9903,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const createOpts = buildCreateOptsWithStderr({
       id: sessionId,
       agentKind: meta.agentKind,
-      workingDir: meta.workDir,
+      workingDir: row.workingDir ?? meta.workDir,
       model: meta.model,
       providerId: row.providerId,
       resumeSessionId: meta.sdkSessionId,
@@ -12171,6 +12171,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     checkWorkDirExists,
     resolveRecoveredWorkingDir: (sessionId, dir) => workingDirectoryRecovery.resolve(sessionId, dir),
+    isPersistedWorktreeFallback: (sessionId, dir, dbDir) => path.resolve(dir) ===
+      worktreeConversationFallbackDir(dialogueWorkspaceRootDir(), sessionId, dbDir),
     preflightBotRuntimeResources: async (opts) => { await preflightBotRuntimeResources(opts); },
     readWorkingDirectoryRecoveryCreateOpts: async (sessionId) => {
       const [row] = await getDbClient().drizzle.select().from(sessions)

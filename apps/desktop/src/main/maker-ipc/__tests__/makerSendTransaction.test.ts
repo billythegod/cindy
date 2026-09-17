@@ -1258,6 +1258,34 @@ describe('maker SEND transaction', () => {
     expect(recovered.send).toHaveBeenCalledWith(expect.stringContaining('Original filesystem unavailable'), expect.anything());
   });
 
+  it.each([true, false])('rechecks the DB worktree after restarting with a queued fallback (restored: %s)', async (restored) => {
+    const original = '/repo/.cindy-worktrees/task';
+    const fallback = '/owned/dialogues/worktree-recovery/key';
+    let current: MakerSendTransactionSession | undefined;
+    const check = vi.fn(async (_id: string, _dir: string | undefined | null) => true);
+    const { deps } = createDeps({
+      getSession: () => current,
+      readSessionWorkingDirFromDb: async () => original,
+      isPersistedWorktreeFallback: (_id, dir, dbDir) => dir === fallback && dbDir === original,
+      checkWorkDirExists: check,
+      resolveRecoveredWorkingDir: (_id, dir) => restored ? dir : fallback,
+      peekWorkingDirectoryRecoveryNote: () => restored ? null : 'worktree still unavailable after restart',
+      bootstrapSession: vi.fn(async (opts) => {
+        current = createSession({ workDir: opts.workingDir });
+        return { session: current, didInjectOrcaInstructions: false, didInjectProjectContext: false };
+      }),
+    });
+    await createMakerSendTransaction(deps).sendToAgentAccepted('session-1', 'queued', {
+      agentKind: 'codex', workingDir: fallback, resumeSessionId: 'native-history',
+    });
+    expect(check.mock.calls[0]?.[1]).toBe(original);
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({
+      workingDir: restored ? original : fallback, resumeSessionId: 'native-history',
+    }));
+    expect(current!.send).toHaveBeenCalledOnce();
+    if (!restored) expect(current!.send).toHaveBeenCalledWith(expect.stringContaining('still unavailable after restart'), expect.anything());
+  });
+
   it.each([false, true])('sends once after an unrestorable worktree falls back (live runtime: %s)', async (live) => {
     const original = path.resolve('/repo/.cindy-worktrees/missing');
     const fallback = path.resolve('/owned/dialogues/task');
