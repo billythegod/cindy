@@ -467,10 +467,12 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
 
   const acceptExecution = async (row: DelegationRow): Promise<void> => {
     if (!deps.readSessionExecution) return;
-    await getDbClient().drizzle.update(botDelegations).set({
+    const [accepted] = await getDbClient().drizzle.update(botDelegations).set({
       permissionSnapshotJson: executionSnapshot(row),
     }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
-      inArray(botDelegations.status, ['queued', 'running', 'waiting'])));
+      inArray(botDelegations.status, ['queued', 'running', 'waiting'])))
+      .returning({ id: botDelegations.id });
+    if (!accepted) throw new Error('Delegated execution receipt was not committed');
   };
 
   const cleanupChildSession = async (
@@ -3160,6 +3162,22 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       return;
     }
     if (!row || readTaskPause(row) || !ACTIVE_DELEGATION_STATUSES.includes(row.status as (typeof ACTIVE_DELEGATION_STATUSES)[number])) return;
+    // message_session_task can enqueue after the event snapshot but before this
+    // task operation. Include those accepted inputs before publishing completion.
+    const liveOwnedIds = (deps.readPendingInputClientIds?.(params.childSessionId) ?? [])
+      .filter(clientId => isDelegationQueuedInput(row.id, clientId));
+    if (liveOwnedIds.length) {
+      const existing = pendingExecutionInputs.get(params.childSessionId);
+      if (existing && existing.runSequence === row.runSequence) {
+        pendingExecutionInputs.set(params.childSessionId, { ...existing,
+          clientIds: [...new Set([...existing.clientIds, ...liveOwnedIds])] });
+      } else if (acceptedExecution) {
+        pendingExecutionInputs.set(params.childSessionId, {
+          execution: acceptedExecution, clientIds: liveOwnedIds, runSequence: row.runSequence,
+        });
+      }
+      return;
+    }
     const ownedPendingInputIds = params.pendingInputClientIds?.filter(clientId => isDelegationQueuedInput(row.id, clientId));
     // Live terminal boundary validation is awaited separately by queue acceptance.
     // Do not overwrite a receipt already adopted while settlement was reading.

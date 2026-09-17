@@ -4373,6 +4373,42 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
+  it('keeps a supplement queued after an empty terminal snapshot tracked until its result', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ taskControl: true, queueSnapshots: new Map(), readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
+      if (!task.ok) throw new Error('missing task');
+      // The terminal adapter captured [] before this supplement obtained the task lock.
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Late supplement.' });
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Original result.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      expect(await runtime.delegation.getSessionTask('session-1', task.delegationId)).toMatchObject({ task: { status: 'running' } });
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.settleChild(task.childSessionId, 'Original turn ended.');
+      await vi.waitFor(() => expect(runtime.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(2));
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Late supplement result.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Late supplement result.' });
+    } finally { runtime.dispose(); }
+  });
+
+  it('rejects a supplement acceptance if its delegated run has already ended', async () => {
+    await seedPair();
+    const runtime = createDelegationRuntime({ taskControl: true, queueSnapshots: new Map(),
+      readSessionExecution: () => ({ instanceId: 'native', generation: 1 }) });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Work.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Queued supplement.' });
+      const accepted = runtime.dispatch.mock.calls.find(([input]) => input.clientId?.startsWith('bot-delegation-interject:'))![0].onAccepted!;
+      h.sqlite!.prepare("UPDATE bot_delegations SET status = 'cancelled' WHERE id = ?").run(task.delegationId);
+      await expect(accepted()).rejects.toThrow('Delegated execution receipt was not committed');
+    } finally { runtime.dispose(); }
+  });
+
   it('awaits terminal receipt validation when queue acceptance overtakes settlement', async () => {
     await seedPair();
     let execution = { instanceId: 'native', generation: 1 };
