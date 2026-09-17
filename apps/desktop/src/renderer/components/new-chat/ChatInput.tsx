@@ -15,7 +15,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { buildLocalSkillPathRoute } from '@/features/skillhub/lib/localRoutes';
 import { Folder, MessageSquarePlus, Mic, Pen, TriangleAlert, X } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { useStableTranslation as useTranslation } from '@/hooks/useStableTranslation';
 import type { AgentInputReference } from '@cindy/maker-shared/agent-input-projection';
 import { requiresFullAccessConfirmation } from '@cindy/maker-shared/permission-mode';
 import { ImageLightbox } from '@/components/chat/ImageLightbox';
@@ -47,6 +47,7 @@ import {
 } from './ComposerListNodes';
 import { WindowsSelectionReplacement } from './WindowsSelectionReplacement';
 import { EmptyDocSelectionGuard } from './EmptyDocSelectionGuard';
+import { resetEmptyComposerDocument } from './resetEmptyComposerDocument';
 import {
   hasFocusMovedToInteractiveElement,
   useComposerSendFocusRestore,
@@ -3700,7 +3701,7 @@ export function ChatInput({
         if (draft?.text) {
           editor.commands.setContent(normalizeRestoredComposerDraft(draft.text));
         } else {
-          editor.commands.clearContent();
+          resetEmptyComposerDocument(editor, voiceInputBusyRef.current || voiceDraftTextRef.current.length > 0);
         }
       } finally {
         isRestoringRef.current = false;

@@ -2,7 +2,7 @@ import { MountedMenuContent } from './MountedMenuContent';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, EllipsisVertical, Play } from 'lucide-react';
 import { withSidebarNavigation, type SidebarNavigationProps } from './sidebarNavigation';
-import { useTranslation } from 'react-i18next';
+import { useStableTranslation as useTranslation } from '@/hooks/useStableTranslation';
 
 import { cn } from '@/lib/utils';
 import { Spinner } from '@/components/ui/spinner';
