@@ -46,7 +46,10 @@ export function createBotMessageTransport(deps: {
         result.error.code === 'IPC_ERROR'
           ? (/^\[([A-Z_]+)\]/.exec(result.error.message)?.[1] ?? 'REMOTE_UNAVAILABLE')
           : result.error.code;
-      throw unavailable(code);
+      // A returned tunnel error can come from a post-handler owner/permission
+      // check, after the peer has already accepted the message. Preserve its
+      // submitted origin; the code alone cannot establish non-delivery.
+      throw Object.assign(unavailable(code), { inFlight: true });
     }
     return result.result as T;
   };

@@ -201,7 +201,9 @@ describe('botDirectMessageService', () => {
   it.each([
     ['legacy', 'before-send'], ['native', 'before-send'],
     ['legacy', 'after-send'], ['native', 'after-send'],
-  ] as const)('preserves the %s owner-switch result %s through transport and original-owner cleanup', async (mode, phase) => {
+    ['legacy', 'remote-postcheck'], ['native', 'remote-postcheck'],
+    ['legacy', 'explicit-rejection'], ['native', 'explicit-rejection'],
+  ] as const)('preserves the %s delivery result %s through transport and original-owner cleanup', async (mode, phase) => {
     let current = true;
     const nextOwnerDb = createDatabase();
     const enterTunnel = vi.fn();
@@ -227,6 +229,14 @@ describe('botDirectMessageService', () => {
         if (phase === 'before-send') changeOwner();
         options?.preSend?.();
         enterTunnel(channel);
+        if (phase === 'explicit-rejection') return { ok: true, result: mode === 'legacy'
+          ? { accepted: false, reason: 'TARGET_BOT_INACTIVE' }
+          : { effects: [], teammateMessage: { ok: false, errorCode: 'TARGET_BOT_INACTIVE' } } };
+        if (phase === 'remote-postcheck') {
+          // The sender owner remains current; only the receiving host changes
+          // owner after its handler. The tunnel replaces its receipt with IPC_ERROR.
+          return { ok: false, error: { code: 'IPC_ERROR', message: '[NOT_FOUND] Session does not exist' } };
+        }
         changeOwner();
         // A same-code error after submission is not proof of local guard rejection.
         throw Object.assign(new Error('Account changed after submission'), { code: 'OWNER_CHANGED' });
@@ -235,13 +245,15 @@ describe('botDirectMessageService', () => {
     const service = createBotDirectMessageService({ dispatch, transport,
       captureOwnerScope: () => 'original', isOwnerScopeCurrent: () => current });
     try {
+      const rejected = phase === 'before-send' || phase === 'explicit-rejection';
       expect(await service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'peer::bot-b', message: 'hello' }))
-        .toMatchObject({ ok: false, errorCode: phase === 'before-send' ? 'OWNER_CHANGED' : 'DELIVERY_UNKNOWN' });
+        .toMatchObject({ ok: false, errorCode: phase === 'before-send' ? 'OWNER_CHANGED'
+          : phase === 'explicit-rejection' ? 'TARGET_BOT_INACTIVE' : 'DELIVERY_UNKNOWN' });
       expect(enterTunnel).toHaveBeenCalledTimes(phase === 'before-send' ? 0 : 1);
       expect(sqlite.prepare('SELECT delivery_status FROM bot_direct_messages').get())
-        .toEqual({ delivery_status: phase === 'before-send' ? 'failed' : 'pending' });
+        .toEqual({ delivery_status: rejected ? 'failed' : 'pending' });
       expect(sqlite.prepare('SELECT message_count FROM bot_direct_message_threads').get())
-        .toEqual({ message_count: phase === 'before-send' ? 0 : 1 });
+        .toEqual({ message_count: rejected ? 0 : 1 });
       expect(nextOwnerDb.prepare('SELECT count(*) AS count FROM bot_direct_messages').get()).toEqual({ count: 0 });
       expect(nextOwnerDb.prepare('SELECT count(*) AS count FROM bot_direct_message_threads').get()).toEqual({ count: 0 });
       expect(h.createMessage).not.toHaveBeenCalled();

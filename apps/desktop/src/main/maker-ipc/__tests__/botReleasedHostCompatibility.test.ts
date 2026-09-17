@@ -195,10 +195,12 @@ describe('published 0.1.85 host compatibility', () => {
   it('honors released busy and paused guards, missing conversations and revoked control', async () => {
     const h = oldHost();
     h.engine.isTurnRunning.mockReturnValue(true);
-    expect(await h.transport.send(h.input, () => {})).toMatchObject({ ok: false, errorCode: 'SESSION_RUNNING' });
+    // Released hosts encode thrown guards and post-handler failures identically.
+    // Keep the original cause, but do not infer non-delivery from that envelope.
+    await expect(h.transport.send(h.input, () => {})).rejects.toMatchObject({ code: 'SESSION_RUNNING', inFlight: true });
     h.engine.isTurnRunning.mockReturnValue(false);
     h.sqlite.prepare("UPDATE bot_profiles SET status='paused'").run();
-    expect(await h.transport.send(h.input, () => {})).toMatchObject({ ok: false, errorCode: 'PRECONDITION_FAILED' });
+    await expect(h.transport.send(h.input, () => {})).rejects.toMatchObject({ code: 'PRECONDITION_FAILED', inFlight: true });
     expect(h.engine.send).not.toHaveBeenCalled();
     h.source.canonicalSessionId = '';
     await expect(h.transport.resolve(h.input.targetId)).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
@@ -236,6 +238,21 @@ describe('published 0.1.85 host compatibility', () => {
     })).toMatchObject({ ok: false, errorCode: 'OWNER_CHANGED' });
     expect(h.engine.send).not.toHaveBeenCalled();
     expect(h.sqlite.prepare('SELECT count(*) AS count FROM messages').get()).toEqual({ count: 0 });
+  });
+
+  it('preserves unknown delivery when the released SEND completes but a post-handler check returns NOT_FOUND', async () => {
+    const h = oldHost();
+    const original = h.invoke.getMockImplementation()!;
+    h.invoke.mockImplementation(async (...args) => {
+      const result = await original(...args);
+      if (args[1] !== 'maker:send') return result;
+      expect(result).toMatchObject({ ok: true, result: { accepted: true } });
+      return { ok: false, error: { code: 'IPC_ERROR', message: '[NOT_FOUND] Session does not exist' } };
+    });
+    await expect(h.transport.send(h.input, () => {})).rejects.toMatchObject({ code: 'NOT_FOUND', inFlight: true });
+    expect(h.engine.send).toHaveBeenCalledTimes(1);
+    expect(h.sqlite.prepare('SELECT client_id FROM messages').all())
+      .toEqual([{ client_id: 'teammate-bridge:unique-test-id' }]);
   });
 
   it('retains unknown delivery after an in-flight revocation instead of retrying a legacy send', async () => {
