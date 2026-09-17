@@ -3265,22 +3265,24 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     });
   };
 
-  const pendingBoundaryValidations = new Map<string, Map<string, Promise<void>>>();
+  const pendingBoundaryValidations = new Map<string, Map<string, Promise<string[]>>>();
 
-  const validateTerminalQueueBoundary = async (params: Parameters<typeof settleSessionUnserialized>[0]): Promise<void> => {
-    if (!params.execution || !params.pendingInputClientIds?.length) return;
+  const validateTerminalQueueBoundary = async (params: Parameters<typeof settleSessionUnserialized>[0]): Promise<string[]> => {
+    if (!params.execution || !params.pendingInputClientIds?.length) return [];
     const [row] = await getDbClient().drizzle.select().from(botDelegations)
       .where(eq(botDelegations.childSessionId, params.childSessionId)).limit(1);
-    if (!row || !isActiveDelegation(row.status as DelegationStatus) || readTaskPause(row)
-      || row.acceptedAt == null || parseRecord(row.permissionSnapshotJson).taskCancelRequested === true) return;
+    if (!row) return [];
+    const clientIds = params.pendingInputClientIds.filter(id => isDelegationQueuedInput(row.id, id));
+    if (!isActiveDelegation(row.status as DelegationStatus) || readTaskPause(row)
+      || row.acceptedAt == null || parseRecord(row.permissionSnapshotJson).taskCancelRequested === true) return clientIds;
     const receipt = parseRecord(row.permissionSnapshotJson).taskExecution as
       (DelegationExecutionReceipt & { runSequence: number }) | undefined;
     if (receipt?.runSequence !== row.runSequence || receipt.instanceId !== params.execution.instanceId
-      || receipt.generation !== params.execution.generation) return;
-    const clientIds = params.pendingInputClientIds.filter(id => isDelegationQueuedInput(row.id, id));
+      || receipt.generation !== params.execution.generation) return clientIds;
     if (clientIds.length) pendingExecutionInputs.set(params.childSessionId, {
       execution: params.execution, clientIds, runSequence: row.runSequence,
     });
+    return [];
   };
 
   const settleSession = async (params: Parameters<typeof settleSessionUnserialized>[0]) => {
@@ -3319,13 +3321,20 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   // can adopt a new receipt. Ordinary direct Session input remains independent.
   const acceptQueuedSessionInput = async (childSessionId: string, clientId: string, supersedesClientId?: string, restoredFromSnapshot = false): Promise<void> => {
     const validations = pendingBoundaryValidations.get(childSessionId);
-    const validation = validations?.get(clientId);
+    const validationId = validations?.has(clientId) ? clientId : supersedesClientId ?? clientId;
+    const validation = validations?.get(validationId);
+    const declinedIds = validation ? await validation : [];
+    let boundary = pendingExecutionInputs.get(childSessionId);
+    const hasVerifiedBoundary = boundary?.clientIds.includes(clientId)
+      || (supersedesClientId !== undefined && boundary?.clientIds.includes(supersedesClientId));
+    if (declinedIds.includes(validationId) && !hasVerifiedBoundary) {
+      // Retain the negative receipt: retrying must not turn rejection into success.
+      throw new Error('Delegated queue boundary validation was declined');
+    }
     if (validation) {
-      await validation;
-      if (validations?.get(clientId) === validation) validations.delete(clientId);
+      if (validations?.get(validationId) === validation) validations.delete(validationId);
       if (!validations?.size) pendingBoundaryValidations.delete(childSessionId);
     }
-    let boundary = pendingExecutionInputs.get(childSessionId);
     if (!boundary && restoredFromSnapshot) {
       // Queue restoration can be released by the user before Bot restore runs.
       // Only the coordinator's cold-snapshot provenance may rebuild this boundary.

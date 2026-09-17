@@ -4341,7 +4341,17 @@ describe('Bot Session task end-to-end runtime', () => {
       const direct = runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
         resultText: 'Direct answer.', hadPendingInputAtTerminal: true, pendingInputClientIds: [clientId] });
       execution = { instanceId: 'native', generation: 3 };
-      await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, clientId)).resolves.toBeUndefined();
+      if (kind === 'delegated-looking') {
+        // A declined owned boundary must remain rejected on subsequent attempts.
+        for (let retry = 0; retry < 2; retry++) {
+          await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, clientId))
+            .rejects.toThrow('Delegated queue boundary validation was declined');
+        }
+        await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'retry-clone', clientId))
+          .rejects.toThrow('Delegated queue boundary validation was declined');
+      } else {
+        await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, clientId)).resolves.toBeUndefined();
+      }
       expect(h.sqlite!.prepare("SELECT json_extract(permission_snapshot_json, '$.taskExecution.generation') AS generation FROM bot_delegations WHERE id = ?").get(task.delegationId))
         .toEqual({ generation: 1 });
       release();
@@ -4363,7 +4373,7 @@ describe('Bot Session task end-to-end runtime', () => {
       execution = { instanceId: 'native', generation: 2 };
       await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'unrelated-input');
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
-        resultText: 'Unrelated.', hadPendingInputAtTerminal: false });
+        resultText: 'Unrelated.', pendingInputClientIds: [`bot-delegation-interject:${task.delegationId}:owned`], hadPendingInputAtTerminal: true });
       expect(await runtime.delegation.getSessionTask('session-1', task.delegationId)).toMatchObject({ task: { status: 'running' } });
       await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, `bot-delegation-interject:${task.delegationId}:owned`);
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
