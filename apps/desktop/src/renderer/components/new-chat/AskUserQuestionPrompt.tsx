@@ -101,6 +101,25 @@ interface AskUserQuestionPromptProps {
 // ---------------------------------------------------------------------------
 
 export function AskUserQuestionPrompt({
+  sessionId,
+  ...props
+}: AskUserQuestionPromptProps & { sessionId: string | undefined }) {
+  // Match the store's content comparison, including option order and metadata.
+  // Fixed field order avoids treating JSON property order as a new question;
+  // absent and empty options are equivalent, as in the reducer.
+  const questionsIdentity = props.pending.questions.map((question) => [
+    question.question,
+    question.header,
+    question.multiSelect,
+    (question.options ?? []).map((option) => [option.label, option.description]),
+  ]);
+  const formKey = JSON.stringify([sessionId, props.pending.requestId, questionsIdentity]);
+  // Repeated snapshots keep this form mounted. A changed session, request or
+  // question starts from its own draft (cleared by the store on content changes).
+  return <AskUserQuestionForm key={formKey} {...props} />;
+}
+
+function AskUserQuestionForm({
   pending,
   onAnswer,
   viewerState,
@@ -120,10 +139,9 @@ export function AskUserQuestionPrompt({
   // batch — a stale draft from a previous question batch must be ignored.
   // Note: `requestId` is captured in the lazy initializer closure on first
   // render; subsequent prop updates do NOT re-run the initializer (that is
-  // useState's documented behavior). For a brand-new question batch the
-  // store has already cleared `askUserDraft` to null on the
-  // `ask_user_question` reducer path, so the lazy init falls through to
-  // defaults — no stale leak across batches.
+  // useState's documented behavior). The public wrapper remounts this form
+  // when the session, request or question content changes. For a new or changed
+  // question batch the store clears `askUserDraft`, so the form starts fresh.
   const [currentIndex, setCurrentIndex] = useState<number>(() =>
     draft && draft.requestId === requestId ? draft.currentIndex : 0,
   );
@@ -240,7 +258,7 @@ export function AskUserQuestionPrompt({
       <>
         {currentIndex > 0 && (
           <div className={skipClass}>
-            <span className="flex items-center gap-[6px]">
+            <span className="flex items-center gap-1.5">
               <span>&#8592;</span>
               <span>{t('chat.askUserQuestion.back')}</span>
             </span>
@@ -454,7 +472,7 @@ export function AskUserQuestionPrompt({
     : 'translate-x-0 opacity-100';
 
   const footerActions = (
-    <div className="flex gap-[10px]">
+    <div className="flex gap-2.5">
       {isAnimating ? (
         buttonsSnapshotRef.current
       ) : (
@@ -468,7 +486,7 @@ export function AskUserQuestionPrompt({
                 'border border-[var(--confirm-btn-secondary-border)] bg-transparent text-[var(--confirm-btn-secondary-text)] transition-colors hover:bg-[var(--confirm-btn-secondary-hover)]',
               )}
             >
-              <span className="flex items-center gap-[6px]">
+              <span className="flex items-center gap-1.5">
                 <span>&#8592;</span>
                 <span>{t('chat.askUserQuestion.back')}</span>
               </span>
@@ -545,12 +563,12 @@ export function AskUserQuestionPrompt({
       {/* Content area — participates in slide animation */}
       <div
         className={cn(
-          'flex flex-col gap-[16px] transition-all duration-200 ease-in-out',
+          'flex flex-col gap-4 transition-[opacity,transform] duration-[var(--motion-base)] ease-[var(--motion-ease-move)]',
           slideClass,
         )}
       >
         {/* Question Row (header chip moved to top header bar above) */}
-        <div className="flex flex-col gap-[8px]">
+        <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <span className="text-15 font-medium text-[var(--ask-header-text)]">
               {currentQ?.question}

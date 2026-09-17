@@ -1,4 +1,9 @@
+import { getPluginMarketService } from '../plugin-market/service.js';
+import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
+import type { createBotCapabilityService } from '../maker-ipc/botCapabilityService.js';
+import { routineTools } from '../routines/service.js';
 import { join as pathJoin } from 'node:path';
+import { and, eq } from 'drizzle-orm';
 
 import {
   createLiziMcpProviders,
@@ -15,6 +20,7 @@ import type { MakerMemoryManager } from '@cindy/maker-core';
 import {
   getCindyGhostsMcpDeps,
   type GhostGrantLiveSessionState,
+  type CindyGhostsHostDeps,
   type ToolResultImageDescription,
 } from './ghost.js';
 import { createGroupHistoryMcpServer } from './groupHistoryMcpServer.js';
@@ -26,13 +32,19 @@ import { getIOSSimulatorMcpDeps } from './ios-simulator.js';
 import { getBrowserMcpDeps } from './browser.js';
 import { getComputerMcpDeps } from './computer.js';
 import { feishuIm, wechatIm } from '../im';
+import { sendFeishuSessionNotification } from '../im/feishu/notificationOrigin';
 import { getSlackToolBridge } from '../hook-control/slackToolBridge.js';
 import { createLogger } from '../logger.js';
 import { getScheduler } from '../scheduler-host/index.js';
 import { stabilizeHookCommand } from '../scheduler-host/hook-script-generator.js';
 import { searchSessionsFn } from '../maker-host/session-search.js';
 import { readLspModeSettings } from '../maker-host/lsp-mode-store.js';
-import { tryGetOrcaCollabService } from '../maker-ipc/register.js';
+import {
+  tryGetBotDelegationService,
+  tryGetBotDirectMessageService,
+  tryGetOrcaCollabService,
+} from '../maker-ipc/register.js';
+import { createBotProfile } from '../localDb/ipc/bots.js';
 import { submitGithubIssueForSession } from '../github-issue/index.js';
 import {
   listWorkdirsForHistory,
@@ -44,6 +56,11 @@ import {
   tryGetDbClient,
 } from '../localDb/client/current.js';
 import { searchChatHistoryHybrid } from '../localDb/chatHistorySearch.js';
+import { resolveBotHistorySessionIds } from '../localDb/botHistoryScope.js';
+import {
+  listBotSkillsForSession,
+  saveBotSkillForSession,
+} from '../maker-ipc/botSkillService.js';
 import {
   patchSessionMetaInDb,
   renameSessionTitlesInDb,
@@ -56,13 +73,17 @@ import { broadcastContactsChanged } from '../maker-host/contacts-change-broadcas
 import { readContactsSettings } from '../maker-host/contacts-settings-store.js';
 import { readSystemContacts, writeSystemContacts } from '../maker-host/system-contacts.js';
 import { BUILTIN_LIZI_MCP_IDS, pluginIdForProviderName } from '../maker-host/plugins/builtin-plugins.js';
+import { isFrozenBuiltinPluginAllowed } from './codexBuiltinToolPolicy.js';
 import { GLOBAL_PLUGIN_IDS } from '../maker-host/plugins/types.js';
 import {
   readChatHistoryMessages,
   type ChatHistoryReaderDeps,
 } from './remoteChatHistory.js';
+import { botSessionLinks, sessions } from '../localDb/schema.js';
 
 export interface DesktopMcpProvidersDeps {
+  botCapabilities: Pick<ReturnType<typeof createBotCapabilityService>, 'list' | 'select'>;
+  createMediaDownloadContext?: CindyGhostsHostDeps['createMediaDownloadContext'];
   /** 当前 Desktop 版本，供 Forge 为具体插件包生成默认 minCindyVersion。 */
   getAppVersion?: () => string;
   getMakerMemoryManager: () => MakerMemoryManager;
@@ -172,8 +193,14 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       // branch-free. Feishu returns 400 with structured `response.data.code/msg`
       // for business errors (rate-limit, invalid text, …); those get folded
       // into `reason` for logging without leaking axios internals to the tool.
-      sendMessage: async (chatId, markdown) => {
+      sendMessage: async (chatId, markdown, notificationSessionId) => {
         try {
+          if (notificationSessionId && chatId === feishuIm.getOwnerOpenId()) {
+            const { messageId, sessionLinked } = await sendFeishuSessionNotification(
+              feishuIm, notificationSessionId, markdown,
+            );
+            return { ok: true, messageId, sessionLinked };
+          }
           const { messageId } = await feishuIm.sendMarkdownText(chatId, markdown);
           return { ok: true, messageId };
         } catch (err) {
@@ -336,6 +363,22 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     // (LLM 调工具时) registerMakerIpc 早已执行完毕, holder 已 ready。
     xdtHelper: {
       logger: createLogger('mcp/cindy_helper'),
+      resolveSurface: async ({ sessionId }) => {
+        const dbClient = tryGetDbClient();
+        if (!dbClient) return 'restricted';
+        const [owned] = await dbClient.drizzle
+          .select({ role: botSessionLinks.role })
+          .from(botSessionLinks)
+          .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
+          .where(
+            and(
+              eq(botSessionLinks.sessionId, sessionId),
+              eq(sessions.source, 'bot'),
+            ),
+          )
+          .limit(1);
+        return owned ? 'bot' : 'default';
+      },
       sessionQueue: {
         listSessionQueue: wrap((service, sessionId: string) => service.listSessionQueue(sessionId)),
         listSessionQueuedCounts: wrap((service, sessionIds: string[]) =>
@@ -445,7 +488,176 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
           return { ok: false, errorCode: 'INTERNAL', message: err instanceof Error ? err.message : String(err) };
         }
       },
+      sessionTasks: {
+        startSessionTask: async (params) => {
+          const svc = tryGetBotDelegationService();
+          if (!svc) {
+            return {
+              ok: false,
+              errorCode: 'HOST_NOT_READY',
+              message: 'Session task service not initialized',
+            };
+          }
+          try {
+            return await svc.startSessionTask(params);
+          } catch (err) {
+            return {
+              ok: false,
+              errorCode: 'INTERNAL',
+              message: err instanceof Error ? err.message : String(err),
+            };
+          }
+        },
+        messageSessionTask: async ({ callerSessionId, taskId, reply }) => {
+          const svc = tryGetBotDelegationService();
+          if (!svc) {
+            return {
+              ok: false,
+              errorCode: 'HOST_NOT_READY',
+              message: 'Session task service not initialized',
+            };
+          }
+          try {
+            return await svc.messageSessionTask(callerSessionId, taskId, reply);
+          } catch (err) {
+            return {
+              ok: false,
+              errorCode: 'INTERNAL',
+              message: err instanceof Error ? err.message : String(err),
+            };
+          }
+        },
+        getSessionTask: async ({ callerSessionId, taskId, queuedMessageId }) => {
+          const svc = tryGetBotDelegationService();
+          if (!svc) {
+            return {
+              ok: false,
+              errorCode: 'HOST_NOT_READY',
+              message: 'Session task service not initialized',
+            };
+          }
+          return svc.getSessionTask(callerSessionId, taskId, queuedMessageId);
+        },
+        stopSessionTask: async ({ callerSessionId, taskId, mode }) => {
+          const svc = tryGetBotDelegationService();
+          if (!svc) {
+            return {
+              ok: false,
+              errorCode: 'HOST_NOT_READY',
+              message: 'Session task service not initialized',
+            };
+          }
+          return svc.stopSessionTask(callerSessionId, taskId, mode);
+        },
+      },
+      botMessaging: {
+        messageAgent: async (params) => {
+          const svc = tryGetBotDirectMessageService();
+          if (!svc) {
+            return {
+              ok: false,
+              errorCode: 'HOST_NOT_READY',
+              message: 'Bot direct message service not initialized',
+            };
+          }
+          try {
+            return await svc.messageAgent(params);
+          } catch (err) {
+            return {
+              ok: false,
+              errorCode: 'INTERNAL',
+              message: err instanceof Error ? err.message : String(err),
+            };
+          }
+        },
+      },
+      botRoutines: {
+        service: routineTools,
+        resolveBotId: async (callerSessionId) => {
+          const scope = activeOwnerScopeKey();
+          if (!getActiveAppSession().dataOwnerId || isAppSessionBoundaryPending()) {
+            throw new Error('Routine account is no longer active');
+          }
+          const dbClient = tryGetDbClient();
+          if (!dbClient) throw new Error('localDb not ready');
+          const [owned] = await dbClient.drizzle
+            .select({ botId: botSessionLinks.botId })
+            .from(botSessionLinks)
+            .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
+            .where(and(
+              eq(botSessionLinks.sessionId, callerSessionId),
+              eq(sessions.source, 'bot'),
+              eq(botSessionLinks.role, 'canonical'),
+            ))
+            .limit(1);
+          if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== scope) {
+            throw new Error('Routine account is no longer active');
+          }
+          if (!owned) throw new Error('当前调用未绑定伙伴主任务');
+          return owned.botId;
+        },
+      },
+      botProfiles: {
+        create: async ({ callerSessionId, name, description, identitySource }) => {
+          const dbClient = tryGetDbClient();
+          if (!dbClient) {
+            return { ok: false, errorCode: 'HOST_NOT_READY', message: 'localDb not ready' };
+          }
+          const [owned] = await dbClient.drizzle
+            .select({ botId: botSessionLinks.botId })
+            .from(botSessionLinks)
+            .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
+            .where(
+              and(
+                eq(botSessionLinks.sessionId, callerSessionId),
+                eq(sessions.source, 'bot'),
+                eq(botSessionLinks.role, 'canonical'),
+              ),
+            )
+            .limit(1);
+          if (!owned) {
+            return { ok: false, errorCode: 'NOT_A_BOT_SESSION', message: '当前调用未绑定伙伴主任务' };
+          }
+          try {
+            const profile = await createBotProfile({
+              name,
+              description,
+              identitySource,
+              prepareInvitation: true,
+            });
+            return {
+              ok: true,
+              bot: { id: profile.id, name: profile.name, description: profile.description },
+            };
+          } catch (err) {
+            return {
+              ok: false,
+              errorCode: isIpcError(err) && err.code === 'INVALID_PARAMS' ? 'INVALID_ARGS' : 'INTERNAL',
+              message: err instanceof Error ? err.message : String(err),
+            };
+          }
+        },
+      },
+      // 伙伴自己沉淀的真技能。归属同样由 callerSessionId 反查,工具面不收 botId。
+      botCapabilities: deps.botCapabilities,
+      botSkills: {
+        save: (params) => saveBotSkillForSession(params),
+        list: (params) => listBotSkillsForSession(params),
+      },
       history: {
+        resolveSessionScope: async ({ callerSessionId, callerMemoryScopeKey }) => {
+          try {
+            const sessionIds = await resolveBotHistorySessionIds(
+              callerSessionId,
+              callerMemoryScopeKey,
+            );
+            return { ok: true, sessionIds };
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            const errorCode = /localDb not ready/i.test(message) ? 'HOST_NOT_READY' : 'INTERNAL';
+            return { ok: false, errorCode, message };
+          }
+        },
         listWorkdirs: async (args) => {
           try { const page = await listWorkdirsForHistory(args); return { ok: true, page }; }
           catch (err) { const msg = err instanceof Error ? err.message : String(err); const errorCode = isDbClientNotReadyError(err) ? 'HOST_NOT_READY' : 'INTERNAL'; return { ok: false, errorCode, message: msg }; }
@@ -518,6 +730,12 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         // is installed. Its live call gate returns an actionable install/enable
         // result, while every runtime mutation remains blocked in Main.
         const keepIOSSimulatorGatewayStable = pluginId === 'ios-simulator';
+        // Stable providers may ignore a live global/project toggle so an
+        // already-running ordinary task can recover, but a Bot Profile is an
+        // immutable per-runtime capability boundary and must always win.
+        if (!isFrozenBuiltinPluginAllowed(ctx.vendorOptions, pluginId)) {
+          return false;
+        }
         // Plugin gate：registry 负责 essential / machine / project / user / default 判定。
         if (
           !keepOrcaProviderStable &&
@@ -562,8 +780,10 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       name: 'cindy',
       instance: createCindyGhostsMcpServer(
         getCindyGhostsMcpDeps(ctx, {
+          pluginMarket: getPluginMarketService(),
           getAppVersion: deps.getAppVersion,
           getLiveSessionGrantState: deps.getLiveSessionGrantState,
+          createMediaDownloadContext: deps.createMediaDownloadContext,
           describeToolResultImage: deps.describeToolResultImage,
           onToolResultImagesFailed: deps.onToolResultImagesFailed,
         }),

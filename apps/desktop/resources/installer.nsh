@@ -65,7 +65,24 @@
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
 !macroend
 
+; Electron registers the per-user login item under the executable basename.
+; Upgrades invoke the old uninstaller too: preserve both registration and the
+; user's StartupApproved state. Only remove entries owned by this install path.
+!macro cindyRemoveLoginItemOnUninstall
+  ${IfNot} ${isUpdated}
+    Push $R0
+    ReadRegStr $R0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_FILENAME}"
+    ${If} $R0 == '"$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
+    ${OrIf} $R0 == '$INSTDIR\${APP_EXECUTABLE_FILENAME}'
+      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_FILENAME}"
+      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${PRODUCT_FILENAME}"
+    ${EndIf}
+    Pop $R0
+  ${EndIf}
+!macroend
+
 !macro customUnInstall
+  !insertmacro cindyRemoveLoginItemOnUninstall
   ; 卸载时清理本产品自己的快捷方式(不碰并存的老 XDMaker / 另一区域安装)
   Delete "$DESKTOP\${SHORTCUT_NAME}.lnk"
   Delete "$SMPROGRAMS\${SHORTCUT_NAME}.lnk"
@@ -78,4 +95,25 @@
   DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.cshare\shell\${PRODUCT_FILENAME}"
   DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.xdtshare\shell\${PRODUCT_FILENAME}"
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
+!macroend
+
+; Runs before removing files, including the old-version uninstall during upgrade.
+; Never leave a SYSTEM service referring to a removed or partially updated image.
+!macro customUnInit
+  IfFileExists "$INSTDIR\resources\tools\remote-desktop\cindy-windows-desktop-host.exe" 0 cindy_remote_service_done
+  nsExec::ExecToStack '"$INSTDIR\resources\tools\remote-desktop\cindy-windows-desktop-host.exe" --uninstall'
+  Pop $R0
+  Pop $R1
+  ${If} $R0 != 0
+    ; Per-user uninstallers may lack service permissions. Keep the direct path
+    ; first so missing services (including ordinary per-user installs) need no UAC.
+    nsExec::ExecToStack '"$INSTDIR\resources\tools\remote-desktop\cindy-windows-desktop-host.exe" --elevate-uninstall'
+    Pop $R0
+    Pop $R1
+  ${EndIf}
+  ${If} $R0 != 0
+    MessageBox MB_OK|MB_ICONSTOP "Could not stop the Cindy remote desktop service. Run the uninstaller as administrator and try again."
+    Abort
+  ${EndIf}
+  cindy_remote_service_done:
 !macroend

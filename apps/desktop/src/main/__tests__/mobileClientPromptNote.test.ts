@@ -218,7 +218,7 @@ describe('shouldPrependMobileClientPromptNote(内置命令旁路)', () => {
       },
       'claude-code',
     )).toBe(true);
-    expect(shouldPrependMobileClientPromptNote('/compact', 'pi')).toBe(true);
+    expect(shouldPrependMobileClientPromptNote('/compact', 'pi')).toBe(false);
     expect(shouldPrependMobileClientPromptNote('/compact', 'codex')).toBe(true);
   });
 });
@@ -301,6 +301,11 @@ describe('stripMainOnlySendOpts(直连路径消毒)', () => {
       .toEqual({ messageUuid: 'u' });
   });
 
+  it('剥掉客户端自报的 fromDeviceLinkClient', () => {
+    expect(stripMainOnlySendOpts({ messageUuid: 'u', fromDeviceLinkClient: true }))
+      .toEqual({ messageUuid: 'u' });
+  });
+
   it('剥掉客户端伪造的 generation 与 turn 身份,但保留待 IPC 校验的 clear token', () => {
     expect(
       stripMainOnlySendOpts({
@@ -353,8 +358,17 @@ describe('stripMainOnlySendOpts(直连路径消毒)', () => {
     })).toEqual({ messageUuid: 'u' });
   });
 
+  it.each(['scheduler', 'im', 'desktop'])('剥掉 wire 自报的 %s origin，保留普通发送参数', (kind) => {
+    const opts = { messageUuid: 'u', userName: 'n', origin: { kind, scheduleId: 'forged' } };
+    expect(stripMainOnlySendOpts(opts)).toEqual({ messageUuid: 'u', userName: 'n' });
+    expect(attachMainOwnedInputBoundary(opts, undefined)).toEqual({ messageUuid: 'u', userName: 'n' });
+    expect(attachMainOwnedInputBoundary(opts, { expectedClearBoundaryMs: null, expectedInputGeneration: 1 }))
+      .toEqual({ messageUuid: 'u', userName: 'n', expectedClearBoundaryMs: null, expectedInputGeneration: 1 });
+    expect(opts.origin.kind).toBe(kind);
+  });
+
   it('其它字段原样保留', () => {
-    const opts = { messageUuid: 'u', userName: 'n', origin: { kind: 'scheduler' } };
+    const opts = { messageUuid: 'u', userName: 'n' };
     expect(stripMainOnlySendOpts(opts)).toEqual(opts);
   });
 
@@ -387,9 +401,20 @@ describe('排队 / 插入两条路径的接线(源码级守卫)', () => {
     expect(register).toContain('isMobileControllerInvoke(),');
   });
 
+  it('device-link provenance is stamped at both queue input boundaries', () => {
+    const stamps = register.match(/stampTrustedDeviceLinkQueuedOrigin\(/g) ?? [];
+    expect(stamps.length).toBe(2);
+    expect(register).toContain('deviceLinkInvoke,');
+  });
+
   it('coordinator 在 drain 与 steer 两处都透传', () => {
     const passes = coordinator.match(/fromMobileClient: true \} : \{\}\)/g) ?? [];
     expect(passes.length).toBe(2);
+  });
+
+  it('coordinator drain carries device-link provenance into the send transaction', () => {
+    expect(coordinator).toContain('fromDeviceLinkClient: true } : {})');
+    expect(transaction).toContain('requestedSendOpts.fromDeviceLinkClient === true');
   });
 
   it('send 事务认 async context 与透传值两个来源', () => {

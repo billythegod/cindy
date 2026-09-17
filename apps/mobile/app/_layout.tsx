@@ -1,3 +1,5 @@
+import { PeerFileTransport } from '@/device-link/peerFileTransport';
+import { startLocalDiagnostics } from '@/debug/localDiagnostics';
 import {
   DarkTheme as NavigationDarkTheme,
   DefaultTheme as NavigationLightTheme,
@@ -11,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, type ReactElement } from 'reac
 import { useTranslation } from 'react-i18next';
 import { Alert, AppState, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Text } from '@/components/AppText';
+import { ConnectionNoticeProvider } from '@/components/ConnectionNoticeOverlay';
 import {
   fontWeight,
   radius,
@@ -71,6 +74,7 @@ import {
   isPrecreatedWorktreeRegistrationInFlight,
   recoverPendingPrecreatedWorktrees,
 } from '@/session/precreatedWorktreeRecovery';
+import { IncomingShareBridge } from '@/session/IncomingShareBridge';
 
 function NavigationGate() {
   const auth = useAuth();
@@ -137,6 +141,7 @@ function NavigationGate() {
 
   return (
     <NavigationThemeProvider value={navigationTheme}>
+      <IncomingShareBridge />
       {/* Android 专用:splash 覆盖层仍在时状态栏保持浅色;淡出开始后切回主题样式 */}
       {Platform.OS === 'android' ? (
         <StatusBar
@@ -329,6 +334,7 @@ function RootAfterUpdateChannel({ channel }: { channel: UpdateChannel }) {
       {/* 任务完成推送:注册同步 + 通知点击路由 + 前台横幅压制(不渲染 UI) */}
       <PushNotificationsBridge />
       <DeviceLinkProvider>
+        <PeerFileTransport />
         <PrecreatedWorktreeRecoveryBridge />
         <NavigationGate />
       </DeviceLinkProvider>
@@ -350,6 +356,7 @@ function RootAfterEndpoints() {
 }
 
 function RootLayout() {
+  useEffect(() => startLocalDiagnostics(), []);
   // Dev-only:注册开发者菜单的"清缓存 + reload"项(内部 __DEV__ gate,生产为 no-op)。
   useEffect(() => {
     registerDevCacheMenu();
@@ -424,7 +431,7 @@ function RootLayout() {
               <StartupSplashOverlay
                 hidden={endpointGate.status === 'error' || forcedUpdate !== null}
               >
-                {body}
+                <ConnectionNoticeProvider>{body}</ConnectionNoticeProvider>
               </StartupSplashOverlay>
             </MobileLoginHandoffProvider>
           </LocaleProvider>

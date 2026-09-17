@@ -49,6 +49,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text, TextInput } from '@/components/AppText';
 import { ScreenBackButton } from '@/components/MobilePrimitives';
 import { ConnectionBanner, useShowConnectionBanner } from '@/components/ConnectionBanner';
+import { QuietSyncIndicator } from '@/components/QuietSyncIndicator';
 import { useUnresponsiveDevices } from '@/device-link/unresponsiveDevicesStore';
 import { goBackGuarded } from '@/utils/backGuard';
 import { useAuth } from '@/auth/AuthContext';
@@ -243,7 +244,7 @@ export default function RemoteFileBrowserScreen() {
       });
       if (seq !== loadSeqRef.current) return;
       rawEntriesRef.current = normalizeRemoteOpDirEntries(raw);
-      storeCachedListing(workdir, relPath, rawEntriesRef.current);
+      storeCachedListing(maker.fileBrowser.cacheScope, workdir, relPath, rawEntriesRef.current);
       setItems(buildFileBrowserGridItems(rawEntriesRef.current, sortModeRef.current, Date.now()));
       setLastSyncedAt(Date.now());
     } catch (err) {
@@ -279,12 +280,12 @@ export default function RemoteFileBrowserScreen() {
   useEffect(() => {
     if (!workdir) return undefined;
     let cancelled = false;
-    const memoryCached = getCachedListingSync(workdir, relPath);
+    const memoryCached = getCachedListingSync(maker.fileBrowser.cacheScope, workdir, relPath);
     if (memoryCached) {
       rawEntriesRef.current = memoryCached;
       setItems(buildFileBrowserGridItems(memoryCached, sortModeRef.current, Date.now()));
     } else {
-      void readCachedListing(workdir, relPath).then((persisted) => {
+      void readCachedListing(maker.fileBrowser.cacheScope, workdir, relPath).then((persisted) => {
         if (cancelled || !persisted || rawEntriesRef.current.length > 0) return;
         rawEntriesRef.current = persisted;
         setItems(buildFileBrowserGridItems(persisted, sortModeRef.current, Date.now()));
@@ -759,6 +760,7 @@ export default function RemoteFileBrowserScreen() {
             <View style={styles.titleChevronChip}>
               <ChevronDown color={colors.textSecondary} size={iconSize.sm} strokeWidth={iconStroke.regular} />
             </View>
+            <QuietSyncIndicator active={!showConnectionBanner && (loading || status === 'connecting')} />
           </Pressable>
           <Pressable
             accessibilityLabel={t('files.browser.a11ySearch')}
@@ -786,7 +788,6 @@ export default function RemoteFileBrowserScreen() {
           <Text numberOfLines={1} style={styles.sectionLabel}>
             {deviceName}{isRoot ? t('files.browser.workdirSuffix') : ''}
           </Text>
-          {loading && !refreshing ? <ActivityIndicator color={colors.textTertiary} size="small" /> : null}
         </View>
       ) : null}
 
@@ -1500,6 +1501,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     minWidth: 0,
   },
   title: {
+    flexShrink: 1,
+    minWidth: 0,
     color: colors.textPrimary,
     fontSize: typeScale.body,
     fontWeight: fontWeight.semibold,

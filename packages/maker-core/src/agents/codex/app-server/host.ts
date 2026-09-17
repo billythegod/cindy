@@ -26,8 +26,9 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Logger } from '../../../interfaces/logger.js';
-import type { CodexSubagentRoutingProfile } from '../../base-agent.js';
+import type { CodexSessionMcpConfigInput, CodexSubagentRoutingProfile } from '../../base-agent.js';
 import { AppServerClient } from './client.js';
+import { CODEX_EXTERNAL_AUTH_REFRESH, CodexExternalAuthSession, assertCodexEphemeralAuth, type CodexExternalAuth } from './external-auth.js';
 import type { Transport } from './transport.js';
 import {
   Method,
@@ -235,6 +236,10 @@ export interface ThreadSubscription {
 }
 
 export interface AppServerHostOptions {
+  /** Applied before the host becomes ready, and reapplied after every transport restart. */
+  externalAuth?: CodexExternalAuth;
+  /** Required for every cross-home runtime, including gateway-only routes. */
+  requireEphemeralAuth?: boolean;
   /**
    * Transport 工厂; host 每次 bootstrap (含 transport-error 后的重连) 都调一次。
    * 本地 codex 用 `createStdioTransport({binaryPath, cwd, env, extraArgs})`,
@@ -278,6 +283,7 @@ export interface AppServerHostOptions {
   remoteCompactionProviderId?: string;
   /** Cindy Provider codex/* 的内部 OpenAI transport identity。 */
   cindyRemoteCompactionProviderId?: string;
+  localCompactionProviderId?: string;
   /** Generic custom Provider identities and capabilities frozen into this process. */
   codexCustomProviderRoutes?: Array<{
     providerId: string;
@@ -286,7 +292,10 @@ export interface AppServerHostOptions {
     responseModels: readonly string[];
   }>;
   /** Per-thread host-owned MCP URL overrides keyed by the Session instance. */
-  buildSessionMcpConfig?: (sessionInstanceId: string) => Record<string, unknown>;
+  buildSessionMcpConfig?: (
+    sessionInstanceId: string,
+    session?: CodexSessionMcpConfigInput,
+  ) => Record<string, unknown>;
   /** Cindy-side fallback used only when a subagent's actual model is not reported. */
   subagentModelFallback?: string;
   /** Frozen provider/model/effort identity for the configured locked subagent route. */
@@ -310,6 +319,8 @@ export interface AppServerHostOptions {
   codexOpenAiWebSocketsEnabled?: boolean;
   /** Host-level Subagent route profile used to prevent incompatible local host reuse. */
   codexSubagentRoutingProfile?: CodexSubagentRoutingProfile;
+  /** One-shot cleanup for resources owned by this Host generation, run only on terminal retire. */
+  onRetired?: () => void | Promise<void>;
 }
 
 interface BufferedNotification {
@@ -319,6 +330,7 @@ interface BufferedNotification {
 }
 
 export class AppServerHost {
+  private readonly externalAuth: CodexExternalAuthSession | undefined;
   private readonly connectionId = randomUUID();
   private readonly logger: Logger;
   private readonly bufferTtlMs: number;
@@ -356,9 +368,12 @@ export class AppServerHost {
   private lastAccountRateLimits: AccountRateLimitsUpdatedNotification['params'] | null = null;
 
   private shuttingDown = false;
+  private shutdownPromise: Promise<void> | null = null;
   private retired = false;
+  private retirementPromise: Promise<void> | null = null;
 
   constructor(private readonly opts: AppServerHostOptions) {
+    this.externalAuth = opts.externalAuth ? new CodexExternalAuthSession(opts.externalAuth) : undefined;
     if (typeof opts.createTransport !== 'function') {
       throw new Error('AppServerHost: createTransport factory is required');
     }
@@ -455,6 +470,10 @@ export class AppServerHost {
     return this.opts.remoteCompactionProviderId ?? null;
   }
 
+  getLocalCompactionProviderId(): string | null {
+    return this.opts.localCompactionProviderId ?? null;
+  }
+
   getCindyRemoteCompactionProviderId(): string | null {
     return this.opts.cindyRemoteCompactionProviderId ?? null;
   }
@@ -503,9 +522,12 @@ export class AppServerHost {
    * Anonymous/legacy callers keep the spawn-level unbound URLs, which preserves
    * ordinary MCP compatibility while permission-sensitive tools fail closed.
    */
-  getSessionMcpConfig(sessionInstanceId?: string): Record<string, unknown> {
+  getSessionMcpConfig(
+    sessionInstanceId?: string,
+    session?: CodexSessionMcpConfigInput,
+  ): Record<string, unknown> {
     if (!sessionInstanceId || !this.opts.buildSessionMcpConfig) return {};
-    return this.opts.buildSessionMcpConfig(sessionInstanceId);
+    return this.opts.buildSessionMcpConfig(sessionInstanceId, session);
   }
 
   /** Display metadata only; observed thread model always wins. */
@@ -559,16 +581,28 @@ export class AppServerHost {
       return Promise.reject(new Error('AppServerHost: cannot ensureStarted() after retirement'));
     }
     if (this.shuttingDown) {
+      if (!this.shutdownPromise) {
+        return this.shutdown('recheck failed shutdown before restart', { throwOnTransportError: true })
+          .then(() => this.ensureStarted(capabilities));
+      }
       return Promise.reject(new Error('AppServerHost: cannot ensureStarted() during shutdown'));
     }
     if (this.startPromise) return this.startPromise;
-    this.startPromise = this.bootstrap(capabilities).catch((err) => {
-      // bootstrap 失败 → 清掉 startPromise 让下次调用能重试
-      this.startPromise = null;
-      this.client = null;
+    const startPromise = this.bootstrap(capabilities).catch(async (err) => {
+      // 旧启动的迟到失败不能关闭新 client；重试必须等旧进程真正退出。
+      if (this.startPromise === startPromise) {
+        try {
+          await this.shutdown('AppServerHost bootstrap failed', { throwOnTransportError: true });
+        } catch (closeError) {
+          this.logger.warn('failed to close app-server client after bootstrap failure', {
+            error: closeError instanceof Error ? closeError.message : String(closeError),
+          });
+        }
+      }
       throw err;
     });
-    return this.startPromise;
+    this.startPromise = startPromise;
+    return startPromise;
   }
 
   /**
@@ -612,6 +646,21 @@ export class AppServerHost {
       captureCredentialGeneration: this.opts.captureCredentialGeneration,
     });
     this.client = client;
+
+    if (this.externalAuth) {
+      client.setRequestHandler(CODEX_EXTERNAL_AUTH_REFRESH, async (params) => {
+        if (this.client !== client || this.shuttingDown || this.retired) {
+          throw new Error('Codex account authentication host has retired');
+        }
+        const request = params as { reason?: unknown; previousAccountId?: unknown } | null;
+        if (request?.reason !== 'unauthorized') throw new Error('Unsupported Codex authentication refresh');
+        const tokens = await this.externalAuth!.tokens(true, request.previousAccountId);
+        if (this.client !== client || this.shuttingDown || this.retired) {
+          throw new Error('Codex account authentication host has retired');
+        }
+        return tokens;
+      });
+    }
 
     // 注册 notification handlers BEFORE initialize: server 在握手响应前可能就推了
     // banner / 启动 notification, 漏接就丢。
@@ -786,6 +835,17 @@ export class AppServerHost {
       ...capabilities,
     };
     const resp = await client.initialize(this.opts.clientInfo, mergedCapabilities);
+    if (this.opts.requireEphemeralAuth || this.externalAuth) {
+      // Requirements can override CLI configuration. Reject before any task RPC
+      // or token installation; initialization has already loaded native config.
+      await assertCodexEphemeralAuth((method, params) => client.request(method, params, { timeoutMs: 10_000 }));
+    }
+    if (this.externalAuth) {
+      await this.externalAuth.authenticate((method, params) => client.request(method, params, { timeoutMs: 10_000 }));
+      if (this.client !== client || this.shuttingDown || this.retired) {
+        throw new Error('Codex account authentication host has retired');
+      }
+    }
     this.logger.info('shared app-server up', {
       userAgent: resp.userAgent,
       codexHome: resp.codexHome,
@@ -870,27 +930,38 @@ export class AppServerHost {
     reason = 'AppServerHost.shutdown()',
     opts?: { throwOnTransportError?: boolean },
   ): Promise<void> {
-    if (this.shuttingDown) return;
-    this.shuttingDown = true;
-    // MCP readiness is scoped to the concrete app-server process. A normal
-    // transport recovery reuses this host object, so never carry a positive
-    // probe result into the replacement process.
-    this.mcpToolAvailability.clear();
-    this.subscribers.clear();
-    this.lineageRoots.clear();
-    this.pendingLineage.clear();
-    this.buffered.clear();
-    for (const threadId of this.threadHandlerWaiters.keys()) {
-      this.notifyThreadHandlerWaiters(threadId);
+    if (!this.shutdownPromise) {
+      this.shuttingDown = true;
+      const client = this.client;
+      const shutdownPromise = Promise.resolve().then(async () => {
+        await client?.close({ reason, throwOnTransportError: true });
+        if (this.client === client) this.client = null;
+        // start() 的同步 transport 回调可能在 ensureStarted 赋值前触发关闭。
+        this.startPromise = null;
+        // 只在关闭成功后开放重启；失败保留 barrier，避免新旧 writer 并存。
+        this.shutdownPromise = null;
+        this.shuttingDown = false;
+      }).catch((error) => {
+        // 本次结果可以重查，但 client 与 shuttingDown 保留到真实关闭成功。
+        if (this.shutdownPromise === shutdownPromise) this.shutdownPromise = null;
+        throw error;
+      });
+      this.shutdownPromise = shutdownPromise;
+      this.startPromise = null;
+      // MCP readiness belongs to the concrete app-server process.
+      this.mcpToolAvailability.clear();
+      this.subscribers.clear();
+      this.lineageRoots.clear();
+      this.pendingLineage.clear();
+      this.buffered.clear();
+      for (const threadId of this.threadHandlerWaiters.keys()) {
+        this.notifyThreadHandlerWaiters(threadId);
+      }
     }
-    const c = this.client;
-    this.client = null;
-    this.startPromise = null;
     try {
-      if (c) await c.close({ reason, throwOnTransportError: opts?.throwOnTransportError });
-    } finally {
-      // 重置, 允许之后的 ensureStarted 重新 spawn (transport error 恢复路径)
-      this.shuttingDown = false;
+      await this.shutdownPromise;
+    } catch (error) {
+      if (opts?.throwOnTransportError) throw error;
     }
   }
 
@@ -903,7 +974,27 @@ export class AppServerHost {
     opts?: { throwOnTransportError?: boolean },
   ): Promise<void> {
     this.retired = true;
-    await this.shutdown(reason, opts);
+    if (!this.retirementPromise) {
+      const retirementPromise = Promise.resolve().then(async () => {
+        await this.shutdown(reason, { throwOnTransportError: true });
+        await Promise.resolve()
+          .then(() => this.opts.onRetired?.())
+          .catch((error) => {
+            this.logger.warn('app-server Host retirement cleanup failed', {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }).catch((error) => {
+        if (this.retirementPromise === retirementPromise) this.retirementPromise = null;
+        throw error;
+      });
+      this.retirementPromise = retirementPromise;
+    }
+    try {
+      await this.retirementPromise;
+    } catch (error) {
+      if (opts?.throwOnTransportError) throw error;
+    }
   }
 
   /**

@@ -24,7 +24,7 @@ import { createLogger } from '../logger.js';
 import { getMaker, restartCodexAfterAuthModeChange } from '../maker-host/index.js';
 import { shutdownCodexEnvironment } from '../mcp-integrations/codexEnvironment.js';
 import { getDesktopProviderService } from '../maker-host/createDesktopProviderService.js';
-import { getModelVisibilityOverride } from '../maker-host/model-visibility-mirror.js';
+import { getModelVisibilityOverride, waitForModelVisibilityMirror } from '../maker-host/model-visibility-mirror.js';
 import { resolveFreshSourceBranch, WorktreeManager } from '../worktree/index.js';
 import { prepareHandoffWorktree } from '../maker-ipc/handoffWorktree.js';
 import {
@@ -108,6 +108,7 @@ import { resetTelegramSpeakerRegistrationCache } from '../im/telegram/contactsAu
 import { assertTrustedAppRendererEvent } from '../security/trustedAppRenderer.js';
 import { getAgentIslandService } from '../agent-island/service.js';
 import { setLifecycleAnnouncementFromIpc } from './lifecycleAnnouncementIpc.js';
+import { setSlackCommunicationsFromIpc } from './slackCommunicationsIpc.js';
 
 const log = createLogger('hook-control');
 
@@ -602,6 +603,7 @@ function ensureInstances(): { store: SlackHookStore; manager: HookControlManager
       // 侧据此渲染权限档下拉(选中值经 dispatch options.permissionMode 回流)
       listAgentModels: async () => {
         const providers = await getDesktopProviderService().listProviders({ allowSideEffects: true });
+        await waitForModelVisibilityMirror();
         // 动态取 runtime 已注册的 agent(含 Pi,若已安装);上游此处硬编码 cc/codex(早于 Pi),
         // 本 PR 的 Pi 接入以 listAvailableAgents() 为准 —— 与新建入口按注册结果门控同源。
         return getMaker().listAvailableAgents().map((agentKind) => {
@@ -912,14 +914,18 @@ export function registerHookControlIpc(): void {
     return runMultiTeamAction((mgr) => mgr.rebindTeam(teamId));
   });
 
-  registerTrustedHookControlHandler(HOOK_CONTROL_INVOKE.REVOKE_TEAM, (_e, payload) => {
+  registerTrustedHookControlHandler(HOOK_CONTROL_INVOKE.SET_SLACK_COMMUNICATIONS, (_e, payload) => {
+    requireHookControl();
+    return setSlackCommunicationsFromIpc(ensureInstances().manager, payload);
+  });
+
+  registerTrustedHookControlHandler(HOOK_CONTROL_INVOKE.REVOKE_TEAM, async (_e, payload) => {
     requireHookControl();
     const p = requireObject(payload);
     const teamId = requireString(p.teamId, 'teamId');
-    // displaced 行的删除是纯本地操作, 离线也要能删 —— 不做 multi-team 能力
-    // 前置检查(manager 内部区分 displaced/活跃行)
+    // manager 区分旧 server 本地缓存清理、新 server 通讯 grant 撤销和 Bot 解绑。
     const mgr = ensureInstances().manager;
-    if (!mgr.revokeTeam(teamId)) {
+    if (!await mgr.revokeTeam(teamId)) {
       throwIpcError('HOOK_NOT_CONNECTED', 'slack hook is not connected');
     }
     return { hook: mgr.snapshot() };
