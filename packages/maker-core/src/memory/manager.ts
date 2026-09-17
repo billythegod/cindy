@@ -127,6 +127,11 @@ interface PooledEntry {
 const MEMORY_SUBDIR = 'maker-memory';
 const FTS_DB_FILENAME = 'fts.db';
 const STORAGE_MIGRATION_RECEIPT = '.cindy-memory-migration-v1.json';
+// Legacy Bot stores use memoryScopeDirName's hashed Bot namespace. Preserve
+// these even before their first access migrates them into Bot Home, including
+// stores whose meta.json is missing/damaged. Ordinary bot-prefixed project
+// directories (e.g. /bot-project) are still reset normally.
+const LEGACY_BOT_MEMORY_DIR = /^bot-.{0,24}-[a-f0-9]{16}$/;
 
 function copyLegacyMemoryShardsSync(sourceDir: string, targetDir: string): void {
   fsSync.mkdirSync(targetDir, { recursive: true });
@@ -384,14 +389,15 @@ export class MakerMemoryManager {
     };
   }
 
-  isEnabled(): boolean {
+  /** No scope queries the global switch; host-owned independent scopes opt out. */
+  isEnabled(scopeKey?: string): boolean {
     // 读取前同步 scope (review #2388 Codex 11th P1): rebindEnabled 只在
     // ensureOwnerScope/syncOwnerScope 里跑, 先读 isEnabled() 的路径 (withStore
     // 短路、session/remote option backfills) 会停留在旧 owner 的 flag —
     // owner A false→B true 时不得继续短路, B false→A true 时不得漏暴露。
     // 纯查询语义, 不抛 (owner 缺失由 getStore fail-closed)。
     this.syncOwnerScope();
-    return this.enabled;
+    return this.enabled || (scopeKey !== undefined && this.deps.isIndependentScope?.(scopeKey) === true);
   }
 
   /**
@@ -739,6 +745,7 @@ export class MakerMemoryManager {
     }
     for (const entry of entries) {
       if (activeDirs.has(entry)) continue;
+      if (LEGACY_BOT_MEMORY_DIR.test(entry)) continue;
       const dir = path.join(memoryRoot, entry);
       let filenames: string[];
       try {
@@ -810,6 +817,7 @@ export class MakerMemoryManager {
         return { removedCount: 0 };
       }
       for (const entry of entries) {
+        if (LEGACY_BOT_MEMORY_DIR.test(entry)) continue;
         const dir = path.join(memoryRoot, entry);
         try {
           const stat = await fs.stat(dir);

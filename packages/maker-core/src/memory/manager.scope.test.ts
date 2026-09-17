@@ -66,6 +66,67 @@ function trackingSqlite() {
 }
 
 describe('MakerMemoryManager · owner scope guard (#2341)', () => {
+  it.each(['resetAll', 'resetDigests'] as const)(
+    '%s preserves unopened legacy Bot memory until lazy Home migration',
+    async (resetMethod) => {
+      const botScope = buildBotMemoryScopeKey('bot-not-opened');
+      const projectScope = path.join(path.sep, 'bot-project');
+      const deps = {
+        basePath: rootA,
+        resolveBasePath: () => rootA,
+        ownerScopeKey: () => 'cloud:abc:1',
+        sqliteFactory: trackingSqlite().factory,
+        agents: {},
+        logger: noopLogger,
+        initialEnabled: true,
+      };
+      const legacyManager = new MakerMemoryManager(deps);
+      try {
+        for (const scope of [botScope, projectScope]) {
+          await legacyManager.write(scope, {
+            type: 'user', name: 'keep', title: 'Preference',
+            description: 'Durable preference', body: 'Keep this preference.',
+          });
+          await legacyManager.write(scope, {
+            type: 'digest', name: 'summary', title: 'Summary',
+            description: 'Compaction summary', body: 'Keep this Bot summary.',
+          });
+        }
+      } finally {
+        legacyManager.dispose();
+      }
+      const legacyDir = path.join(rootA, 'maker-memory', memoryScopeDirName(botScope));
+      // The directory namespace must protect recoverable shards even when
+      // derived metadata is unreadable; opening the Bot will rebuild it.
+      await writeFile(path.join(legacyDir, 'meta.json'), '{broken', 'utf8');
+      const homeMemory = path.join(rootA, 'bots', 'bot-not-opened', 'memories');
+      const manager = new MakerMemoryManager({
+        ...deps,
+        isIndependentScope: (scope) => scope === botScope,
+        resolveStorageDir: (scope) => scope === botScope ? homeMemory : null,
+      });
+      try {
+        expect(existsSync(homeMemory)).toBe(false);
+        expect(await manager[resetMethod]()).toEqual({ removedCount: 1 });
+        expect(existsSync(path.join(legacyDir, 'user_keep.md'))).toBe(true);
+        expect(existsSync(path.join(legacyDir, 'digest_summary.md'))).toBe(true);
+        const projectDir = path.join(rootA, 'maker-memory', memoryScopeDirName(projectScope));
+        expect(existsSync(path.join(projectDir, 'digest_summary.md'))).toBe(false);
+        expect(existsSync(path.join(projectDir, 'user_keep.md'))).toBe(resetMethod === 'resetDigests');
+
+        const migrated = await manager.getStore(botScope);
+        expect((await migrated.list()).map((record) => record.filename)).toEqual([
+          'digest_summary.md', 'user_keep.md',
+        ]);
+        expect((await migrated.read('user_keep.md')).body.trim()).toBe('Keep this preference.');
+        expect(await migrated.getIndex()).toContain('user_keep.md');
+        expect(existsSync(path.join(homeMemory, 'user_keep.md'))).toBe(true);
+      } finally {
+        manager.dispose();
+      }
+    },
+  );
+
   it('keeps an independent Bot store available in Bot Home and copies legacy data', async () => {
     const botScope = buildBotMemoryScopeKey('bot-a');
     const legacyManager = new MakerMemoryManager({

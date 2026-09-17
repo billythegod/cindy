@@ -38,6 +38,7 @@ import {
   buildBotMemoryScopeKey,
   buildMemoryScopeKey,
   memoryScopeDirName,
+  parseBotMemoryScopeKey,
   type Logger,
   type MemoryRecord,
 } from '@cindy/maker-core';
@@ -73,13 +74,20 @@ let databases: DatabaseCtor.Database[];
 let ownerAvailable = true;
 let memoryEnabled = true;
 
-function createManager(): MakerMemoryManager {
+function createManager(independentBots = false): MakerMemoryManager {
   return new MakerMemoryManager({
     basePath: root,
     resolveBasePath: () => (ownerAvailable ? root : null),
     ownerScopeKey: () => (ownerAvailable ? 'local:owner-a:1' : 'local:none:1'),
     reloadEnabled: () => memoryEnabled,
     initialEnabled: memoryEnabled,
+    ...(independentBots ? {
+      isIndependentScope: (scopeKey: string) => parseBotMemoryScopeKey(scopeKey) !== null,
+      resolveStorageDir: (scopeKey: string) => {
+        const botId = parseBotMemoryScopeKey(scopeKey);
+        return botId ? path.join(root, 'bots', botId, 'memories') : null;
+      },
+    } : {}),
     sqliteFactory: (filePath) => {
       const database = new DatabaseCtor(filePath);
       databases.push(database);
@@ -182,6 +190,43 @@ function partition(records: readonly MemoryRecord[]): {
 }
 
 describe('Cindy Bot 记忆全链(形成 → 存 → 取 → 用 → 删)', () => {
+  it('keeps Bot MCP reads/writes available with global memory off, without enabling project memory', async () => {
+    manager.dispose();
+    memoryEnabled = false;
+    manager = createManager(true);
+    const botScope = buildBotMemoryScopeKey(BOT_ID);
+    const bot = await connectBotSession({ agentKind: 'pi', memoryScopeKey: botScope });
+    const project = await connectBotSession({ agentKind: 'codex' });
+    const record = {
+      type: 'user', name: 'independent', title: 'Independent',
+      description: 'Bot-owned preference', body: 'Keep answers concise.',
+    };
+    try {
+      expect(await modelWritesMemory(bot.client, record)).toMatchObject({ ok: true });
+      const read = await bot.client.callTool({
+        name: 'call_tool',
+        arguments: { name: 'memory_read', args: { filename: 'user_independent.md' } },
+      });
+      expect(parseEnvelope(read)).toMatchObject({ ok: true, data: { body: record.body } });
+      expect(await readMemoryIndex(botScope)).toContain('user_independent.md');
+      expect(existsSync(path.join(root, 'bots', BOT_ID, 'memories', 'user_independent.md'))).toBe(true);
+      expect(await modelWritesMemory(project.client, record)).toMatchObject({
+        ok: false, code: 'MAKER_MEMORY_NOT_READY',
+      });
+      expect(existsSync(path.join(root, 'maker-memory'))).toBe(false);
+
+      // Independent from the global toggle does not mean independent from
+      // the account boundary: the same bound Bot must still fail closed.
+      ownerAvailable = false;
+      expect(await modelWritesMemory(bot.client, { ...record, name: 'signed-out' })).toMatchObject({
+        ok: false, code: 'MAKER_MEMORY_NOT_READY',
+      });
+    } finally {
+      await bot.cleanup();
+      await project.cleanup();
+    }
+  });
+
   it('形成/存:模型的一次 memory_write 落进伙伴自己的记忆空间,不进项目记忆', async () => {
     const session = await connectBotSession({
       agentKind: 'claude-code',
