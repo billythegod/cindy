@@ -4441,7 +4441,7 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
-  it.each(['missing-terminal', 'saved-terminal', 'user-before-restore'] as const)('restores an owned supplement with %s', async scenario => {
+  it.each(['missing-terminal', 'saved-terminal', 'user-before-restore', 'edit-before-restore', 'text-before-restore', 'content-before-restore', 'merge-before-restore'] as const)('restores an owned supplement with %s', async scenario => {
     await seedPair();
     const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
     const before = createDelegationRuntime({ taskControl: true, queueSnapshots,
@@ -4459,20 +4459,34 @@ describe('Bot Session task end-to-end runtime', () => {
         h.sqlite!.exec('DROP TRIGGER fail_terminal_commit');
       }
       await before.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Queued supplement.' });
+      if (scenario === 'merge-before-restore') await before.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Second supplement.' });
       h.sqlite!.prepare('UPDATE sessions SET last_turn_ended_at = 10000 WHERE id = ?').run(task.childSessionId);
       before.dispose();
       const execution = { instanceId: 'after-restart', generation: 1 };
       after = createDelegationRuntime({ taskControl: true, queueSnapshots, startTime: 11000,
         readSessionExecution: () => execution });
-      if (scenario === 'user-before-restore') {
+      if (scenario.endsWith('before-restore')) {
         await after.coordinator!.ensureQueueRestored(task.childSessionId);
+        const queued = after.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue;
+        const item = queued[0];
+        const edited = { ...item, text: 'Edited supplement.', persistedContent: 'Edited supplement.',
+          chatMessage: { ...item.chatMessage, content: 'Edited supplement.' } };
+        if (scenario === 'edit-before-restore') {
+          expect(after.coordinator!.replaceQueuedMessage(task.childSessionId, item.clientId, edited)).toBe(true);
+        } else if (scenario === 'text-before-restore') {
+          after.coordinator!.updateText(task.childSessionId, item.clientId, 'Edited supplement.');
+        } else if (scenario === 'content-before-restore') {
+          expect(after.coordinator!.updateContentWithResult(task.childSessionId, item.clientId, edited).updated).toBe(true);
+        } else if (scenario === 'merge-before-restore') {
+          expect(after.coordinator!.mergeQueuedMessagesAtomically(task.childSessionId, queued.map(q => q.clientId), () => edited).merged).toBe(true);
+        }
         after.coordinator!.resume(task.childSessionId);
       } else {
         await after.delegation.restore();
       }
       await vi.waitFor(() => expect(after!.started).toHaveLength(1));
       expect(after.started[0].sessionId).toBe(task.childSessionId);
-      if (scenario === 'user-before-restore') await after.delegation.restore();
+      if (scenario.endsWith('before-restore')) await after.delegation.restore();
       expect(after.dispatch).not.toHaveBeenCalled(); // Resume the saved input, never replay initial dispatch.
       await after.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
         resultText: 'Supplement result.', hadPendingInputAtTerminal: false });

@@ -3011,9 +3011,9 @@ export class AgentInputCoordinator {
         delete updated.sessionReferencesRequireTrustedSnapshot;
         delete updated.trustedSessionReferenceContexts;
       }
-      return finalizeUpdatedMessage && newText !== entry.text
+      return this.preserveRestoredQueueProvenance(entry, finalizeUpdatedMessage && newText !== entry.text
         ? finalizeUpdatedMessage(updated)
-        : updated;
+        : updated);
     });
     this.emit(sessionId);
     return this.getProjection(sessionId);
@@ -3064,12 +3064,19 @@ export class AgentInputCoordinator {
       || updated.sessionRefs !== current.sessionRefs
       || updated.agentReferences !== current.agentReferences;
     const nextQueue = [...state.pendingQueue];
-    nextQueue[index] = finalizeUpdatedMessage && authorizationContentChanged
+    nextQueue[index] = this.preserveRestoredQueueProvenance(current, finalizeUpdatedMessage && authorizationContentChanged
       ? finalizeUpdatedMessage(updated)
-      : updated;
+      : updated);
     state.pendingQueue = nextQueue;
     this.emit(sessionId);
     return { projection: this.getProjection(sessionId), updated: true };
+  }
+
+  private preserveRestoredQueueProvenance(current: AgentInputQueuedMessage, replacement: AgentInputQueuedMessage): AgentInputQueuedMessage {
+    if (current.clientId === replacement.clientId && this.restoredQueueItems.has(current)) {
+      this.restoredQueueItems.add(replacement);
+    }
+    return replacement;
   }
 
   /**
@@ -3102,7 +3109,7 @@ export class AgentInputCoordinator {
     if (current.hostAcceptedAtMs === undefined) delete replacement.hostAcceptedAtMs;
     else replacement.hostAcceptedAtMs = current.hostAcceptedAtMs;
     const nextQueue = [...state.pendingQueue];
-    nextQueue[index] = replacement;
+    nextQueue[index] = this.preserveRestoredQueueProvenance(current, replacement);
     state.pendingQueue = nextQueue;
     this.emit(sessionId);
     return true;
@@ -3157,7 +3164,7 @@ export class AgentInputCoordinator {
     const removed = presentTargets.slice(1);
     state.pendingQueue = [
       ...state.pendingQueue.slice(0, firstIndex),
-      replacement,
+      this.preserveRestoredQueueProvenance(survivor, replacement),
       ...state.pendingQueue.slice(firstIndex + presentTargets.length),
     ];
     const removedIds = new Set(removed.map((item) => item.clientId));
