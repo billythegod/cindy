@@ -562,15 +562,34 @@ pub(crate) fn install_writable_for_staging(
     !cli_elevated && (!medium_integrity_needs_elevation || user_owned)
 }
 
-/// True when `app_dir` is user-owned. Path prefixes alone are not enough:
-/// a custom directory under ProgramData/Program Files can still be writable
-/// by the same-login medium token. Unknown owner fails toward High-IL staging.
+/// True when a same-login medium-integrity process can modify `app_dir`.
+/// Ownership alone is not enough: an Administrators-owned directory can still
+/// grant the current user modify access. Unknown AccessCheck fails toward
+/// High-IL staging instead of treating the tree as protected.
 pub(crate) fn install_is_user_owned(app_dir: &Path) -> bool {
-    install_is_user_owned_from_owner(directory_owned_by_current_user(app_dir))
+    install_is_medium_writable_from_access(
+        directory_medium_token_can_modify(app_dir),
+        directory_owned_by_current_user(app_dir),
+    )
 }
 
-pub(crate) fn install_is_user_owned_from_owner(owned_by_current_user: Option<bool>) -> bool {
-    !matches!(owned_by_current_user, Some(false))
+pub(crate) fn install_is_medium_writable_from_access(
+    medium_can_modify: Option<bool>,
+    owned_by_current_user: Option<bool>,
+) -> bool {
+    !matches!(medium_can_modify, Some(false)) || matches!(owned_by_current_user, Some(true))
+}
+
+fn directory_medium_token_can_modify(app_dir: &Path) -> Option<bool> {
+    #[cfg(windows)]
+    {
+        directory_medium_token_can_modify_windows(app_dir)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app_dir;
+        None
+    }
 }
 
 fn directory_owned_by_current_user(app_dir: &Path) -> Option<bool> {
@@ -1118,6 +1137,12 @@ fn run_inner<F: FnMut(InstallerEvent)>(
     std::thread::sleep(FS_SETTLE_DELAY);
     ensure_install_dir_unchanged(&identity, &args.app_dir)
         .map_err(|error| InstallerFailure::new(error, false))?;
+    let pinned = open_install_dir_handle(&args.app_dir, &identity).map_err(|error| {
+        InstallerFailure::new(
+            format!("无法钉住安装目录 {}：{error}", args.app_dir.display()),
+            false,
+        )
+    })?;
 
     // 1.2. Terminate lingering processes that run FROM app_dir. pid_wait only
     //      covers the one main-process PID, but executables living inside the
@@ -1255,12 +1280,13 @@ fn run_inner<F: FnMut(InstallerEvent)>(
         Phase::BackingUp,
         "备份当前版本…".into(),
     ));
-    ensure_install_dir_unchanged(&identity, &args.app_dir)
-        .map_err(|error| InstallerFailure::new(error, true))?;
+    pinned
+        .ensure()
+        .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
     ensure_staging_directory(&backup_dir, args)
         .map_err(|error| InstallerFailure::new(error.to_string(), true))?;
     logger::info(format!("[installer] backup_dir={}", backup_dir.display()));
-    snapshot_overwritten_files(&extract_dir, &args.app_dir, &backup_dir, |done, total| {
+    snapshot_overwritten_files(&extract_dir, &pinned, &backup_dir, |done, total| {
         let pct = if total == 0 { -1 } else { (done * 100 / total).min(100) as i32 };
         emit(InstallerEvent::Progress(
             Phase::BackingUp,
@@ -1273,10 +1299,8 @@ fn run_inner<F: FnMut(InstallerEvent)>(
     // 4–6. The risky window: replace files, drop lock, launch, verify.
     //      Wrapped so any failure triggers rollback before bubbling out.
     let install_result: anyhow::Result<()> = (|| {
-        // 4. Copy new files over app_dir.
-        ensure_install_dir_unchanged(&identity, &args.app_dir)
-            .map_err(|error| anyhow::anyhow!(error))?;
-        copy_tree(&extract_dir, &args.app_dir, |done, total| {
+        // 4. Copy new files over app_dir through the pinned directory handle.
+        copy_tree_into_pinned(&extract_dir, &pinned, |done, total| {
             let pct = if total == 0 { -1 } else { (done * 100 / total).min(100) as i32 };
             emit(InstallerEvent::Progress(
                 Phase::Replacing,
@@ -1288,7 +1312,9 @@ fn run_inner<F: FnMut(InstallerEvent)>(
         // 5. Verify exe exists, launch detached, verify it actually came up.
         //    The exclusive lock stays held until `run` finishes so a racing
         //    Cindy start waits at the .updating file.
-        let exe_path = args.app_dir.join(&args.exe_name);
+        let exe_path = pinned
+            .join(Path::new(&args.exe_name))
+            .map_err(|error| anyhow::anyhow!(error))?;
         if !exe_path.exists() {
             anyhow::bail!(
                 "新版本主程序缺失：{} 在替换后不存在",
@@ -1343,10 +1369,10 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                 Phase::RollingBack,
                 "更新失败，正在回滚到旧版本…".into(),
             ));
-            if let Err(error) = ensure_install_dir_unchanged(&identity, &args.app_dir) {
-                return Err(InstallerFailure::new(error, false));
+            if let Err(error) = pinned.ensure() {
+                return Err(InstallerFailure::new(error.to_string(), false));
             }
-            match rollback(&backup_dir, &args.app_dir, |done, total| {
+            match rollback_into_pinned(&backup_dir, &pinned, |done, total| {
                 let pct = if total == 0 { -1 } else { (done * 100 / total).min(100) as i32 };
                 emit(InstallerEvent::Progress(
                     Phase::RollingBack,
@@ -1590,7 +1616,7 @@ fn extract_zip<F: FnMut(u64, u64)>(
 /// NOT overwrite stay where they are — they're still intact post-rollback.
 fn snapshot_overwritten_files<F: FnMut(u64, u64)>(
     extract_dir: &Path,
-    app_dir: &Path,
+    app_dir: &PinnedInstallDir,
     backup_dir: &Path,
     mut on_progress: F,
 ) -> anyhow::Result<()> {
@@ -1604,7 +1630,7 @@ fn snapshot_overwritten_files<F: FnMut(u64, u64)>(
 
     for (idx, entry) in entries.iter().enumerate() {
         let rel = entry.path().strip_prefix(extract_dir)?;
-        let appfile = app_dir.join(rel);
+        let appfile = app_dir.join(rel)?;
         if appfile.exists() {
             let backup_path = backup_dir.join(rel);
             if let Some(parent) = backup_path.parent() {
@@ -1649,11 +1675,39 @@ fn rollback<F: FnMut(u64, u64)>(
     Ok(())
 }
 
-fn copy_tree<F: FnMut(u64, u64)>(
-    src: &Path,
-    dst: &Path,
+fn rollback_into_pinned<F: FnMut(u64, u64)>(
+    backup_dir: &Path,
+    app_dir: &PinnedInstallDir,
     mut on_progress: F,
 ) -> anyhow::Result<()> {
+    let mut entries = Vec::new();
+    for entry in walkdir::WalkDir::new(backup_dir) {
+        let entry = entry?;
+        if entry.file_type().is_file() {
+            entries.push(entry);
+        }
+    }
+    let total = entries.len() as u64;
+    on_progress(0, total);
+
+    for (idx, entry) in entries.iter().enumerate() {
+        let rel = entry.path().strip_prefix(backup_dir)?;
+        let target = app_dir.join(rel)?;
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        copy_with_retry(entry.path(), &target)?;
+        on_progress((idx as u64) + 1, total);
+    }
+    Ok(())
+}
+
+pub(crate) fn copy_tree_into_pinned<F: FnMut(u64, u64)>(
+    src: &Path,
+    dst: &PinnedInstallDir,
+    mut on_progress: F,
+) -> anyhow::Result<()> {
+    dst.ensure()?;
     let entries: Vec<_> = walkdir::WalkDir::new(src)
         .into_iter()
         .filter_map(Result::ok)
@@ -1663,15 +1717,13 @@ fn copy_tree<F: FnMut(u64, u64)>(
 
     for (idx, entry) in entries.iter().enumerate() {
         let rel = entry.path().strip_prefix(src)?;
-        let target = dst.join(rel);
+        let target = dst.join(rel)?;
         if entry.file_type().is_dir() {
             fs::create_dir_all(&target)?;
         } else {
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
-            // overwrite is the whole point — file may be in use only if it was
-            // never closed by the previous main process; we already pid-waited.
             copy_with_retry(entry.path(), &target)?;
         }
         on_progress((idx as u64) + 1, total);
@@ -1861,6 +1913,124 @@ fn ensure_install_dir_unchanged(
             path.display()
         ))
     }
+}
+
+/// Open handle to `app_dir` that keeps the directory from being replaced for
+/// the rest of backup/copy/rollback. Writes go through `join`, which
+/// revalidates identity so a swapped junction cannot receive files.
+pub(crate) struct PinnedInstallDir {
+    path: PathBuf,
+    identity: InstallDirIdentity,
+    _hold: File,
+}
+
+pub(crate) fn open_install_dir_handle(
+    path: &Path,
+    identity: &InstallDirIdentity,
+) -> io::Result<PinnedInstallDir> {
+    if identity.is_reparse {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("install path is a reparse point: {}", path.display()),
+        ));
+    }
+    let hold = open_directory_handle(path)?;
+    let pinned = PinnedInstallDir {
+        path: path.to_path_buf(),
+        identity: identity.clone(),
+        _hold: hold,
+    };
+    pinned.ensure()?;
+    Ok(pinned)
+}
+
+impl PinnedInstallDir {
+    fn ensure(&self) -> io::Result<()> {
+        ensure_install_dir_unchanged(&self.identity, &self.path)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+    }
+
+    fn join(&self, rel: &Path) -> io::Result<PathBuf> {
+        self.ensure()?;
+        if rel.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("refusing absolute install path {}", rel.display()),
+            ));
+        }
+        Ok(self.path.join(rel))
+    }
+}
+
+fn open_directory_handle(path: &Path) -> io::Result<File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        options
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    let file = options.open(path)?;
+    if is_reparse_point(path) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("install path is a reparse point: {}", path.display()),
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn directory_medium_token_can_modify_windows(app_dir: &Path) -> Option<bool> {
+    let check = || directory_grants_add_file(app_dir);
+    if process_is_elevated() {
+        with_medium_integrity(check).flatten()
+    } else {
+        check()
+    }
+}
+
+#[cfg(windows)]
+fn directory_grants_add_file(app_dir: &Path) -> Option<bool> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_SHARE_READ, OPEN_EXISTING,
+    };
+
+    let wide: Vec<u16> = app_dir
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY,
+            FILE_SHARE_READ,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE || handle.is_null() {
+        let err = io::Error::last_os_error();
+        if err.kind() == io::ErrorKind::PermissionDenied {
+            return Some(false);
+        }
+        return None;
+    }
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    Some(true)
 }
 
 #[cfg(unix)]
@@ -2721,7 +2891,7 @@ mod tests {
             .find("fn run_inner")
             .expect("run_inner");
         let end = source[start..]
-            .find("copy_tree(&extract_dir, &args.app_dir")
+            .find("copy_tree_into_pinned(&extract_dir, &pinned")
             .expect("copy_tree follows identity checks");
         let body = &source[start..start + end];
         assert!(
@@ -2737,13 +2907,37 @@ mod tests {
             "revalidate the pinned directory after the two-second window a junction can be planted:\n{after}"
         );
         let copy = source
-            .find("copy_tree(&extract_dir, &args.app_dir")
+            .find("copy_tree_into_pinned(&extract_dir, &pinned")
             .expect("copy_tree");
         let before_copy = &source[start..copy];
         assert!(
-            before_copy.rfind("ensure_install_dir_unchanged")
-                > before_copy.rfind("snapshot_overwritten_files"),
-            "revalidate app_dir immediately before copy_tree, not only after Cindy exits:\n{before_copy}"
+            before_copy.contains("open_install_dir_handle"),
+            "hold a non-reparse app_dir handle before copy_tree, not only a path identity check:\n{before_copy}"
+        );
+        assert!(
+            body.contains("open_install_dir_handle") && source.contains("copy_tree_into_pinned"),
+            "copy_tree must write through the pinned non-reparse directory, not reopen app_dir by name:\n{body}"
+        );
+    }
+
+    #[test]
+    fn copy_tree_into_pinned_rejects_a_swapped_destination() {
+        let temp = TestDir::new();
+        let app_dir = temp.0.join("Cindy");
+        let extract = temp.0.join("extract");
+        fs::create_dir(&app_dir).unwrap();
+        fs::create_dir(&extract).unwrap();
+        fs::write(extract.join("Cindy.exe"), b"new").unwrap();
+        let identity = super::capture_install_dir_identity(&app_dir).expect("capture");
+        let handle = super::open_install_dir_handle(&app_dir, &identity).expect("pin");
+        fs::remove_dir(&app_dir).unwrap();
+        let planted = temp.0.join("planted");
+        fs::create_dir(&planted).unwrap();
+        std::os::unix::fs::symlink(&planted, &app_dir).unwrap();
+        let error = super::copy_tree_into_pinned(&extract, &handle, |_, _| {}).unwrap_err();
+        assert!(
+            !planted.join("Cindy.exe").exists(),
+            "elevated Retry must not copy through a junction swapped after the identity check: {error}"
         );
     }
 
@@ -3407,16 +3601,20 @@ mod tests {
             "Windows system directories are protected"
         );
         assert!(
-            super::install_is_user_owned_from_owner(Some(true)),
-            "a user-owned directory under ProgramData must not pin as protected"
+            super::install_is_medium_writable_from_access(Some(true), Some(false)),
+            "an Administrators-owned directory that the medium token can modify is not protected"
         );
         assert!(
-            !super::install_is_user_owned_from_owner(Some(false)),
-            "an Administrators-owned Program Files install may use protected staging"
+            !super::install_is_medium_writable_from_access(Some(false), Some(false)),
+            "an Administrators-owned directory the medium token cannot modify may use protected staging"
         );
         assert!(
-            super::install_is_user_owned_from_owner(None),
-            "if owner cannot be read, fail toward High-IL staging instead of app_dir staging"
+            super::install_is_medium_writable_from_access(None, Some(true)),
+            "if AccessCheck cannot be read, fail toward High-IL staging instead of app_dir staging"
+        );
+        assert!(
+            super::install_is_medium_writable_from_access(Some(false), Some(true)),
+            "current-user ownership still counts as medium-writable"
         );
         let temp = TestDir::new();
         let mut args = test_args();
