@@ -602,6 +602,7 @@ pub(crate) fn install_is_user_owned_for(app_dir: &Path, exe_name: &str) -> bool 
         directory_medium_token_can_modify(app_dir),
         existing_install_files_medium_writable(app_dir, exe_name),
     ) || matches!(directory_owned_by_current_user(app_dir), Some(true))
+        || install_root_parent_is_medium_replaceable(app_dir)
 }
 
 pub(crate) fn install_is_medium_writable_from_access(
@@ -745,18 +746,24 @@ pub(crate) fn collect_medium_writable_root_natives(
     UnpackedWalk::Complete
 }
 
-/// GENERIC_WRITE, DELETE, or parent FILE_DELETE_CHILD / FILE_ADD_FILE each
-/// lets a medium-integrity process replace a loadable input before Close.
+/// GENERIC_WRITE, FILE_WRITE_DATA / FILE_APPEND_DATA, DELETE, or parent
+/// FILE_DELETE_CHILD / FILE_ADD_FILE each lets a medium-integrity process
+/// replace a loadable input before Close. GENERIC_WRITE is denied unless every
+/// mapped write right is granted, so data/append must be probed on their own.
 pub(crate) fn file_is_medium_replaceable_from_access(
     generic_write: Option<bool>,
     delete: Option<bool>,
     parent_delete_child: Option<bool>,
     parent_add_file: Option<bool>,
+    write_data: Option<bool>,
+    append_data: Option<bool>,
 ) -> Option<bool> {
     if matches!(generic_write, Some(true))
         || matches!(delete, Some(true))
         || matches!(parent_delete_child, Some(true))
         || matches!(parent_add_file, Some(true))
+        || matches!(write_data, Some(true))
+        || matches!(append_data, Some(true))
     {
         return Some(true);
     }
@@ -764,6 +771,8 @@ pub(crate) fn file_is_medium_replaceable_from_access(
         && matches!(delete, Some(false))
         && matches!(parent_delete_child, Some(false))
         && matches!(parent_add_file, Some(false))
+        && matches!(write_data, Some(false))
+        && matches!(append_data, Some(false))
     {
         return Some(false);
     }
@@ -780,16 +789,34 @@ pub(crate) fn acl_control_pins_install_writable(
     !matches!(write_dac, Some(false)) || !matches!(write_owner, Some(false))
 }
 
-/// FILE_DELETE_CHILD / FILE_ADD_FILE or ACL-control on a higher ancestor lets a
-/// medium process swap a package directory to a junction after classification.
+/// FILE_DELETE_CHILD / FILE_ADD_FILE, directory DELETE / FILE_ADD_SUBDIRECTORY,
+/// or ACL-control on a higher ancestor lets a medium process swap a package
+/// directory to a junction after classification.
 pub(crate) fn ancestor_control_pins_install_writable(
     delete_child: Option<bool>,
     add_file: Option<bool>,
     write_dac: Option<bool>,
     write_owner: Option<bool>,
+    delete: Option<bool>,
+    add_subdirectory: Option<bool>,
 ) -> bool {
     matches!(delete_child, Some(true))
         || matches!(add_file, Some(true))
+        || matches!(delete, Some(true))
+        || matches!(add_subdirectory, Some(true))
+        || acl_control_pins_install_writable(write_dac, write_owner)
+}
+
+/// Parent FILE_DELETE_CHILD / FILE_ADD_SUBDIRECTORY or ACL-control lets a
+/// medium user replace a protected-looking `app_dir` across the UAC handoff.
+pub(crate) fn install_root_parent_pins_install_writable(
+    delete_child: Option<bool>,
+    add_subdirectory: Option<bool>,
+    write_dac: Option<bool>,
+    write_owner: Option<bool>,
+) -> bool {
+    matches!(delete_child, Some(true))
+        || matches!(add_subdirectory, Some(true))
         || acl_control_pins_install_writable(write_dac, write_owner)
 }
 
@@ -893,6 +920,18 @@ fn directory_owned_by_current_user(app_dir: &Path) -> Option<bool> {
     {
         let _ = app_dir;
         None
+    }
+}
+
+fn install_root_parent_is_medium_replaceable(app_dir: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        install_root_parent_is_medium_replaceable_windows(app_dir)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app_dir;
+        false
     }
 }
 
@@ -2394,8 +2433,8 @@ fn existing_install_files_medium_writable_windows(app_dir: &Path, exe_name: &str
 #[cfg(windows)]
 fn file_is_medium_replaceable(path: &Path, app_dir: &Path) -> Option<bool> {
     use windows_sys::Win32::Storage::FileSystem::{
-        DELETE, FILE_ADD_FILE, FILE_ATTRIBUTE_NORMAL, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS,
-        WRITE_DAC, WRITE_OWNER,
+        DELETE, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL,
+        FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS, FILE_WRITE_DATA, WRITE_DAC, WRITE_OWNER,
     };
 
     let ancestors = runtime_path_ancestors(path, app_dir);
@@ -2407,6 +2446,8 @@ fn file_is_medium_replaceable(path: &Path, app_dir: &Path) -> Option<bool> {
             path_grants_access(dir, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS)
         }),
         parent.and_then(|dir| path_grants_access(dir, FILE_ADD_FILE, FILE_FLAG_BACKUP_SEMANTICS)),
+        path_grants_access(path, FILE_WRITE_DATA, FILE_ATTRIBUTE_NORMAL),
+        path_grants_access(path, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL),
     );
     if matches!(replaceable, Some(true)) {
         return Some(true);
@@ -2426,6 +2467,8 @@ fn file_is_medium_replaceable(path: &Path, app_dir: &Path) -> Option<bool> {
             path_grants_access(dir, FILE_ADD_FILE, FILE_FLAG_BACKUP_SEMANTICS),
             path_grants_access(dir, WRITE_DAC, FILE_FLAG_BACKUP_SEMANTICS),
             path_grants_access(dir, WRITE_OWNER, FILE_FLAG_BACKUP_SEMANTICS),
+            path_grants_access(dir, DELETE, FILE_FLAG_BACKUP_SEMANTICS),
+            path_grants_access(dir, FILE_ADD_SUBDIRECTORY, FILE_FLAG_BACKUP_SEMANTICS),
         ) {
             return Some(true);
         }
@@ -2438,6 +2481,29 @@ fn file_grants_generic_write(path: &Path) -> Option<bool> {
     use windows_sys::Win32::Foundation::GENERIC_WRITE;
     use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_NORMAL;
     path_grants_access(path, GENERIC_WRITE, FILE_ATTRIBUTE_NORMAL)
+}
+
+#[cfg(windows)]
+fn install_root_parent_is_medium_replaceable_windows(app_dir: &Path) -> bool {
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ADD_SUBDIRECTORY, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS, WRITE_DAC, WRITE_OWNER,
+    };
+    let Some(parent) = app_dir.parent() else {
+        return false;
+    };
+    let check = || {
+        install_root_parent_pins_install_writable(
+            path_grants_access(parent, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS),
+            path_grants_access(parent, FILE_ADD_SUBDIRECTORY, FILE_FLAG_BACKUP_SEMANTICS),
+            path_grants_access(parent, WRITE_DAC, FILE_FLAG_BACKUP_SEMANTICS),
+            path_grants_access(parent, WRITE_OWNER, FILE_FLAG_BACKUP_SEMANTICS),
+        )
+    };
+    if process_is_elevated() {
+        with_medium_integrity(check).unwrap_or(true)
+    } else {
+        check()
+    }
 }
 
 #[cfg(windows)]
@@ -4232,6 +4298,8 @@ mod tests {
                 Some(true),
                 Some(false),
                 Some(false),
+                Some(false),
+                Some(false),
             ),
             Some(true),
             "DELETE without GENERIC_WRITE still replaces resources/app.asar"
@@ -4241,6 +4309,8 @@ mod tests {
                 Some(false),
                 Some(false),
                 Some(true),
+                Some(false),
+                Some(false),
                 Some(false),
             ),
             Some(true),
@@ -4252,6 +4322,8 @@ mod tests {
                 Some(false),
                 Some(false),
                 Some(true),
+                Some(false),
+                Some(false),
             ),
             Some(true),
             "parent FILE_ADD_FILE after delete also replaces the loadable input"
@@ -4262,9 +4334,35 @@ mod tests {
                 Some(false),
                 Some(false),
                 Some(false),
+                Some(false),
+                Some(false),
             ),
             Some(false),
             "write, delete, and parent replace rights all denied stay protected"
+        );
+        assert_eq!(
+            super::file_is_medium_replaceable_from_access(
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+            ),
+            Some(true),
+            "FILE_WRITE_DATA without GENERIC_WRITE still overwrites unpacked JS"
+        );
+        assert_eq!(
+            super::file_is_medium_replaceable_from_access(
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+            ),
+            Some(true),
+            "FILE_APPEND_DATA without GENERIC_WRITE still edits unpacked JS"
         );
         assert!(
             super::acl_control_pins_install_writable(Some(true), Some(false)),
@@ -4288,6 +4386,8 @@ mod tests {
                 Some(false),
                 Some(false),
                 Some(false),
+                Some(false),
+                Some(false),
             ),
             "FILE_DELETE_CHILD on a non-immediate unpacked ancestor can swap a package to a junction"
         );
@@ -4297,8 +4397,32 @@ mod tests {
                 Some(false),
                 Some(true),
                 Some(false),
+                Some(false),
+                Some(false),
             ),
             "WRITE_DAC on a higher ancestor still replaces unpacked code after UAC"
+        );
+        assert!(
+            super::ancestor_control_pins_install_writable(
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+            ),
+            "DELETE on resources/tools lets a medium user junction-swap the tree after UAC"
+        );
+        assert!(
+            super::ancestor_control_pins_install_writable(
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+            ),
+            "FILE_ADD_SUBDIRECTORY on a parent of resources/tools recreates the swapped directory"
         );
         assert!(
             !super::ancestor_control_pins_install_writable(
@@ -4306,8 +4430,37 @@ mod tests {
                 Some(false),
                 Some(false),
                 Some(false),
+                Some(false),
+                Some(false),
             ),
             "denied ancestor replace and ACL-control rights do not pin writable"
+        );
+        assert!(
+            super::install_root_parent_pins_install_writable(
+                Some(true),
+                Some(true),
+                Some(false),
+                Some(false),
+            ),
+            "parent FILE_DELETE_CHILD and FILE_ADD_SUBDIRECTORY can replace a protected-looking app_dir across UAC"
+        );
+        assert!(
+            super::install_root_parent_pins_install_writable(
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+            ),
+            "WRITE_DAC on the install-root parent still replaces app_dir after classification"
+        );
+        assert!(
+            !super::install_root_parent_pins_install_writable(
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+            ),
+            "denied parent replace and ACL-control rights do not pin writable"
         );
         {
             let nested = app
@@ -4470,7 +4623,7 @@ mod tests {
         let start = source
             .find("fn file_is_medium_replaceable(")
             .expect("replaceable file probe");
-        let body = &source[start..start + 1200];
+        let body = &source[start..start + 1800];
         assert!(
             body.contains("WRITE_DAC") && body.contains("WRITE_OWNER"),
             "ACL-control rights must pin writable before Close relaunch:\n{body}"
@@ -4478,6 +4631,22 @@ mod tests {
         assert!(
             body.contains("runtime_path_ancestors"),
             "a non-immediate unpacked ancestor must be checked, not only path.parent():\n{body}"
+        );
+        assert!(
+            body.contains("FILE_WRITE_DATA") && body.contains("FILE_APPEND_DATA"),
+            "GENERIC_WRITE misses a DACL that only grants data/append on unpacked JS:\n{body}"
+        );
+        assert!(
+            body.contains("FILE_ADD_SUBDIRECTORY") && body.contains("DELETE"),
+            "ancestor directory DELETE / FILE_ADD_SUBDIRECTORY must pin writable:\n{body}"
+        );
+        let start = source
+            .find("pub(crate) fn install_is_user_owned_for")
+            .expect("install classification");
+        let body = &source[start..start + 500];
+        assert!(
+            body.contains("install_root_parent_is_medium_replaceable"),
+            "a replaceable parent of app_dir must pin writable across UAC:\n{body}"
         );
         let start = source
             .find("fn directory_medium_token_can_modify_windows")
