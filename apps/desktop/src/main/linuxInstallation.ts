@@ -40,7 +40,26 @@ export function findLinuxUserInstallation(
     const current = fs.readlinkSync(path.join(prefix, 'current'));
     if (!/^releases\/[A-Za-z0-9.+-]+$/.test(current)) return null;
     if (fs.realpathSync(path.join(prefix, current)) !== release) return null;
-    fs.accessSync(prefix, fs.constants.W_OK);
+    // Check the paths the installer actually writes before stopping active
+    // work. A writable prefix alone says nothing about staging or flock.
+    const releasesPath = path.join(prefix, 'releases');
+    const releases = fs.lstatSync(releasesPath);
+    if (!releases.isDirectory() || releases.uid !== uid) return null;
+    fs.accessSync(prefix, fs.constants.W_OK | fs.constants.X_OK);
+    fs.accessSync(releasesPath, fs.constants.W_OK | fs.constants.X_OK);
+    for (const name of ['.install.lock', 'previous']) {
+      const entryPath = path.join(prefix, name);
+      let entry: fs.Stats;
+      try { entry = fs.lstatSync(entryPath); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+      if (name === '.install.lock') {
+        if (!entry.isFile() || entry.uid !== uid) return null;
+        fs.accessSync(entryPath, fs.constants.W_OK);
+      } else if (!entry.isSymbolicLink()) return null;
+    }
     return { prefix, current, region };
   } catch { return null; }
 }

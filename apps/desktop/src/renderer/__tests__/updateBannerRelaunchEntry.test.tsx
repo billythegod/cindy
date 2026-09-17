@@ -53,7 +53,7 @@ vi.mock('@/hooks/useUpdateStatus', () => ({
 vi.mock('@/hooks/useUpdateBannerDismiss', () => ({
   useUpdateBannerDismiss: () => ({
     dismissed: dismissState.dismissed,
-    reason: null,
+    reason: dismissState.dismissed ? 'user' : null,
     dismiss: () => { dismissState.dismissed = true; },
     restore: () => { dismissState.dismissed = false; },
     deferBecauseBusy: vi.fn(),
@@ -105,6 +105,42 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('UpdateBanner relaunch entry', () => {
+  it.each([false, true].flatMap(busy => [false, true].flatMap(hidden =>
+    [false, true].map(collapsed => ({ busy, hidden, collapsed })),
+  )))('keeps repeated Linux failures actionable ($busy/$hidden/$collapsed)', async ({ busy, hidden, collapsed }) => {
+    updateStatus.current.errorCode = 'linux_installation_unsupported';
+    dismissState.dismissed = hidden;
+    anyActivityBlockingRelaunch.mockResolvedValue(busy);
+    const { rerender } = render(<UpdateBanner isCollapsed={collapsed} />);
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      fireEvent.click(await screen.findByRole('button', { name: 'update.linuxInstallation.retry' }));
+      if (busy) {
+        fireEvent.click(await screen.findByRole('button', { name: 'update.banner.confirmAria' }));
+      }
+      await waitFor(() => expect(relaunchToUpdate).toHaveBeenCalledTimes(attempt));
+      // Identical main-process result: no boolean error transition to rescue UI.
+      rerender(<UpdateBanner isCollapsed={collapsed} />);
+      await screen.findByText('update.linuxInstallation.title');
+      expect(screen.queryByRole('button', { name: 'update.banner.confirmAria' })).toBeNull();
+    }
+    updateStatus.current = { status: 'idle', errorCode: null };
+    rerender(<UpdateBanner isCollapsed={collapsed} />);
+    expect(screen.queryByText('update.linuxInstallation.title')).toBeNull();
+  });
+
+  it.each([false, true])('cancelling a Linux recheck ignores its late busy=%s result', async (busy) => {
+    updateStatus.current.errorCode = 'linux_installation_unsupported';
+    const settle = deferredProbe();
+    render(<UpdateBanner isCollapsed={false} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'update.linuxInstallation.retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'update.linuxInstallation.later' }));
+    settle(busy);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(relaunchToUpdate).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'update.banner.confirmAria' })).toBeNull();
+  });
+
   it('checks active work again when retrying a Linux update after repairing dependencies', async () => {
     updateStatus.current.errorCode = 'linux_installation_unsupported';
     anyActivityBlockingRelaunch.mockResolvedValue(true);

@@ -219,6 +219,12 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
     || (dismissed && (status === 'ready' || isPreparing));
 
   const handleRelaunch = () => {
+    // Main may emit exactly the same prerequisite error again. Keep the
+    // prompt visible without relying on a false -> true error transition.
+    if (isLinuxInstallationUnsupported) {
+      setConfirming(false);
+      setShowLinuxInstallationDialog(true);
+    }
     const theme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
     window.electronAPI.relaunchToUpdate(theme);
   };
@@ -272,8 +278,10 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
     // status 变化的作废由上面那个 effect 打点,但 effect 会晚一拍;这里直接读最新值,
     // 关掉「已 setState 未跑 effect」的那段窗口。两道判定针对同一不变量的不同触发路径。
     if (statusRef.current !== 'ready') return;
-    if (hasInFlight) setConfirming(true);
-    else handleRelaunch();
+    if (hasInFlight) {
+      setShowLinuxInstallationDialog(false);
+      setConfirming(true);
+    } else handleRelaunch();
   };
 
   const handleMoveToApplications = () => {
@@ -301,6 +309,11 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
     window.electronAPI.relaunchToUpdate(theme);
   };
 
+  const handleLinuxDialogOpenChange = (open: boolean) => {
+    if (!open) relaunchEpochRef.current += 1;
+    setShowLinuxInstallationDialog(open);
+  };
+
   // 文字链要显示的版本 —— undefined 即不显示。ready 态之外(superseding / error)没有
   // 可信版本号,confirming 态则刻意让位给两步确认。hasNotes 已经蕴含「ready + 该版本
   // 公告可渲染」,这里再显式列出条件,读代码时不必回溯 effect。
@@ -321,7 +334,7 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
       {isLinuxInstallationUnsupported && (
         <ConfirmDialog
           open={showLinuxInstallationDialog}
-          onOpenChange={setShowLinuxInstallationDialog}
+          onOpenChange={handleLinuxDialogOpenChange}
           title={t('update.linuxInstallation.title')}
           description={t('update.linuxInstallation.description')}
           confirmText={t('update.linuxInstallation.guide')}
@@ -329,12 +342,11 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
           cancelText={t('update.linuxInstallation.later')}
           autoFocusConfirm
           onConfirm={() => {
-            setShowLinuxInstallationDialog(false);
+            handleLinuxDialogOpenChange(false);
             void window.electronAPI.openExternal('https://github.com/makecindy/cindy/blob/main/docs/linux.md');
           }}
-          onCancel={() => setShowLinuxInstallationDialog(false)}
+          onCancel={() => handleLinuxDialogOpenChange(false)}
           onTertiary={() => {
-            setShowLinuxInstallationDialog(false);
             void probeBeforeRelaunch();
           }}
         />
@@ -398,9 +410,10 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
 
   // The prerequisite dialog must not be suppressed by the normal busy/dismiss
   // rules. After the user chooses "later", the usual banner visibility rules
-  // resume and clicking the update entry opens this dialog again.
-  if (!isCollapsed && hideExpandedBanner) return withPrerequisiteDialogs(null);
-  if (isCollapsed && dismissed && reason === 'user' && (status === 'ready' || isPreparing)) {
+  // resume and clicking the update entry opens this dialog again. Explicit
+  // retry confirmation also remains visible when the banner was busy-deferred.
+  if (!isCollapsed && hideExpandedBanner && !confirming) return withPrerequisiteDialogs(null);
+  if (isCollapsed && dismissed && reason === 'user' && !confirming && (status === 'ready' || isPreparing)) {
     return withPrerequisiteDialogs(null);
   }
 
