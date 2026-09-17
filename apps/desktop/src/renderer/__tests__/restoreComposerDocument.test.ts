@@ -7,7 +7,7 @@ import History from '@tiptap/extension-history';
 import { undoDepth, redoDepth } from '@tiptap/pm/history';
 import { AllSelection } from '@tiptap/pm/state';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { resetEmptyComposerDocument } from '../components/new-chat/resetEmptyComposerDocument';
+import { restoreComposerDocument } from '../components/new-chat/restoreComposerDocument';
 
 const TestMark = Mark.create({ name: 'testMark', renderHTML: () => ['strong', 0] });
 const editors: Editor[] = [];
@@ -18,16 +18,17 @@ function create(content = '<p></p>') {
   return editor;
 }
 describe('empty composer task switch', () => {
-  it('does not emit a replacement transaction for an untouched empty editor', () => {
+  it.each([undefined, { type: 'doc', content: [{ type: 'paragraph' }] }])('skips untouched empty replacement %j', (draft) => {
     const editor = create();
     const transaction = vi.fn(); editor.on('transaction', transaction);
-    resetEmptyComposerDocument(editor);
+    for (let i = 0; i < 6; i++) restoreComposerDocument(editor, draft);
     expect(transaction).not.toHaveBeenCalled();
+    expect(undoDepth(editor.state)).toBe(0);
   });
   it.each(['<p>text</p>', '<p> </p>', '<p></p><p></p>'])('resets noncanonical content %s', (content) => {
     const editor = create(content);
     const transaction = vi.fn(); editor.on('transaction', transaction);
-    resetEmptyComposerDocument(editor);
+    restoreComposerDocument(editor);
     expect(transaction).toHaveBeenCalled();
     expect(editor.state.doc.eq(editor.schema.topNodeType.createAndFill()!)).toBe(true);
   });
@@ -39,7 +40,7 @@ describe('empty composer task switch', () => {
     expect((kind === 'undo' ? undoDepth : redoDepth)(editor.state)).toBeGreaterThan(0);
     expect(editor.state.doc.textContent).toBe('');
     const transaction = vi.fn(); editor.on('transaction', transaction);
-    resetEmptyComposerDocument(editor);
+    restoreComposerDocument(editor);
     expect(transaction).toHaveBeenCalled();
   });
   it.each(['selection', 'marks', 'composing'])('retains the reset for %s state', (kind) => {
@@ -48,13 +49,23 @@ describe('empty composer task switch', () => {
     if (kind === 'marks') editor.view.dispatch(editor.state.tr.addStoredMark(editor.schema.marks.testMark.create()));
     if (kind === 'composing') vi.spyOn(editor.view, 'composing', 'get').mockReturnValue(true);
     const transaction = vi.fn(); editor.on('transaction', transaction);
-    resetEmptyComposerDocument(editor);
+    restoreComposerDocument(editor);
     expect(transaction).toHaveBeenCalled();
+  });
+  it('restores nonempty and noncanonical target drafts', () => {
+    for (const content of [
+      { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'draft' }] }] },
+      { type: 'doc', content: [{ type: 'paragraph' }, { type: 'paragraph' }] },
+    ]) {
+      const editor = create();
+      restoreComposerDocument(editor, content);
+      expect(editor.state.doc.eq(editor.schema.nodeFromJSON(content))).toBe(true);
+    }
   });
   it('retains the reset for voice and other explicit transition state', () => {
     const editor = create();
     const transaction = vi.fn(); editor.on('transaction', transaction);
-    resetEmptyComposerDocument(editor, true);
+    restoreComposerDocument(editor, undefined, true);
     expect(transaction).toHaveBeenCalled();
   });
 });

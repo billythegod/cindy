@@ -47,7 +47,7 @@ import {
 } from './ComposerListNodes';
 import { WindowsSelectionReplacement } from './WindowsSelectionReplacement';
 import { EmptyDocSelectionGuard } from './EmptyDocSelectionGuard';
-import { resetEmptyComposerDocument } from './resetEmptyComposerDocument';
+import { restoreComposerDocument } from './restoreComposerDocument';
 import {
   hasFocusMovedToInteractiveElement,
   useComposerSendFocusRestore,
@@ -3698,11 +3698,11 @@ export function ChatInput({
       isRestoringRef.current = true;
       try {
         const draft = storageKey !== undefined ? getComposerDraft(storageKey) : undefined;
-        if (draft?.text) {
-          editor.commands.setContent(normalizeRestoredComposerDraft(draft.text));
-        } else {
-          resetEmptyComposerDocument(editor, voiceInputBusyRef.current || voiceDraftTextRef.current.length > 0);
-        }
+        restoreComposerDocument(
+          editor,
+          draft?.text ? normalizeRestoredComposerDraft(draft.text) : undefined,
+          voiceInputBusyRef.current || voiceDraftTextRef.current.length > 0,
+        );
       } finally {
         isRestoringRef.current = false;
       }
