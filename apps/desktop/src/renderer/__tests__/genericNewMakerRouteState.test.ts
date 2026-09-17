@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const origins = new Map<string, string>();
+const localSessionIds = new Set<string>();
+vi.mock('@/lib/sessionsStore', () => ({
+  sessionsStore: {
+    findById: (id: string) => (localSessionIds.has(id) ? { id } : null),
+  },
+}));
 vi.mock('@/features/device-link/remoteProjectsStore', () => ({
   getSessionDeviceId: (id: string) => origins.get(id),
   remoteProjectsStore: {
@@ -20,6 +26,7 @@ import {
 
 beforeEach(() => {
   origins.clear();
+  localSessionIds.clear();
   __resetStickySessionOriginForTest();
 });
 
@@ -48,6 +55,7 @@ describe('new task inherits the current task computer', () => {
   });
 
   it('returns to this computer from a local task', () => {
+    localSessionIds.add('local-task');
     expect(
       readNewMakerDialogueTargetRequest(makeGenericNewMakerRouteState('/cc-agent/local-task')),
     ).toMatchObject({ deviceId: null, deviceName: null, preserveWorkspaceIfSameDevice: true });
@@ -57,6 +65,16 @@ describe('new task inherits the current task computer', () => {
     origins.set('task-a', 'computer-a');
     makeGenericNewMakerRouteState('/cc-agent/task-a');
     origins.clear();
+    expect(
+      readNewMakerDialogueTargetRequest(makeGenericNewMakerRouteState('/cc-agent/task-a')),
+    ).toMatchObject({ deviceId: 'computer-a' });
+  });
+
+  it('preserves the draft until a cold-start task origin is known', () => {
+    expect(makeGenericNewMakerRouteState('/cc-agent/task-a')).toEqual({
+      workspacePrompt: 'generic',
+    });
+    origins.set('task-a', 'computer-a');
     expect(
       readNewMakerDialogueTargetRequest(makeGenericNewMakerRouteState('/cc-agent/task-a')),
     ).toMatchObject({ deviceId: 'computer-a' });

@@ -214,7 +214,7 @@ describe('Shared create project picker', () => {
 
   it('invalidates an in-flight folder restore before applying a same-route dialogue target', () => {
     const effectStart = newMakerDraftRouteSource.indexOf(
-      '// “对话”分组可能在 /cc-agent/new 已经打开时再次导航到同一路由',
+      'handledDialogueTargetRequestRef.current = dialogueTargetRequest.requestId;',
     );
     const effectEnd = newMakerDraftRouteSource.indexOf(
       '// 弹窗确认添加后的落点',

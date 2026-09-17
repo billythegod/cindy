@@ -40,6 +40,13 @@ function extractHandlerBlock(source: string, name: string): string {
 }
 
 describe('通用「新建」保留 newMakerDraft 选择', () => {
+  it('旋钮的新建站使用与侧栏相同的当前任务设备请求', () => {
+    const start = sidebarUpperSource.indexOf("if (target.kind === 'new-task')");
+    const block = sidebarUpperSource.slice(start, sidebarUpperSource.indexOf('return;', start));
+    expect(start).toBeGreaterThan(-1);
+    expect(block).toContain('state: makeGenericNewMakerRouteState(location.pathname)');
+  });
+
   it('展开态 SidebarTopNav.handleNew 只 navigate、不清空 workingDir', () => {
     const block = extractHandlerBlock(topNavSource, 'handleNew');
     expect(block).toMatch(/navigate\(['`]\/cc-agent\/new['`]/);

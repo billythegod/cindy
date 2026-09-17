@@ -827,6 +827,7 @@ function ExpandedView({
   persistentLocalProjects,
 }: ExpandedProps) {
   const { t, i18n } = useTranslation();
+  const location = useLocation();
   const localPlatform = window.electronAPI.platform;
   const { sessions, refreshSessions, patchLocal, effectiveIncludeArchived } = sessionsHook;
   const {
@@ -2248,13 +2249,13 @@ function ExpandedView({
       const target = pickAdjacentSessionId(visibleIds, activeId, direction);
       if (!target) return;
       if (target.kind === 'new-task') {
-        navigate('/cc-agent/new');
+        navigate('/cc-agent/new', { state: makeGenericNewMakerRouteState(location.pathname) });
         return;
       }
       // 同样复用行点击唯一入口,继承清通知 / 同对话去重 / Orca 角色路由。
       void handleSessionClick(target.sessionId);
     });
-  }, [handleSessionClick, navigate, sessionSwitchEnabled]);
+  }, [handleSessionClick, location.pathname, navigate, sessionSwitchEnabled]);
 
   useAppShortcut('switch-session-1', () => handleSwitchSessionSlot(0), {
     enabled: sessionSwitchEnabled,
