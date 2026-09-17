@@ -460,10 +460,10 @@ export const remoteDesktop = new RemoteDesktopController({
   },
   stopPrivacyScreen: () => privacyScreen.stop(),
   hostMute: async (enabled) => {
-    if (enabled) await systemAudioMuteGuard.mute(0xc1d0);
-    else await systemAudioMuteGuard.restore(0xc1d0);
+    if (enabled) await systemAudioMuteGuard.mute('remote-desktop');
+    else await systemAudioMuteGuard.restore('remote-desktop');
   },
-  stopHostMute: () => systemAudioMuteGuard.restore(0xc1d0),
+  stopHostMute: () => systemAudioMuteGuard.restore('remote-desktop'),
   displayModes: readDesktopDisplayModes,
   displayPresent: (displayId) =>
     screen.getAllDisplays().some((display) => String(display.id) === displayId),

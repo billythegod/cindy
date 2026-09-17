@@ -53,3 +53,23 @@ it('rejects mute when the Windows backend cannot load, including cached failures
   expect(audio.getMuted).not.toHaveBeenCalled();
   expect(audio.setMuted).not.toHaveBeenCalled();
 });
+
+it.each([true, false])(
+  'keeps remote and WebContents owners independent, remote first=%s',
+  async (remoteFirst) => {
+    const { SystemAudioMuteGuard } = await import('../SystemAudioMuteGuard');
+    const guard = new SystemAudioMuteGuard();
+    const owners = remoteFirst
+      ? ['remote-desktop' as const, 0xc1d0]
+      : [0xc1d0, 'remote-desktop' as const];
+    await guard.mute(owners[0]);
+    await guard.mute(owners[1]);
+    await guard.mute(owners[0]);
+    await guard.restore(owners[0]);
+    await guard.restore(owners[0]);
+    expect(audio.getMuted).toHaveBeenCalledTimes(1);
+    expect(audio.setMuted.mock.calls).toEqual([[true]]);
+    await guard.restore(owners[1]);
+    expect(audio.setMuted.mock.calls).toEqual([[true], [false]]);
+  },
+);

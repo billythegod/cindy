@@ -4,6 +4,9 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('voice-input:system-audio');
 
+// WebContents owners are numeric; the remote session has a separate identity.
+type AudioMuteOwner = number | 'remote-desktop';
+
 type AudioSnapshot = {
   outputMuted: boolean;
 };
@@ -53,11 +56,11 @@ const SUPPORTS_MUTE = process.platform === 'darwin' || process.platform === 'win
  *   - other:   no-op (graceful degradation).
  */
 export class SystemAudioMuteGuard {
-  private readonly owners = new Set<number>();
+  private readonly owners = new Set<AudioMuteOwner>();
   private snapshot: AudioSnapshot | null = null;
   private tail: Promise<void> = Promise.resolve();
 
-  async mute(ownerId: number): Promise<void> {
+  async mute(ownerId: AudioMuteOwner): Promise<void> {
     if (!SUPPORTS_MUTE) return;
     await this.enqueue(async () => {
       if (this.owners.has(ownerId)) return;
@@ -73,7 +76,7 @@ export class SystemAudioMuteGuard {
     });
   }
 
-  async restore(ownerId: number): Promise<void> {
+  async restore(ownerId: AudioMuteOwner): Promise<void> {
     if (!SUPPORTS_MUTE) return;
     await this.enqueue(async () => {
       this.owners.delete(ownerId);
