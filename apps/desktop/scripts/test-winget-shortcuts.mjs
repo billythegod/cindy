@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 if (process.platform !== 'win32') throw new Error('Run this NSIS check on Windows.');
@@ -65,6 +65,56 @@ try {
   assert.equal(await fs.readFile(path.join(root, 'replacement.lnk'), 'utf8'), 'new link');
   await assert.rejects(fs.access(path.join(root, 'user-deleted.lnk')), { code: 'ENOENT' });
   console.log('PASS: old-uninstaller deletion, byte-preserving restore, missing parent, user-deleted and unrelated links.');
+
+  // Exercise real NSIS failures within this fixture only. A file blocks parent
+  // creation; a scoped ACL permits the directory but denies adding its link.
+  const denied = path.join(root, 'denied');
+  await fs.mkdir(denied);
+  await fs.writeFile(path.join(root, 'blocked-parent'), 'not a directory');
+  const identity = execFileSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true });
+  const sid = identity.match(/S-1-[0-9-]+/)?.[0];
+  assert.ok(sid, 'current Windows SID');
+  execFileSync('icacls.exe', [denied, '/deny', `*${sid}:(WD)`], { windowsHide: true });
+  try {
+    for (const parent of ['blocked-parent', 'denied']) {
+      const failureExe = path.join(root, `${parent}.exe`);
+      const failureNsi = path.join(root, `${parent}.nsi`);
+      const failureSource = [
+        'Unicode true',
+        'RequestExecutionLevel user',
+        'SilentInstall silent',
+        'OutFile "' + failureExe + '"',
+        '!include "LogicLib.nsh"',
+        '!include "' + path.join(desktop, 'resources/winget-shortcuts.nsh') + '"',
+        'Section',
+        '  InitPluginsDir',
+        '  CreateDirectory "$PLUGINSDIR\\cindy-shortcuts"',
+        '  !insertmacro cindyBackupLink "$EXEDIR\\unrelated.lnk" "saved"',
+        ...(parent === 'denied' ? [
+          // Confirm this case reaches CopyFiles, not a CreateDirectory failure.
+          '  ClearErrors',
+          '  CreateDirectory "$EXEDIR\\denied"',
+          '  ${If} ${Errors}',
+          '    SetErrorLevel 22',
+          '    Quit',
+          '  ${EndIf}',
+        ] : []),
+        `  !insertmacro cindyRestoreLink "$EXEDIR\\${parent}\\link.lnk" "saved"`,
+        '  FileOpen $0 "$EXEDIR\\unexpected-success" w',
+        '  FileClose $0',
+        'SectionEnd',
+      ].join(String.fromCharCode(10));
+      await fs.writeFile(failureNsi, failureSource);
+      execFileSync(makensis, ['/V2', '/INPUTCHARSET', 'UTF8', failureNsi], { windowsHide: true, env: { ...process.env, NSISDIR: nsisDir } });
+      const result = spawnSync(failureExe, [], { windowsHide: true, timeout: 30000 });
+      assert.ifError(result.error);
+      assert.equal(result.status, 1, `${parent}: restore failure must exit nonzero`);
+      await assert.rejects(fs.access(path.join(root, 'unexpected-success')), { code: 'ENOENT' });
+    }
+  } finally {
+    execFileSync('icacls.exe', [denied, '/remove:d', `*${sid}`], { windowsHide: true });
+  }
+  console.log('PASS: parent creation and link copy failures exit 1 without reaching the success path.');
 
   const app = path.join(root, 'app');
   await fs.mkdir(path.join(app, 'resources'), { recursive: true });

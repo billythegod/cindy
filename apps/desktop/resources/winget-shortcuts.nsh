@@ -15,13 +15,27 @@
   ${EndIf}
 !macroend
 
+!macro cindyCheckShortcutRestore DESTINATION
+  ${If} ${Errors}
+    Pop $R0
+    ; The app may already be replaced. Do not report a successful upgrade
+    ; when an existing shortcut could not be restored.
+    DetailPrint "Could not restore shortcut: ${DESTINATION}"
+    SetErrorLevel 1
+    Quit
+  ${EndIf}
+!macroend
+
 !macro cindyRestoreLink DESTINATION NAME
   ${If} ${FileExists} "$PLUGINSDIR\cindy-shortcuts\${NAME}.lnk"
   ${AndIfNot} ${FileExists} "${DESTINATION}"
     Push $R0
     ${GetParent} "${DESTINATION}" $R0
+    ClearErrors
     CreateDirectory "$R0"
+    !insertmacro cindyCheckShortcutRestore "${DESTINATION}"
     CopyFiles /SILENT "$PLUGINSDIR\cindy-shortcuts\${NAME}.lnk" "${DESTINATION}"
+    !insertmacro cindyCheckShortcutRestore "${DESTINATION}"
     Pop $R0
   ${EndIf}
 !macroend
