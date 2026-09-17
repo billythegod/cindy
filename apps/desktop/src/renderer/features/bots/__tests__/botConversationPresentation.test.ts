@@ -110,6 +110,18 @@ describe('teammate public execution disclosure', () => {
     expect(allKeys(result)).toEqual(input.map((item) => item.key));
   });
 
+  it('does not extend a final seal or delivery fallback across a history gap without tools', () => {
+    const first = message('legacy', 'assistant', 'Earlier answer', { createdAt: '2026-07-23T16:31:00Z' });
+    const last = message('sealed', 'assistant', 'Latest answer', {
+      createdAt: '2026-07-25T15:29:33Z', turnCompleted: true,
+    });
+    expect(proseIds(project([first, last], true))).toEqual(['legacy', 'sealed']);
+    const file = message('file', 'assistant', '', {
+      createdAt: '2026-07-25T15:29:33Z', files: [{ name: 'report.pdf', path: '/report.pdf' }],
+    });
+    expect(proseIds(project([first, file], false))).toEqual(['legacy', 'file']);
+  });
+
   it('does not infer commentary from words, paragraph length or markdown shape', () => {
     const text = '# Report\n' + '先查市场 final result '.repeat(100);
     const input = [message('u', 'user'), message('long', 'assistant', text), tool('t'),

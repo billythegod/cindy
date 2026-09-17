@@ -1,7 +1,10 @@
 import { extractRenderedMarkdownImageTargets } from '@/components/chat/markdownImageTargets';
+import { HISTORY_GAP_SPLIT_MS } from '@/lib/historyGap';
 import type { ChatMessage } from '@/lib/makerChatStore';
 import {
   isCompletedAssistantMessage,
+  renderItemStartMs,
+  renderItemEndMs,
   type MessageRenderItem,
   type RenderItem,
   type WorkGroupChildItem,
@@ -36,6 +39,34 @@ function publicItems(items: readonly RenderItem[]): RenderItem[] {
  * prose so an answer or plain-text question cannot disappear permanently.
  */
 export function simplifyBotRenderItems(
+  items: readonly RenderItem[],
+  isStreaming: boolean,
+  visibleGeneratedFileKeys?: ReadonlySet<string>,
+): RenderItem[] {
+  // Preserve the shared grouping's history-window boundary before unwrapping
+  // groups or removing thinking (both can carry timestamp anchors). Only the
+  // final window is active; earlier legacy answers retain their own fallback.
+  const result: RenderItem[] = [];
+  let window: RenderItem[] = [];
+  let previousEnd: number | null = null;
+  for (const item of items) {
+    const start = renderItemStartMs(item);
+    const end = renderItemEndMs(item);
+    const userBoundary = item.type === 'message' && item.message.role === 'user';
+    if (!userBoundary && previousEnd !== null && start !== null
+      && start - previousEnd > HISTORY_GAP_SPLIT_MS) {
+      result.push(...projectWindow(window, false, visibleGeneratedFileKeys));
+      window = [];
+    }
+    window.push(item);
+    if (userBoundary) previousEnd = end ?? previousEnd;
+    else if (end !== null) previousEnd = previousEnd === null ? end : Math.max(previousEnd, end);
+  }
+  result.push(...projectWindow(window, isStreaming, visibleGeneratedFileKeys));
+  return result;
+}
+
+function projectWindow(
   items: readonly RenderItem[],
   isStreaming: boolean,
   visibleGeneratedFileKeys?: ReadonlySet<string>,
