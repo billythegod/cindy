@@ -2737,8 +2737,15 @@ function ModelSelectorContentView({
 
   const localCatalogNotice = !deviceId && !providersOverride && localProviders.error
     ? <LocalModelCatalogNotice failure={localProviders.error} onRetry={localProviders.refetch} /> : null;
-  if (localCatalogNotice && localProviders.loading) {
-    return <div className="w-[320px] max-w-full p-2">{localCatalogNotice}</div>;
+  // 后续刷新失败时,快照里可能仍没有当前引擎的已连接来源。emptyState 不得盖住恢复提示;
+  // 有引导卡时叠在下方,连接入口仍可用。
+  if (localCatalogNotice && (localProviders.loading || emptyState)) {
+    return (
+      <div className="flex w-[320px] max-w-full flex-col">
+        <div className={emptyState ? 'p-2 pb-0' : 'p-2'}>{localCatalogNotice}</div>
+        {emptyState}
+      </div>
+    );
   }
   if (emptyState) return emptyState;
 

@@ -536,6 +536,22 @@ describe('ModelSelector provider groups', () => {
     expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
   });
 
+  it('keeps classic-picker recovery visible when the snapshot has no connected source for the current engine', async () => {
+    providersRef.providers = [{
+      id: 'gemini', name: 'Gemini', source: 'builtin', connected: true,
+      agents: [], models: {}, auth: { method: 'api-key' },
+    }];
+    providersRef.error = { reason: 'legacy-busy' };
+    renderSelector({ onNavigateToProviders: vi.fn() });
+    await openDropdown();
+    expect(screen.getByRole('status').textContent).toContain('catalogRecovery.legacy');
+    expect(screen.getByRole('button', { name: 'newChat.modelSelector.source.connectCta' })).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'settings.providers.catalogRecovery.retry' }));
+    });
+    expect(providersRef.refetch).toHaveBeenCalledOnce();
+  });
+
   it('never presents the local recovery action in a remote device picker', async () => {
     providersRef.loading = true;
     providersRef.error = { reason: 'legacy-busy' };
