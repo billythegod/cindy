@@ -328,7 +328,9 @@ function modelDisplayProvider(
   if (providerId) return providers.find((provider) => provider.id === providerId);
   const resolveSource = actualRoute ? actualSourceIdForModel : effectiveSourceIdForModel;
   const eligible = providers.filter((provider) => {
-    const model = findCatalogModel(provider, modelId, agent);
+    // Source eligibility must preserve distinct products such as [1m]. Metadata
+    // may fall back to the base model only after the source has been selected.
+    const model = findCatalogModel(provider, modelId, agent, { exact: true });
     return model && resolveSource([provider], provider.id, model.id, agent) === provider.id;
   });
   const defaultId = nativeDefaultSourceId(eligible, agent);

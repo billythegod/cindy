@@ -355,6 +355,20 @@ describe('model selector display identity during switches', () => {
     expect(trigger().title).not.toContain(props.modelId);
   });
 
+  it.each([false, true])('keeps the long-context product when choosing an implicit source (session=%s)', (actualRoute) => {
+    providersRef.providers = [
+      { ...provider, models: { codex: [{ id: 'glm-5.2', name: 'Standard GLM' }] } },
+      { ...provider, id: 'xd', name: 'Gateway', models: { codex: [{ id: 'glm-5.2[1m]', name: 'GLM 1M' }] } },
+    ];
+    render(<ModelSelector {...props} modelId="glm-5.2[1m]" currentProviderId={null} actualRoute={actualRoute}
+      agentIdentity={{ vendorKey: 'codex', state: 'pending' }}
+      currentSelection={{ agentKind: 'codex', model: 'glm-5.2[1m]', providerId: null, effort: 'high', fastMode: false }} />);
+    expect(trigger().textContent).toContain('GLM 1M');
+    expect(trigger().title).toContain('Codex · GLM 1M · Cindy AI');
+    expect(trigger().title).not.toContain('Standard GLM');
+    expect(trigger().title).not.toContain('OpenAI');
+  });
+
   it('resolves a wire alias immediately, including while the switch is in flight', () => {
     providersRef.providers = [provider];
     const { rerender } = render(<ModelSelector {...props} switching />);
