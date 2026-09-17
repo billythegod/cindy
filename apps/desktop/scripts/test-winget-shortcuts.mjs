@@ -83,7 +83,8 @@ try {
       directories: { output: path.join(root, 'out'), buildResources: path.join(desktop, 'resources') },
       win: { signAndEditExecutable: false },
       nsis: {
-        oneClick: false, allowToChangeInstallationDirectory: true,
+        // Match production: installer-directory.nsh supplies the directory page.
+        oneClick: false, allowElevation: true, allowToChangeInstallationDirectory: false,
         createDesktopShortcut: 'always', createStartMenuShortcut: true,
         shortcutName: 'Cindy', runAfterFinish: false,
         include: path.join(desktop, 'resources/installer.nsh'),
