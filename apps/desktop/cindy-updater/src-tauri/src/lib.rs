@@ -30,6 +30,9 @@ struct StatusPayload {
     /// True when app_dir was never rewritten. Close still relaunches Cindy after
     /// a terminal pre-install Retry even though Retry itself is hidden.
     install_unmodified: bool,
+    /// True after rollback restored the previous files. Close still relaunches
+    /// Cindy if Retry was later withdrawn by the digest check.
+    install_restored: bool,
     log_path: String,
 }
 
@@ -59,9 +62,9 @@ fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn quit_now(app: AppHandle, state: State<'_, AppState>) {
-    let (can_retry, install_unmodified) = {
+    let (can_retry, install_unmodified, install_restored) = {
         let status = state.last_status.lock().unwrap();
-        (status.can_retry, status.install_unmodified)
+        (status.can_retry, status.install_unmodified, status.install_restored)
     };
     let retry_in_progress = *state.retry_started.lock().unwrap();
     let stopped_app = *state.stopped_app.lock().unwrap();
@@ -71,6 +74,7 @@ fn quit_now(app: AppHandle, state: State<'_, AppState>) {
         retry_in_progress,
         stopped_app,
         install_unmodified,
+        install_restored,
     );
     app.exit(0);
 }
@@ -150,6 +154,7 @@ pub fn run() {
         error: None,
         can_retry: false,
         install_unmodified: true,
+        install_restored: false,
         log_path: args.log.to_string_lossy().into(),
     };
     let last_status = Arc::new(Mutex::new(initial_status));
@@ -198,9 +203,9 @@ pub fn run() {
                         }
                         tauri::WindowEvent::Destroyed => {
                             let state = handle.state::<AppState>();
-                            let (can_retry, install_unmodified) = {
+                            let (can_retry, install_unmodified, install_restored) = {
                                 let status = state.last_status.lock().unwrap();
-                                (status.can_retry, status.install_unmodified)
+                                (status.can_retry, status.install_unmodified, status.install_restored)
                             };
                             let retry_in_progress = *state.retry_started.lock().unwrap();
                             let stopped_app = *state.stopped_app.lock().unwrap();
@@ -210,6 +215,7 @@ pub fn run() {
                                 retry_in_progress,
                                 stopped_app,
                                 install_unmodified,
+                                install_restored,
                             );
                         }
                         _ => {}
@@ -364,7 +370,7 @@ mod retry_update_contract {
 fn event_to_payload(event: InstallerEvent, handle: &AppHandle) -> StatusPayload {
     let state = handle.state::<AppState>();
     let log_path = state.args.log.to_string_lossy().into();
-    let install_unmodified = state.last_status.lock().unwrap().install_unmodified;
+    let previous = state.last_status.lock().unwrap().clone();
     match event {
         InstallerEvent::Phase(phase, message) => StatusPayload {
             phase,
@@ -372,7 +378,8 @@ fn event_to_payload(event: InstallerEvent, handle: &AppHandle) -> StatusPayload 
             progress: -1,
             error: None,
             can_retry: false,
-            install_unmodified,
+            install_unmodified: previous.install_unmodified,
+            install_restored: previous.install_restored,
             log_path,
         },
         InstallerEvent::Progress(phase, message, progress) => StatusPayload {
@@ -381,7 +388,8 @@ fn event_to_payload(event: InstallerEvent, handle: &AppHandle) -> StatusPayload 
             progress,
             error: None,
             can_retry: false,
-            install_unmodified,
+            install_unmodified: previous.install_unmodified,
+            install_restored: previous.install_restored,
             log_path,
         },
         InstallerEvent::Done => StatusPayload {
@@ -391,12 +399,14 @@ fn event_to_payload(event: InstallerEvent, handle: &AppHandle) -> StatusPayload 
             error: None,
             can_retry: false,
             install_unmodified: false,
+            install_restored: false,
             log_path,
         },
         InstallerEvent::Failed {
             error,
             can_retry,
             install_unmodified,
+            install_restored,
         } => StatusPayload {
             phase: Phase::Failed,
             message: "更新失败".into(),
@@ -404,6 +414,7 @@ fn event_to_payload(event: InstallerEvent, handle: &AppHandle) -> StatusPayload 
             error: Some(error),
             can_retry,
             install_unmodified,
+            install_restored,
             log_path,
         },
         InstallerEvent::AppExited => unreachable!("AppExited is consumed before UI payload mapping"),

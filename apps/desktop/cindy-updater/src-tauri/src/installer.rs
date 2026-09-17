@@ -39,6 +39,7 @@ pub enum InstallerEvent {
         error: String,
         can_retry: bool,
         install_unmodified: bool,
+        install_restored: bool,
     },
     /// Cindy has exited (or this is an in-process Retry that no longer waits).
     /// Abandoning Retry must relaunch even if `.updating` was never acquired.
@@ -83,6 +84,7 @@ pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
             error: "更新文件已不存在或无法读取，请重新检查更新".into(),
             can_retry: false,
             install_unmodified: true,
+            install_restored: false,
         });
         return;
     }
@@ -115,10 +117,14 @@ pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
                     release_update_lock(lock);
                 }
             }
+            if failure.install_restored && should_relaunch_after_rollback(can_retry) {
+                relaunch_restored_app(&args);
+            }
             emit(InstallerEvent::Failed {
                 error: failure.message,
                 can_retry,
                 install_unmodified: failure.install_unmodified,
+                install_restored: failure.install_restored,
             });
         }
     }
@@ -138,6 +144,9 @@ struct InstallerFailure {
     /// True until copy_tree starts rewriting app_dir. Close must relaunch Cindy
     /// after a terminal pre-install Retry even when Retry is no longer offered.
     install_unmodified: bool,
+    /// True after rollback restored the previous files. Close must relaunch
+    /// Cindy if the later digest check withdraws Retry.
+    install_restored: bool,
     lock: Option<UpdateLock>,
 }
 
@@ -149,6 +158,7 @@ impl InstallerFailure {
             discard_archive: !can_retry,
             keep_backup: false,
             install_unmodified: true,
+            install_restored: false,
             lock: None,
         }
     }
@@ -163,6 +173,7 @@ impl InstallerFailure {
             discard_archive: false,
             keep_backup: false,
             install_unmodified: true,
+            install_restored: false,
             lock: None,
         }
     }
@@ -249,8 +260,9 @@ pub(crate) fn should_relaunch_after_abandoning_retry(
     can_retry: bool,
     retry_in_progress: bool,
     install_unmodified: bool,
+    install_restored: bool,
 ) -> bool {
-    !retry_in_progress && (can_retry || install_unmodified)
+    !retry_in_progress && (can_retry || install_unmodified || install_restored)
 }
 
 pub(crate) fn restored_app_relaunch_path(args: &CliArgs) -> Option<PathBuf> {
@@ -299,6 +311,7 @@ fn launch_app_exe(args: &CliArgs, exe: &Path) -> io::Result<AppLaunch> {
             install_writable_for_staging(
                 args.elevated,
                 medium_integrity_needs_elevation(&args.app_dir),
+                install_is_user_owned(&args.app_dir),
             ),
         ),
     ) {
@@ -324,9 +337,14 @@ pub(crate) fn should_relaunch_restored_app_on_abandon(
     stopped_app: bool,
     foreign_lock: bool,
     install_unmodified: bool,
+    install_restored: bool,
 ) -> bool {
-    should_relaunch_after_abandoning_retry(can_retry, retry_in_progress, install_unmodified)
-        && (owned_lock || stopped_app)
+    should_relaunch_after_abandoning_retry(
+        can_retry,
+        retry_in_progress,
+        install_unmodified,
+        install_restored,
+    ) && (owned_lock || stopped_app)
         && !foreign_lock
 }
 
@@ -354,6 +372,7 @@ pub(crate) fn abandon_retry(
     retry_in_progress: bool,
     stopped_app: bool,
     install_unmodified: bool,
+    install_restored: bool,
 ) {
     if !begin_abandon_retry(&args.lock) {
         return;
@@ -368,6 +387,7 @@ pub(crate) fn abandon_retry(
         stopped_app,
         foreign,
         install_unmodified,
+        install_restored,
     ) {
         relaunch_restored_app(args);
     }
@@ -523,8 +543,50 @@ pub(crate) fn retry_request_allowed(
 pub(crate) fn install_writable_for_staging(
     cli_elevated: bool,
     medium_integrity_needs_elevation: bool,
+    user_owned: bool,
 ) -> bool {
-    !cli_elevated && !medium_integrity_needs_elevation
+    !cli_elevated && (!medium_integrity_needs_elevation || user_owned)
+}
+
+/// True when `app_dir` lives under a known per-user profile root. A temporary
+/// PermissionDenied on the write probe must not pin that tree as protected:
+/// the same-login medium process can restore write access after UAC.
+pub(crate) fn install_is_user_owned(app_dir: &Path) -> bool {
+    install_is_user_owned_for(app_dir, &user_owned_roots())
+}
+
+pub(crate) fn install_is_user_owned_for(app_dir: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| windows_path_is_within(app_dir, root))
+}
+
+/// Case-insensitive Windows path prefix, used even when this crate is tested
+/// on macOS so LocalAppData / Program Files classification stays honest.
+fn windows_path_is_within(child: &Path, parent: &Path) -> bool {
+    let child = child.to_string_lossy().replace('/', "\\").to_lowercase();
+    let parent = parent.to_string_lossy().replace('/', "\\").to_lowercase();
+    if parent.is_empty() {
+        return false;
+    }
+    child == parent
+        || child.starts_with(&format!("{parent}\\"))
+}
+
+fn user_owned_roots() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        [
+            known_folder_local_app_data(),
+            known_folder_roaming_app_data(),
+            known_folder_profile(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
 }
 
 pub(crate) fn pin_install_writable(args: &mut CliArgs) {
@@ -534,6 +596,7 @@ pub(crate) fn pin_install_writable(args: &mut CliArgs) {
     args.install_writable = Some(install_writable_for_staging(
         args.elevated,
         !args.elevated && medium_integrity_needs_elevation(&args.app_dir),
+        install_is_user_owned(&args.app_dir),
     ));
 }
 
@@ -546,6 +609,7 @@ pub(crate) fn staging_dirs(args: &CliArgs) -> (PathBuf, PathBuf) {
     let probed = install_writable_for_staging(
         args.elevated,
         !args.elevated && medium_integrity_needs_elevation(&args.app_dir),
+        install_is_user_owned(&args.app_dir),
     );
     staging_dirs_for(args, process_elevated, resolved_install_writable(args, probed))
 }
@@ -602,19 +666,32 @@ pub(crate) fn program_data_dir() -> PathBuf {
 
 #[cfg(windows)]
 fn known_folder_program_data() -> Option<PathBuf> {
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_ProgramData)
+}
+
+#[cfg(windows)]
+fn known_folder_local_app_data() -> Option<PathBuf> {
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_LocalAppData)
+}
+
+#[cfg(windows)]
+fn known_folder_roaming_app_data() -> Option<PathBuf> {
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_RoamingAppData)
+}
+
+#[cfg(windows)]
+fn known_folder_profile() -> Option<PathBuf> {
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Profile)
+}
+
+#[cfg(windows)]
+fn known_folder(folder_id: &windows_sys::core::GUID) -> Option<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::System::Com::CoTaskMemFree;
-    use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
+    use windows_sys::Win32::UI::Shell::SHGetKnownFolderPath;
 
     let mut path: windows_sys::core::PWSTR = std::ptr::null_mut();
-    let hr = unsafe {
-        SHGetKnownFolderPath(
-            &FOLDERID_ProgramData,
-            0,
-            std::ptr::null_mut(),
-            &mut path,
-        )
-    };
+    let hr = unsafe { SHGetKnownFolderPath(folder_id, 0, std::ptr::null_mut(), &mut path) };
     if hr != 0 || path.is_null() {
         return None;
     }
@@ -1159,6 +1236,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
             discard_archive: !can_retry,
             keep_backup: false,
             install_unmodified: true,
+            install_restored: false,
             lock: None,
         }
     })?;
@@ -1277,34 +1355,19 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                     if !can_retry {
                         let _ = fs::remove_file(&args.zip);
                     }
-                    // Keep Cindy closed while Retry is still available. Relaunching
-                    // here would let the restored app spawn a second updater from
-                    // %TEMP% while this failure window can still replace files.
-                    if should_relaunch_after_rollback(can_retry) {
-                        let exe_path = args.app_dir.join(&args.exe_name);
-                        if exe_path.exists() {
-                            if let Err(e) = launch_detached(&exe_path) {
-                                logger::warn(format!(
-                                    "[installer] relaunch of old exe after rollback failed: {e}"
-                                ));
-                            } else {
-                                logger::info(format!(
-                                    "[installer] relaunched old exe at {}",
-                                    exe_path.display()
-                                ));
-                            }
-                        }
-                    } else {
-                        logger::info(
-                            "[installer] skipping Cindy relaunch because Retry remains available",
-                        );
-                    }
+                    // Keep Cindy closed while Retry is still available. Isolation
+                    // here is preliminary: finalize_retry_state may still withdraw
+                    // Retry after a digest check, and only then may we relaunch.
+                    logger::info(
+                        "[installer] skipping Cindy relaunch until Retry is finally allowed or withdrawn",
+                    );
                     return Err(InstallerFailure {
                         message: format!("{} (已回滚到旧版本)", install_err),
                         can_retry,
                         discard_archive: !can_retry,
                         keep_backup: false,
                         install_unmodified: false,
+                        install_restored: true,
                         lock: None,
                     });
                 }
@@ -1328,6 +1391,7 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                         discard_archive: true,
                         keep_backup: true,
                         install_unmodified: false,
+                        install_restored: false,
                         lock: None,
                     });
                 }
@@ -2440,21 +2504,61 @@ mod tests {
     }
 
     #[test]
+    fn successful_rollback_relaunches_when_final_retry_validation_fails() {
+        assert!(
+            should_relaunch_after_abandoning_retry(false, false, false, true),
+            "Close must relaunch Cindy after rollback restored the app even if Retry was later withdrawn"
+        );
+        assert!(
+            !should_relaunch_after_abandoning_retry(false, false, false, false),
+            "an inconsistent rollback must still not relaunch Cindy"
+        );
+        assert!(super::should_relaunch_restored_app_on_abandon(
+            false, false, true, true, false, false, true
+        ));
+
+        let source = include_str!("installer.rs");
+        let start = source
+            .find("[installer] rollback succeeded")
+            .expect("rollback success path");
+        let end = source[start..]
+            .find("ROLLBACK ALSO FAILED")
+            .expect("failed rollback follows success");
+        let inner = &source[start..start + end];
+        assert!(
+            !inner.contains("should_relaunch_after_rollback"),
+            "preliminary isolation must not relaunch before finalize_retry_state:\n{inner}"
+        );
+        let outer_start = source
+            .find("let can_retry = if failure.can_retry")
+            .expect("outer finalize");
+        let outer_end = source[outer_start..]
+            .find("struct InstallerFailure")
+            .expect("failure struct follows run_with_lock");
+        let outer = &source[outer_start..outer_start + outer_end];
+        assert!(
+            outer.contains("should_relaunch_after_rollback")
+                && outer.contains("install_restored"),
+            "relaunch after rollback only once Retry is finally allowed or withdrawn:\n{outer}"
+        );
+    }
+
+    #[test]
     fn abandoning_retry_relaunches_the_restored_app() {
         assert!(
-            should_relaunch_after_abandoning_retry(true, false, false),
+            should_relaunch_after_abandoning_retry(true, false, false, false),
             "Close after a retryable rollback must relaunch the restored Cindy"
         );
         assert!(
-            !should_relaunch_after_abandoning_retry(true, true, true),
+            !should_relaunch_after_abandoning_retry(true, true, true, true),
             "do not relaunch while an in-process Retry is still replacing files"
         );
         assert!(
-            !should_relaunch_after_abandoning_retry(false, false, false),
+            !should_relaunch_after_abandoning_retry(false, false, false, false),
             "an inconsistent rollback must not relaunch Cindy"
         );
         assert!(
-            should_relaunch_after_abandoning_retry(false, false, true),
+            should_relaunch_after_abandoning_retry(false, false, true, false),
             "Close after a terminal pre-install Retry must relaunch the unmodified Cindy"
         );
 
@@ -2469,7 +2573,7 @@ mod tests {
         retain_update_lock_file(held);
 
         assert_eq!(super::restored_app_relaunch_path(&args).as_ref(), Some(&exe));
-        super::abandon_retry(&args, true, false, false, false);
+        super::abandon_retry(&args, true, false, false, false, false);
         assert!(
             !args.lock.exists(),
             "abandoning Retry still deletes this process's retained .updating"
@@ -2483,7 +2587,7 @@ mod tests {
     #[test]
     fn abandoning_retry_relaunches_even_without_a_retained_lock() {
         assert!(
-            should_relaunch_after_abandoning_retry(true, false, false),
+            should_relaunch_after_abandoning_retry(true, false, false, false),
             "retryable failures that never acquired .updating still left Cindy closed"
         );
         let temp = TestDir::new();
@@ -2494,18 +2598,24 @@ mod tests {
         fs::write(args.app_dir.join(&args.exe_name), b"cindy").unwrap();
         assert!(!args.lock.exists());
         assert!(super::should_relaunch_restored_app_on_abandon(
-            true, false, false, true, false, false
+            true, false, false, true, false, false, false
         ));
         assert!(
-            !super::should_relaunch_restored_app_on_abandon(true, false, false, true, true, true),
+            !super::should_relaunch_restored_app_on_abandon(
+                true, false, false, true, true, true, true
+            ),
             "Cindy's 30s wait can drop this window's lock; a later updater's .updating must block relaunch"
         );
         assert!(
-            super::should_relaunch_restored_app_on_abandon(false, false, true, true, false, true),
+            super::should_relaunch_restored_app_on_abandon(
+                false, false, true, true, false, true, false
+            ),
             "a terminal pre-install Retry left the install unmodified and Cindy stopped"
         );
         assert!(
-            !super::should_relaunch_restored_app_on_abandon(false, false, true, true, false, false),
+            !super::should_relaunch_restored_app_on_abandon(
+                false, false, true, true, false, false, false
+            ),
             "a failed rollback must not relaunch an inconsistent Cindy.exe"
         );
         assert!(super::begin_abandon_retry(&args.lock));
@@ -2541,10 +2651,12 @@ mod tests {
         fs::write(&args.lock, format!("updating {other_pid}\n")).unwrap();
         assert!(lock_owned_by_foreign_process(&args.lock));
         assert!(
-            !super::should_relaunch_restored_app_on_abandon(true, false, false, true, true, true),
+            !super::should_relaunch_restored_app_on_abandon(
+                true, false, false, true, true, true, true
+            ),
             "stopped_app must not relaunch Cindy into another updater's replace window"
         );
-        super::abandon_retry(&args, true, false, true, false);
+        super::abandon_retry(&args, true, false, true, false, false);
         assert!(
             args.lock.exists(),
             "Close must not delete another updater's .updating"
@@ -2990,14 +3102,32 @@ mod tests {
         assert!(uses_protected_staging(true, true, false));
         assert!(!uses_elevated_private_staging(true, true, false));
         assert!(
-            install_writable_for_staging(false, false),
+            install_writable_for_staging(false, false, false),
             "inherited elevation must treat a medium-writable per-user install as writable"
         );
         assert!(
-            !install_writable_for_staging(true, false),
+            !install_writable_for_staging(true, false, false),
             "--elevated is the pre-UAC protected classification; do not re-probe with the high token"
         );
-        assert!(!install_writable_for_staging(false, true));
+        assert!(!install_writable_for_staging(false, true, false));
+        assert!(
+            install_writable_for_staging(false, true, true),
+            "a denied write probe on a user-owned root is not proof the install is protected"
+        );
+        assert!(
+            super::install_is_user_owned_for(
+                Path::new(r"C:\Users\u\AppData\Local\Cindy"),
+                &[PathBuf::from(r"C:\Users\u\AppData\Local")],
+            ),
+            "per-user LocalAppData installs stay user-owned across a spoofed PermissionDenied probe"
+        );
+        assert!(
+            !super::install_is_user_owned_for(
+                Path::new(r"C:\Program Files\Cindy"),
+                &[PathBuf::from(r"C:\Users\u\AppData\Local")],
+            ),
+            "Program Files is not a user-owned root"
+        );
         let temp = TestDir::new();
         let mut args = test_args();
         args.elevated = false;
@@ -3093,7 +3223,7 @@ mod tests {
         let start = source
             .find("fn known_folder_program_data")
             .expect("known_folder_program_data");
-        let body = &source[start..start + 900];
+        let body = &source[start..start + 1800];
         assert!(
             !body.contains("var_os(\"ProgramData\")") && !body.contains("var_os(\"PROGRAMDATA\")"),
             "an overridden ProgramData env var must not become the High-IL staging ancestor:\n{body}"

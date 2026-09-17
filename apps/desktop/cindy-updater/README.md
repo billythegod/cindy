@@ -148,9 +148,14 @@ sharing violation (Retry still owns `FILE_SHARE_READ`); an ACL or third-party
 deny-delete error does not hang the pre-window loop. The unelevated parent
 forwards `--install-writable true|false` across UAC so the elevated child
 does not treat `--elevated` as proof that a per-user install is protected.
+A denied write probe under a known per-user profile root (LocalAppData,
+RoamingAppData, or the user profile) still pins the install as writable:
+High-IL ProgramData staging and a de-elevated Close launch stay in force.
 
 A successful rollback retains the isolated zip for retry and does not relaunch
-Cindy while Retry remains available. The exclusive `.updating` lock stays on
+Cindy while Retry remains available. Isolation before the outer digest check
+is preliminary: if that check later withdraws Retry, the restored Cindy is
+relaunched immediately instead of waiting for Close. The exclusive `.updating` lock stays on
 disk for that window so a second updater cannot start from `%TEMP%`. Close, or
 any other abandoned Retry exit, deletes that file so the next Cindy launch does
 not wait 30 seconds, then relaunches the restored Cindy — the concurrency
