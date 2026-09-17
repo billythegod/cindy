@@ -173,6 +173,7 @@ import { PinnedSection, type PinnedSidebarEntry } from './sidebar/sections/Pinne
 import { ProjectNode as ProjectNodeView } from './sidebar/sections/ProjectNode';
 import { compareDialogueSessions, type DialogueSortBy } from './sidebar/sections/DialogueSection';
 import { holdSidebarViewedPriority, ProjectsSection } from './sidebar/sections/ProjectsSection';
+import { sidebarPriorityContext } from './lib/sidebarPriorityContext';
 import { toStoredSessionTitle } from './lib/sessionDisplayTitle';
 import {
   getVisibleSidebarSessionIds,
@@ -1843,8 +1844,8 @@ function ExpandedView({
   urgentSetRef.current = urgentSet;
   const attentionKindsRef = useRef(attentionKinds);
   attentionKindsRef.current = attentionKinds;
-  const runningSessionIdsRef = useRef(runningSessionIds);
-  runningSessionIdsRef.current = runningSessionIds;
+  const runningSessionIdsRef = useRef(displayRunningSessionIds);
+  runningSessionIdsRef.current = displayRunningSessionIds;
   const sidebarNotificationsRef = useRef(sidebarNotifications);
   sidebarNotificationsRef.current = sidebarNotifications;
   // viewedSessionId 同理:handleActionClick 只在触发归档那一刻用它算重定向目标。
@@ -2193,18 +2194,25 @@ function ExpandedView({
       for (const [sessionId, kind] of attentionKindsRef.current) {
         if (kind === 'awaiting' || kind === 'error') waiting.add(sessionId);
       }
-      holdSidebarViewedPriority(id, {
-        runningSessionIds: runningSessionIdsRef.current,
-        attentionSessionIds: sidebarNotificationsRef.current,
-        waitingSessionIds: waiting,
-      });
+      const target = sessionsRef.current.find((s) => s.id === id);
+      holdSidebarViewedPriority(
+        id,
+        sidebarPriorityContext(
+          {
+            runningSessionIds: runningSessionIdsRef.current,
+            attentionSessionIds: sidebarNotificationsRef.current,
+            waitingSessionIds: waiting,
+          },
+          target ? [target] : [],
+          (session) => getRemoteSessionActivity(session.id, session.deviceLinkDeviceId)?.phase,
+        ),
+      );
       // F-SB-7: Clear done notification on click
       clearNotification(id);
       markAutomationSessionRunsRead(id);
       clearSystemSessionAttention(id);
       if (id === activeSessionIdRef.current) return; // No duplicate navigate.
       if (import.meta.env.DEV) perfLog.debug(`sidebar:click sid=${id}`); // 纯诊断,生产剔除
-      const target = sessionsRef.current.find((s) => s.id === id);
       navigate(await resolveSessionRoute(id, target));
     },
     [navigate, clearNotification, markAutomationSessionRunsRead],
