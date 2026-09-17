@@ -4295,6 +4295,30 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
+  it.each(['FAIL', 'IGNORE'] as const)('retains a queued execution boundary when receipt persistence returns %s', async failure => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Durable queue adoption.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        hadPendingInputAtTerminal: true, pendingInputClientIds: ['queued-retry'] });
+      execution = { instanceId: 'native', generation: 2 };
+      const raise = failure === 'FAIL' ? "RAISE(FAIL, 'fixture receipt unavailable')" : 'RAISE(IGNORE)';
+      h.sqlite!.exec(`CREATE TEMP TRIGGER fail_execution_receipt BEFORE UPDATE OF permission_snapshot_json ON bot_delegations
+        WHEN json_extract(NEW.permission_snapshot_json, '$.taskExecution.generation') = 2
+        BEGIN SELECT ${raise}; END`);
+      await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'queued-retry')).rejects.toThrow();
+      h.sqlite!.exec('DROP TRIGGER fail_execution_receipt');
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'queued-retry');
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Retry adopted.', hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Retry adopted.' });
+    } finally { h.sqlite!.exec('DROP TRIGGER IF EXISTS fail_execution_receipt'); runtime.dispose(); }
+  });
+
   it('binds a restored explicit resume queue to the new native execution', async () => {
     await seedPair();
     const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
@@ -5746,9 +5770,10 @@ describe('Bot Session task end-to-end runtime', () => {
     }
   });
 
-  it('recovers a completed child result when the app restores active tasks', async () => {
+  it('recovers the durable delegated terminal receipt despite a later direct turn before restart', async () => {
     await seedPair();
-    const beforeRestart = createDelegationRuntime();
+    const execution = { instanceId: 'before-restart', generation: 1 };
+    const beforeRestart = createDelegationRuntime({ readSessionExecution: () => execution });
     const started = await beforeRestart.delegation.startSessionTask({
       callerSessionId: 'session-1',
       objective: '应用重启后也要收到结果。',
@@ -5773,6 +5798,14 @@ describe('Bot Session task end-to-end runtime', () => {
        SET active_turn_started_at = ?, last_turn_ended_at = ?
        WHERE id = ?`,
     ).run(10_000, 20_000, started.childSessionId);
+    // Crash after recording the native terminal event, before terminal settlement.
+    h.sqlite!.exec("CREATE TEMP TRIGGER fail_terminal_commit BEFORE UPDATE OF status ON bot_delegations WHEN NEW.status = 'completed' BEGIN SELECT RAISE(FAIL, 'fixture restart'); END");
+    await expect(beforeRestart.delegation.settleSession({ childSessionId: started.childSessionId, outcome: 'done', execution,
+      resultMessageClientId: 'restored-answer-client', hadPendingInputAtTerminal: false })).rejects.toThrow();
+    h.sqlite!.exec('DROP TRIGGER fail_terminal_commit');
+    h.sqlite!.prepare('INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('later-direct-answer', 'later-direct-answer-client', started.childSessionId, 'assistant', 'Unrelated direct answer.', 40000);
+    h.sqlite!.prepare('UPDATE sessions SET active_turn_started_at = 30000, last_turn_ended_at = 40000 WHERE id = ?').run(started.childSessionId);
     beforeRestart.dispose();
 
     const afterRestart = createDelegationRuntime();
@@ -5788,6 +5821,24 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally {
       afterRestart.dispose();
     }
+  });
+
+  it('leaves an unverified restart result unresolved instead of adopting a later direct turn', async () => {
+    await seedPair();
+    const before = createDelegationRuntime({ readSessionExecution: () => ({ instanceId: 'old-native', generation: 1 }) });
+    const task = await before.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Lost original callback.' });
+    if (!task.ok) throw new Error('missing task');
+    h.sqlite!.prepare('INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('unrelated-result', 'unrelated-result-client', task.childSessionId, 'assistant', 'Direct turn answer.', 40000);
+    h.sqlite!.prepare('UPDATE sessions SET active_turn_started_at = 30000, last_turn_ended_at = 40000 WHERE id = ?').run(task.childSessionId);
+    before.dispose();
+    const after = createDelegationRuntime();
+    try {
+      await after.delegation.restore();
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'running', result_summary: null });
+      expect(after.started).toHaveLength(0);
+    } finally { after.dispose(); }
   });
 
   it('re-delivers a terminal result whose durable completion wake is still pending', async () => {

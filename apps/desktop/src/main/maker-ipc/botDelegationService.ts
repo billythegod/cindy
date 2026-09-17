@@ -1508,14 +1508,6 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       return;
     }
     const resumedAt = parseRecord(row.permissionSnapshotJson).taskResumedAt;
-    if (typeof resumedAt === 'number' && deps.taskControl) {
-      await deps.taskControl.restoreInput(row.childSessionId);
-      if (deps.hasPendingInput?.(row.childSessionId)) {
-        prepareQueuedResume(row);
-        await deps.taskControl.resumeInput(row.childSessionId);
-        return;
-      }
-    }
     const [child] = await db
       .select({
         status: sessions.status,
@@ -1538,11 +1530,33 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       return;
     }
 
+    const snapshot = parseRecord(row.permissionSnapshotJson);
+    const acceptedExecution = snapshot.taskExecution as (DelegationExecutionReceipt & { runSequence: number }) | undefined;
+    const terminal = snapshot.taskTerminal as {
+      runSequence: number; execution: DelegationExecutionReceipt; outcome: 'done' | 'error';
+      resultText?: string; resultMessageClientId?: string; error?: string;
+    } | undefined;
+    if (acceptedExecution && terminal?.execution && terminal.runSequence === row.runSequence
+      && acceptedExecution.runSequence === row.runSequence
+      && terminal.execution.instanceId === acceptedExecution.instanceId
+      && terminal.execution.generation === acceptedExecution.generation
+      && (terminal.outcome === 'done' || terminal.outcome === 'error')) {
+      await settleSessionUnserialized({ childSessionId: row.childSessionId, ...terminal,
+        expectedRunSequence: row.runSequence, hadPendingInputAtTerminal: false });
+      return;
+    }
+
     if (
       child.activeTurnStartedAt !== null
       && child.lastTurnEndedAt !== null
       && child.lastTurnEndedAt >= Math.max(child.activeTurnStartedAt, typeof resumedAt === 'number' ? resumedAt : 0)
     ) {
+      if (row.targetBotId === null) {
+        // Session-wide timestamps can belong to a later direct turn. Without a
+        // matching durable terminal receipt, leave the delegation unresolved.
+        log.warn('Session task restart result has no verified execution receipt', { delegationId: row.id });
+        return;
+      }
       const resultText = await readLatestAssistantText(row.childSessionId, undefined, child.activeTurnStartedAt);
       if (resultText) {
         await settleSessionUnserialized({
@@ -1560,6 +1574,15 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         if (changed) await deliverCompletion({ ...row, status: 'failed', lastError });
       }
       return;
+    }
+
+    if (typeof resumedAt === 'number' && deps.taskControl) {
+      await deps.taskControl.restoreInput(row.childSessionId);
+      if (deps.hasPendingInput?.(row.childSessionId)) {
+        prepareQueuedResume(row);
+        await deps.taskControl.resumeInput(row.childSessionId);
+        return;
+      }
     }
 
     const validation = await validateDispatchPlan(row);
@@ -2874,6 +2897,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const snapshot = parseRecord(extendDeadlineSnapshot(row.permissionSnapshotJson,
       Math.max(0, resumedAt - pause.pausedAt)) ?? row.permissionSnapshotJson);
     delete snapshot.taskPause;
+    delete snapshot.taskTerminal;
     snapshot.taskResumedAt = resumedAt;
     snapshot.taskResume = { token: pause.token, text: text?.trim() ?? '' };
     let status: DelegationStatus = pending ? 'waiting' : pause.previousStatus === 'queued' ? 'queued' : 'running';
@@ -3095,6 +3119,18 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     }
     if (params.hadPendingInputAtTerminal) return;
     if (!row || readTaskPause(row) || !ACTIVE_DELEGATION_STATUSES.includes(row.status as (typeof ACTIVE_DELEGATION_STATUSES)[number])) return;
+    if (params.execution) {
+      const [recorded] = await db.update(botDelegations).set({
+        permissionSnapshotJson: sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskTerminal', json(${JSON.stringify({
+          runSequence: row.runSequence, execution: params.execution, outcome: params.outcome,
+          resultText: params.resultText?.slice(0, MAX_RESULT_CHARS), resultMessageClientId: params.resultMessageClientId, error: params.error?.slice(0, 4000),
+        })}))`,
+      }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
+        eq(botDelegations.permissionSnapshotJson, row.permissionSnapshotJson),
+        inArray(botDelegations.status, [...ACTIVE_DELEGATION_STATUSES])))
+        .returning({ id: botDelegations.id });
+      if (!recorded) return;
+    }
     const [child] = await db
       .select({ tokensUsed: sessions.totalTokenUsage })
       .from(sessions)
@@ -3179,27 +3215,40 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   // Only queue entries present at the delegated terminal boundary belong to
   // its continuation. A direct turn arriving after that boundary is unrelated.
   const acceptQueuedSessionInput = async (childSessionId: string, clientId: string): Promise<void> => {
-    const execution = deps.readSessionExecution?.(childSessionId);
-    if (!execution) return;
-    const db = getDbClient().drizzle;
     const boundary = pendingExecutionInputs.get(childSessionId);
     if (!boundary?.clientIds.includes(clientId)) return;
-    pendingExecutionInputs.delete(childSessionId);
+    const execution = deps.readSessionExecution?.(childSessionId);
+    if (!execution) throw new Error('Delegated queued input has no native execution receipt');
+    const db = getDbClient().drizzle;
     const [row] = await db.select().from(botDelegations)
       .where(eq(botDelegations.childSessionId, childSessionId)).limit(1);
     if (!row || !isActiveDelegation(row.status as DelegationStatus)
-      || (boundary.runSequence !== undefined && boundary.runSequence !== row.runSequence)) return;
-    const receiptGuard = boundary.execution
-      ? and(
-        sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.runSequence') = ${row.runSequence}`,
-        sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.instanceId') = ${boundary.execution.instanceId}`,
-        sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.generation') = ${boundary.execution.generation}`)
-      : sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution') IS NULL`;
-    await db.update(botDelegations).set({
-      permissionSnapshotJson: sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskExecution', json(${JSON.stringify({ ...execution, runSequence: row.runSequence })}))`,
-    }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
-      receiptGuard,
-      inArray(botDelegations.status, ['running', 'waiting'])));
+      || (boundary.runSequence !== undefined && boundary.runSequence !== row.runSequence)) {
+      throw new Error('Delegated queued input no longer belongs to an active run');
+    }
+    const matchesAccepted = (snapshot: string): boolean => {
+      const accepted = parseRecord(snapshot).taskExecution as (DelegationExecutionReceipt & { runSequence: number }) | undefined;
+      return accepted?.runSequence === row.runSequence && accepted.instanceId === execution.instanceId
+        && accepted.generation === execution.generation;
+    };
+    if (!matchesAccepted(row.permissionSnapshotJson)) {
+      const receiptGuard = boundary.execution
+        ? and(
+          sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.runSequence') = ${row.runSequence}`,
+          sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.instanceId') = ${boundary.execution.instanceId}`,
+          sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.generation') = ${boundary.execution.generation}`)
+        : sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution') IS NULL`;
+      const [accepted] = await db.update(botDelegations).set({
+        permissionSnapshotJson: sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskExecution', json(${JSON.stringify({ ...execution, runSequence: row.runSequence })}))`,
+      }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
+        receiptGuard,
+        inArray(botDelegations.status, ['running', 'waiting'])))
+        .returning({ id: botDelegations.id });
+      if (!accepted) throw new Error('Delegated queued execution receipt was not committed');
+    }
+    // The callback is awaited before vendor dispatch. Errors retain this boundary
+    // for retry; never allow a turn to run with an uncommitted delegation receipt.
+    if (pendingExecutionInputs.get(childSessionId) === boundary) pendingExecutionInputs.delete(childSessionId);
   };
 
   const restore = async (): Promise<void> => {
