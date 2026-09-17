@@ -69,6 +69,38 @@ describe('catalog invalidation under a slow device link', () => {
     expect(cache.getCachedDeviceProviders('a')).toEqual(catalog('latest'));
   });
 
+  it.each([
+    ['ordinary', 'resolve', 'background-first'], ['ordinary', 'reject', 'background-first'],
+    ['fresh', 'resolve', 'background-first'], ['fresh', 'reject', 'background-first'],
+    ['ordinary', 'resolve', 'fresh-first'], ['ordinary', 'reject', 'fresh-first'],
+    ['fresh', 'resolve', 'fresh-first'], ['fresh', 'reject', 'fresh-first'],
+  ])('shares one replacement after an obsolete %s read %ss with %s', async (kind, outcome, order) => {
+    const cache = await import('@/device-link/deviceProvidersCache');
+    const old = deferred<ReturnType<typeof catalog>>();
+    const replacement = deferred<ReturnType<typeof catalog>>();
+    const first = (kind === 'fresh' ? cache.fetchDeviceProvidersFresh : cache.fetchDeviceProviders)(
+      'a', () => old.promise,
+    ).catch(() => undefined);
+    cache.invalidateDeviceProvidersForRefresh('a');
+    const generation = cache.getDeviceProvidersGen('a');
+    const fetcher = vi.fn(() => replacement.promise);
+    const read = () => cache.fetchDeviceProviders('a', fetcher);
+    const fresh = () => cache.fetchDeviceProvidersFresh('a', fetcher);
+    const readers = order === 'background-first' ? [read(), fresh()] : [fresh(), read()];
+    await flush();
+    expect(fetcher).not.toHaveBeenCalled();
+    if (outcome === 'reject') old.reject(new Error('timeout'));
+    else old.resolve(catalog('obsolete'));
+    await first;
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(cache.getDeviceProvidersGen('a')).toBe(generation);
+    expect(cache.getCachedDeviceProviders('a')).toBeUndefined();
+    replacement.resolve(catalog('latest'));
+    expect(await Promise.all(readers)).toEqual([catalog('latest'), catalog('latest')]);
+    expect(cache.getCachedDeviceProviders('a')).toEqual(catalog('latest'));
+  });
+
   it('failed or cancelled reads cannot block another peer or resurrect a disposed owner', async () => {
     const { createDeviceCatalogRefresh } = await import('@/device-link/deviceCatalogRefresh');
     const cache = await import('@/device-link/deviceProvidersCache');

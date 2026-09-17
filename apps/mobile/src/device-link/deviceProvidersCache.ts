@@ -209,7 +209,10 @@ export async function fetchDeviceProvidersFresh(
   fetcher: DeviceProvidersFetcher,
 ): Promise<DeviceProvidersPayload> {
   const fp = freshInflight.get(deviceId);
-  if (fp) return joinProviderRead(deviceId, fp, () => fetchDeviceProvidersFresh(deviceId, fetcher));
+  // After an obsolete read settles, all waiters share the replacement started
+  // after this call. Re-entering fresh would invalidate a sibling waiter's new
+  // read and send a duplicate; independent fresh calls still bypass cache below.
+  if (fp) return joinProviderRead(deviceId, fp, () => fetchDeviceProviders(deviceId, fetcher));
 
   // fresh 语义 = 强制访问工作站拿当前真相。仅当确有普通请求在途时才作废它
   // (greptile/copilot/codex review P1/P2):旧普通请求若在 fresh 之后返回,仍会
@@ -220,7 +223,7 @@ export async function fetchDeviceProvidersFresh(
   // 即收敛,gen 保持稳定时 fetch 前后一致直接采信。
   const ip = inflight.get(deviceId);
   if (ip && readGeneration.get(ip) !== getDeviceProvidersGen(deviceId)) {
-    return joinProviderRead(deviceId, ip, () => fetchDeviceProvidersFresh(deviceId, fetcher));
+    return joinProviderRead(deviceId, ip, () => fetchDeviceProviders(deviceId, fetcher));
   }
   if (ip) {
     inflight.delete(deviceId);
