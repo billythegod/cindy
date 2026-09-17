@@ -270,6 +270,13 @@ pub(crate) fn should_relaunch_after_abandoning_retry(
     !retry_in_progress && (can_retry || install_unmodified || install_restored)
 }
 
+/// Alt+F4 / 关闭 must not destroy the updater until the install worker has
+/// reached Done or Failed. The first attempt never sets `retry_started`, so
+/// blocking only on that flag would relaunch Cindy from a half-replaced tree.
+pub(crate) fn close_should_be_blocked(phase: Phase, retry_in_progress: bool) -> bool {
+    retry_in_progress || !matches!(phase, Phase::Done | Phase::Failed)
+}
+
 pub(crate) fn restored_app_relaunch_path(args: &CliArgs) -> Option<PathBuf> {
     let exe = args.app_dir.join(&args.exe_name);
     exe.exists().then_some(exe)
@@ -602,8 +609,9 @@ fn existing_install_files_medium_writable(app_dir: &Path, exe_name: &str) -> Opt
 }
 
 /// Existing loadable inputs a medium-integrity process can replace to hijack
-/// an elevated launch: the main exe, `resources/app.asar`, app-local DLLs, and
-/// unpacked native addons under `resources/app.asar.unpacked`.
+/// an elevated launch: the main exe, `resources/app.asar`, app-local native
+/// binaries, and every unpacked file under `resources/app.asar.unpacked`
+/// (Forge unpacks JS such as `node-pty` that production later `require`s).
 pub(crate) fn medium_writable_install_file_candidates(
     app_dir: &Path,
     exe_name: &str,
@@ -623,7 +631,7 @@ pub(crate) fn medium_writable_install_file_candidates(
             }
         }
     }
-    collect_medium_writable_native_files(
+    collect_medium_writable_unpacked_files(
         &app_dir.join("resources").join("app.asar.unpacked"),
         &mut candidates,
     );
@@ -640,7 +648,7 @@ fn is_medium_writable_native_file(path: &Path) -> bool {
         })
 }
 
-fn collect_medium_writable_native_files(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_medium_writable_unpacked_files(dir: &Path, out: &mut Vec<PathBuf>) {
     if is_reparse_point(dir) {
         return;
     }
@@ -656,10 +664,10 @@ fn collect_medium_writable_native_files(dir: &Path, out: &mut Vec<PathBuf>) {
             continue;
         };
         if file_type.is_dir() {
-            collect_medium_writable_native_files(&path, out);
+            collect_medium_writable_unpacked_files(&path, out);
             continue;
         }
-        if file_type.is_file() && is_medium_writable_native_file(&path) {
+        if file_type.is_file() {
             out.push(path);
         }
     }
@@ -1438,8 +1446,8 @@ fn run_inner<F: FnMut(InstallerEvent)>(
                 }
             }
             AppLaunch::Skipped => {
-                logger::warn(
-                    "[installer] files replaced; skipped launching a writable Cindy.exe from this elevated updater",
+                anyhow::bail!(
+                    "已替换文件，但无法在不继承管理员权限的情况下启动 Cindy"
                 );
             }
         }
@@ -2706,8 +2714,9 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_update_lock, archive_matches_digest, bind_zip_sha256, extract_error_can_retry,
-        create_protected_staging_tree, elevated_private_staging_root, finalize_retry_state,
+        acquire_update_lock, archive_matches_digest, bind_zip_sha256, close_should_be_blocked,
+        extract_error_can_retry, create_protected_staging_tree, elevated_private_staging_root,
+        finalize_retry_state,
         install_writable_for_staging, is_owned_program_data_staging_name,
         lock_owned_by_foreign_process, may_relaunch_with_current_integrity, may_self_elevate,
         path_is_within, pre_elevation_failure_can_retry, prepare_retry_archive, program_data_dir,
@@ -3872,6 +3881,29 @@ mod tests {
                 .any(|path| path.ends_with("better_sqlite3.node")),
             "a writable unpacked native addon must pin the install as unprotected: {candidates:?}"
         );
+        fs::create_dir_all(
+            app.join("resources")
+                .join("app.asar.unpacked")
+                .join("node_modules")
+                .join("node-pty")
+                .join("lib"),
+        )
+        .unwrap();
+        fs::write(
+            app.join("resources")
+                .join("app.asar.unpacked")
+                .join("node_modules")
+                .join("node-pty")
+                .join("lib")
+                .join("index.js"),
+            b"module.exports = {}",
+        )
+        .unwrap();
+        let candidates = super::medium_writable_install_file_candidates(&app, "Cindy.exe");
+        assert!(
+            candidates.iter().any(|path| path.ends_with("index.js")),
+            "Forge-unpacked JS such as node-pty must pin the install as unprotected: {candidates:?}"
+        );
         assert_eq!(
             super::file_write_probe_from_os_error(std::io::ErrorKind::PermissionDenied, Some(5)),
             Some(false),
@@ -4053,6 +4085,28 @@ mod tests {
                 || body.contains("launch_app_exe"),
             "copy_tree then CreateProcess of app_dir/Cindy.exe must not inherit a high token on a writable install:\n{body}"
         );
+        assert!(
+            body.contains("anyhow::bail!") && body.contains("AppLaunch::Skipped"),
+            "a skipped de-elevated launch after replacement is a terminal failure, not Done:\n{body}"
+        );
+    }
+
+    #[test]
+    fn close_is_blocked_until_the_install_worker_reaches_a_terminal_phase() {
+        assert!(
+            close_should_be_blocked(Phase::Extracting, false),
+            "the first install never sets retry_started; closing during extract would relaunch a mixed tree"
+        );
+        assert!(close_should_be_blocked(Phase::Replacing, false));
+        assert!(close_should_be_blocked(Phase::RollingBack, false));
+        assert!(close_should_be_blocked(Phase::Waiting, false));
+        assert!(close_should_be_blocked(Phase::Launching, false));
+        assert!(
+            close_should_be_blocked(Phase::Failed, true),
+            "in-process Retry must still block Close while the worker is rewriting files"
+        );
+        assert!(!close_should_be_blocked(Phase::Failed, false));
+        assert!(!close_should_be_blocked(Phase::Done, false));
     }
 
     #[test]

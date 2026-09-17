@@ -62,11 +62,14 @@ fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn quit_now(app: AppHandle, state: State<'_, AppState>) {
-    let (can_retry, install_unmodified, install_restored) = {
+    let (phase, can_retry, install_unmodified, install_restored) = {
         let status = state.last_status.lock().unwrap();
-        (status.can_retry, status.install_unmodified, status.install_restored)
+        (status.phase, status.can_retry, status.install_unmodified, status.install_restored)
     };
     let retry_in_progress = *state.retry_started.lock().unwrap();
+    if installer::close_should_be_blocked(phase, retry_in_progress) {
+        return;
+    }
     let stopped_app = *state.stopped_app.lock().unwrap();
     installer::abandon_retry(
         &state.args,
@@ -197,7 +200,9 @@ pub fn run() {
                     match event {
                         tauri::WindowEvent::CloseRequested { api, .. } => {
                             let state = handle.state::<AppState>();
-                            if *state.retry_started.lock().unwrap() {
+                            let phase = state.last_status.lock().unwrap().phase;
+                            let retry_in_progress = *state.retry_started.lock().unwrap();
+                            if installer::close_should_be_blocked(phase, retry_in_progress) {
                                 api.prevent_close();
                             }
                         }
@@ -325,12 +330,22 @@ mod retry_update_contract {
             "Alt+F4 must not destroy the updater while retry_started is hashing or replacing:\n{body}"
         );
         assert!(
-            body.contains("retry_started"),
-            "close interception must follow the in-process retry worker flag:\n{body}"
+            body.contains("close_should_be_blocked"),
+            "close interception must wait for Done/Failed, not only retry_started:\n{body}"
         );
         assert!(
             body.contains("WindowEvent::Destroyed") && body.contains("abandon_retry"),
             "closing the updater window must still abandon Retry after a terminal status"
+        );
+
+        let quit_start = source.find("fn quit_now").expect("quit_now");
+        let quit_end = source[quit_start..]
+            .find("\nfn retry_update")
+            .expect("retry_update follows quit_now");
+        let quit_body = &source[quit_start..quit_start + quit_end];
+        assert!(
+            quit_body.contains("close_should_be_blocked"),
+            "quit_now must not abandon or exit while the first install is still rewriting files:\n{quit_body}"
         );
     }
 
