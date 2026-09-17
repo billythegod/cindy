@@ -80,10 +80,10 @@ Cindy 有两个 Telegram bot，用户看到的是同一个产品：
 | 阶段 | 个人 bot | 官方 bot |
 |---|---|---|
 | 首帧 | 有真实内容（含工具步骤）就建一条**真实消息**；空内容不建（惰性占位） | 快照进 `turn.progress` 帧发给服务端 |
-| 过程中 | **第一帧真实内容用 `sendMessage` 建消息（这一条会推送），之后持续 `editMessageText` 覆盖（编辑不推送）**，用户看着它长大：过程区在上、正文在下，正文是整轮累计内容 | **私聊**：进 Telegram **草稿**（`sendDraft`）——在输入框那个位置，**不在消息流里**；**群**：一条进度消息，`editMessageText` 覆盖。桌面端对 Telegram 专门用 `progressBodyMode: 'whole'`，在 3800 字单帧上限内同样累计展示整轮正文；超过后退回当前 assistant 消息，避免头部截断把最新答案藏掉。Slack / X 仍只展示当前 assistant 消息 |
+| 过程中 | **第一帧真实内容用 `sendMessage` 建消息（这一条会推送），之后持续 `editMessageText` 覆盖（编辑不推送）**，用户看着它长大：过程区在上、正文在下，正文是整轮累计内容 | **私聊**：默认普通进度消息；服务端开启 `TELEGRAM_DM_DRAFT_ENABLED` 时进 Telegram **草稿**（`sendDraft`），不在消息流里；**群**：一条进度消息，`editMessageText` 覆盖。桌面端对 Telegram 专门用 `progressBodyMode: 'whole'`，在 3800 字单帧上限内同样累计展示整轮正文；超过后退回当前 assistant 消息，避免头部截断把最新答案藏掉。Slack / X 仍只展示当前 assistant 消息 |
 | `done` 交接 | 最后一帧由个人 driver 自己定稿 | 桌面端在 `turn.end` 之前先 `flushProgress()`，跳过尚余的 1.5 秒尾沿节流，把最新安全快照放进既有进度载体；这是防止 observer teardown 吞掉最后一帧的客户端兜底，**不等于**服务端终稿已发布成功 |
 | 终稿内容（**成功收口**） | **只有正文**（`composeStreamingView` 在 `turn.done` 时直接 `return body`，不再合成过程区） | **只有正文**（`presenter.finalText()` 取 body 引擎的缓冲，不经过 `composeProgressView`） |
-| 终稿落在哪 | **永远新发一条独立消息**，落地后才尽力删掉停在过程态的旧载体——**删不掉就两条并存**。优先 `sendRichMessage`（表格/公式原生渲染、32768 上限免分段）；**Telegram 完整应答的任一 4xx** 都判为「这条 Rich 没落地」并回落新发 HTML——判据是**有没有拿到应答**而非错误码大小：404（方法缺失，另触发实例级熔断，后续不再试 Rich）、400（本条解析不过）、**429（`callSend` 按 `retry_after` 退避重试后仍限流；不熔断，下一轮照常试 Rich）**。抛错只留给拿不到应答的情况（网络中断、超时、5xx）——那时无法判断 Telegram 是否已接收，补发 HTML 可能造成两份答案。超长时第 2 段起逐段 `send`。**受管图片**让终稿跳过 Rich 直接走 HTML 新发，图片随后由 `uploadImages` 挂到新终稿上。过程载体从不承担答案，因此最后一次编辑撞 flood 不再丢终稿 | **私聊**：新发一条正文消息，草稿随之消失；**群**：编辑那条进度消息 |
+| 终稿落在哪 | **永远新发一条独立消息**，落地后才尽力删掉停在过程态的旧载体——**删不掉就两条并存**。优先 `sendRichMessage`（表格/公式原生渲染、32768 上限免分段）；**Telegram 完整应答的任一 4xx** 都判为「这条 Rich 没落地」并回落新发 HTML——判据是**有没有拿到应答**而非错误码大小：404（方法缺失，另触发实例级熔断，后续不再试 Rich）、400（本条解析不过）、**429（`callSend` 按 `retry_after` 退避重试后仍限流；不熔断，下一轮照常试 Rich）**。抛错只留给拿不到应答的情况（网络中断、超时、5xx）——那时无法判断 Telegram 是否已接收，补发 HTML 可能造成两份答案。超长时第 2 段起逐段 `send`。**受管图片**让终稿跳过 Rich 直接走 HTML 新发，图片随后由 `uploadImages` 挂到新终稿上。过程载体从不承担答案，因此最后一次编辑撞 flood 不再丢终稿 | **私聊 / 群 / topic**：新发正文，分段与附件发送完成并保存终态 route 后才尽力删除进度消息；删除失败可两条并存。私聊开启草稿时，终稿新发后草稿自然消失 |
 | **失败收口**（普通轮次） | **过程区保留**：错误路径不置 `turn.done`，`composeStreamingView` 仍走运行中合成——卡片定稿成「过程区 + 正文 + ❌ 错误：…」，用户能看到失败前干到了哪一步 | 普通失败终稿正文为**空**，错误信息走独立的 `errorMessage` 字段；**输出上限 `output-limit` 例外**：Desktop 的 `run()` / `watchContinuation()` 在终态 error 拆监听前封存正文，在失败 `turn.end` 的既有 `finalText` 字段中保留正文，错误仍用独立字段，**不带过程区**。不依赖尾随 done；服务端最终发布形态尚未实机验收 |
 | **失败收口**（群开了 `always` 的 **ambient 轮次**） | **和普通轮次一样**照吐 `❌ 错误：…`——`turnRunner` 不认识 ambient。惰性占位这时会被真建出来，群里凭空多一条错误消息，而这一轮本来连话都不打算说。**这是缺口 2f，不是裁决** | **静默**：不发失败通知（`finalFailureNoticeSent !== true && !entry.ambient`），删掉过程消息、记一句「completed silently」。删不掉时标 `retainAmbientCleanup` 留给下一拍重试 |
 
@@ -101,7 +101,9 @@ Cindy 有两个 Telegram bot，用户看到的是同一个产品：
   停在「⚙️ 工作中 · …」的旧消息和一条新终稿。答案不会丢，但「只剩正文」这句话在这种情况
   下不成立。清理排在终稿确认之后，清理失败不回退终稿状态、更不删除已送达的答案。
 
-过程阶段的载体差异（个人在聊天记录里、官方私聊在输入框草稿里）已经裁决过，见下节。
+官方普通轮次终稿在私聊、群与 topic 都新发，确认送达并保存终态 route 后再清理旧进度；删除失败不重发答案，沿用 inflight 在服务重启时重试清理。服务端 `TelegramController.renderResult` 与 `telegramController.test.ts` 为实现和测试依据；这不改变 `turn-reopen-v1` 对既有失败终稿的原位修正契约。部署状态需单独核验。
+
+过程阶段的载体差异（官方私聊可启用输入框草稿）见下节。
 
 `/new` 是两侧共同的不变量：命令成功时必须已经创建一个新的 Cindy **任务**并立刻出现在
 任务列表，随后消息路由到这个新任务；旧任务保留为历史，不得复用原任务 ID、只清 SDK
@@ -139,7 +141,7 @@ Hook 与本地 IM 共享消息级来源及上下文快照结构。本地所有�
 | 差异 | 官方 | 个人 | 裁决与理由 |
 |---|---|---|---|
 | 群轮次权限档 | 完全按用户配的走 | Auto 对渠道策略命中的动作先交 AI 三态审阅；Ask 保留逐次确认；「完全访问」只让 owner 触发的轮次按该档直接执行，非 owner 的群消息继续保留逐轮策略并 fail-closed | Chris 2026-09-04 实踩裁决：个人 bot 的群任务已经明确设成 Pi + Grok + Full access，Cindy 侧能继续对话，Telegram 却因额外挂的逐轮策略与 Full access 互斥而在模型启动前拒绝每条消息。**owner 明确选择的完全访问必须正常执行，但不能把这份授权扩给同群其他成员**；个人侧在 `bypassPermissions` 下仅对 owner 触发的 policy 通过 `turnPolicyOptionalForMode` 取缔逐轮策略，非 owner 的授权边界与群历史 lane 隔离照常保留；Auto 的风险判定交 AI，只有 ask 或服务不可用才转 owner 确认。官方侧继续完全按用户配置，不改服务端行为。见 `hook-control/session-runner.ts`、`im/telegram/adapter.ts` 与 `im/shared/turnRunner.ts` |
-| 私聊过程态的载体 | Telegram **草稿**（`sendDraft`），终稿一发草稿自然消失 | 真实消息，原地 `editMessageText` 覆盖 | 草稿只有官方路径拿得到。个人栈**不是零推送**：惰性占位让「没有真实内容就不建消息」，但**第一帧真实内容那次 `sendMessage` 会推送**，之后的编辑才不推送。`presentationCapabilities.ts` 的 `progressSilent: true` 说的是「过程帧不额外推送」，不是「整轮零推送」 |
+| 私聊过程态的载体 | 默认真实进度消息；开启 `TELEGRAM_DM_DRAFT_ENABLED` 时使用 Telegram **草稿**（`sendDraft`），终稿一发草稿自然消失 | 真实消息，原地 `editMessageText` 覆盖 | 草稿只有官方路径拿得到。个人栈**不是零推送**：惰性占位让「没有真实内容就不建消息」，但**第一帧真实内容那次 `sendMessage` 会推送**，之后的编辑才不推送。`presentationCapabilities.ts` 的 `progressSilent: true` 说的是「过程帧不额外推送」，不是「整轮零推送」 |
 | `/status` | 有 | 无 | 官方 bot 经服务端中继，链路可断，所以有「关联状态」可看；个人 bot 由桌面直连 Bot API，没有等价概念。见注册表 `parityNote` |
 | `/unlink` | 有 | 无 | 官方 bot 的关联由服务端持有；个人 bot 的 token 是用户自填的，解绑入口在桌面设置页 |
 | `/workspace` | 独立命令 | `/project` 的**别名** | 服务端两条菜单文案逐字相同。个人 bot 用别名表达同义拼写，不重复占一个菜单位，因此不登记为独立命令——**不是缺口** |
