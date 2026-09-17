@@ -1386,6 +1386,30 @@ describe("remote desktop controls", () => {
       });
     }
   });
+  it("keeps the landscape back button clear of the left safe area", async () => {
+    fixture.size = { width: 874, height: 402 };
+    fixture.safe = { top: 0, bottom: 21, left: 62, right: 62 };
+    for (const islandRight of [false, true]) {
+      act(() => root.render(<RemoteDesktopScreen />));
+      act(() =>
+        fixture.message!({
+          nativeEvent: {
+            data: JSON.stringify({
+              type: "orientation",
+              angle: islandRight ? -90 : 90,
+            }),
+          },
+        }),
+      );
+      const style = Object.assign(
+        {},
+        ...fixture.views["remoteDesktop.backPosition"].style
+          .flat(Infinity)
+          .filter(Boolean),
+      );
+      expect(style.left).toBe(islandRight ? 20 : 82);
+    }
+  });
   it("restores a centered bottom toolbar after a full rotation without remounting the viewer", async () => {
     await connect();
     const viewer = host.querySelector('[data-testid="remoteDesktop.viewer"]');

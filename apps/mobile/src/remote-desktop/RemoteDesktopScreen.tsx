@@ -2117,6 +2117,7 @@ export default function RemoteDesktopScreen() {
         )}
       </View>
       <View
+        testID="remoteDesktop.backPosition"
         pointerEvents="auto"
         onLayout={({ nativeEvent: { layout } }) =>
           setBackControlHeight(layout.height)
@@ -2127,9 +2128,12 @@ export default function RemoteDesktopScreen() {
             top: landscape
               ? insets.top + spacing.lg
               : edgePadding.paddingTop + spacing.xs,
-            // Align the 44pt button with the rail's controls inside its 4pt inset.
+            // Keep the 44pt control out of the island: follow the rail when it
+            // is on the left, otherwise start after the left safe inset.
             left: landscape
-              ? spacing.lg + (Platform.OS === "ios" ? spacing.xs : 0)
+              ? (toolbarOnLeft ? 0 : insets.left) +
+                spacing.lg +
+                (Platform.OS === "ios" ? spacing.xs : 0)
               : edgePadding.paddingLeft + spacing.lg,
           },
         ]}
