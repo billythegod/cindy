@@ -4405,6 +4405,31 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
+  it.each([false, true])('rejects late owned input after an empty stale snapshot (settled: %s)', async settled => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ taskControl: true, queueSnapshots: new Map(), readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
+      if (!task.ok) throw new Error('missing task');
+      execution = { instanceId: 'native', generation: 2 };
+      const stale = runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Unrelated direct result.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Late supplement.' });
+      if (settled) await stale;
+      const clientId = runtime.dispatch.mock.calls.find(([input]) => input.clientId?.startsWith('bot-delegation-interject:'))![0].clientId!;
+      execution = { instanceId: 'native', generation: 3 };
+      await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, clientId))
+        .rejects.toThrow('Delegated queued input has no verified execution boundary');
+      await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'retry-clone', clientId))
+        .rejects.toThrow('Delegated queued input has no verified execution boundary');
+      await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'ordinary-direct-input')).resolves.toBeUndefined();
+      await stale;
+      expect(h.sqlite!.prepare("SELECT status, json_extract(permission_snapshot_json, '$.taskExecution.generation') AS generation FROM bot_delegations WHERE id = ?").get(task.delegationId))
+        .toEqual({ status: 'running', generation: 1 });
+    } finally { runtime.dispose(); }
+  });
+
   it('rejects a supplement acceptance if its delegated run has already ended', async () => {
     await seedPair();
     const runtime = createDelegationRuntime({ taskControl: true, queueSnapshots: new Map(),
@@ -4461,7 +4486,10 @@ describe('Bot Session task end-to-end runtime', () => {
       const dispatchedExecution = execution;
       execution = { instanceId: 'replacement-native', generation: 2 };
       // A consumed boundary cannot be used to attach a later direct execution.
-      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, retryId);
+      // Reusing an owned ID now explicitly rejects instead of silently ignoring it.
+      if (cloned) await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, retryId);
+      else await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, retryId))
+        .rejects.toThrow('Delegated queued input has no verified execution boundary');
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution: dispatchedExecution,
         resultText: 'Retried result.', hadPendingInputAtTerminal: false });
       expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))

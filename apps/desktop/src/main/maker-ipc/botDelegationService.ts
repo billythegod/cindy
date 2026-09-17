@@ -3355,7 +3355,28 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       }
     }
     if (!boundary || (!boundary.clientIds.includes(clientId)
-      && (!supersedesClientId || !boundary.clientIds.includes(supersedesClientId)))) return;
+      && (!supersedesClientId || !boundary.clientIds.includes(supersedesClientId)))) {
+      // A supplement can arrive after an empty terminal snapshot, including a
+      // stale terminal that cannot publish a boundary. Check at dispatch itself;
+      // absence from the in-memory maps is not permission to run owned input.
+      const [owner] = await getDbClient().drizzle.select().from(botDelegations)
+        .where(eq(botDelegations.childSessionId, childSessionId)).limit(1);
+      if (!owner || (!isDelegationQueuedInput(owner.id, clientId)
+        && (!supersedesClientId || !isDelegationQueuedInput(owner.id, supersedesClientId)))) return;
+      // Terminal validation may have completed during the ownership read.
+      boundary = pendingExecutionInputs.get(childSessionId);
+      if (!boundary || (!boundary.clientIds.includes(clientId)
+        && (!supersedesClientId || !boundary.clientIds.includes(supersedesClientId)))) {
+        const receipt = parseRecord(owner.permissionSnapshotJson).taskExecution as
+          (DelegationExecutionReceipt & { runSequence: number }) | undefined;
+        const current = deps.readSessionExecution?.(childSessionId);
+        // A live onAccepted callback may already have durably bound this dispatch.
+        if (isActiveDelegation(owner.status as DelegationStatus) && current && receipt
+          && receipt.runSequence === owner.runSequence && receipt.instanceId === current.instanceId
+          && receipt.generation === current.generation) return;
+        throw new Error('Delegated queued input has no verified execution boundary');
+      }
+    }
     const execution = deps.readSessionExecution?.(childSessionId);
     if (!execution) throw new Error('Delegated queued input has no native execution receipt');
     const db = getDbClient().drizzle;
