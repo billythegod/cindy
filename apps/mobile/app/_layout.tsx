@@ -48,6 +48,7 @@ import {
   useStartupSplash,
 } from '@/components/StartupSplashOverlay';
 import { registerDevCacheMenu } from '@/debug/devCacheMenu';
+import { registerDevApkUpdateMenu } from '@/debug/devApkUpdateMenu';
 import { startJsStallWatchdog } from '@/debug/jsStallWatchdog';
 import { initMobileTapdb } from '@/analytics/mobileTapdb';
 import {
@@ -75,6 +76,7 @@ import {
   recoverPendingPrecreatedWorktrees,
 } from '@/session/precreatedWorktreeRecovery';
 import { IncomingShareBridge } from '@/session/IncomingShareBridge';
+import { AndroidApkUpdateOverlay } from '@/update/AndroidApkUpdateOverlay';
 
 function NavigationGate() {
   const auth = useAuth();
@@ -360,6 +362,7 @@ function RootLayout() {
   // Dev-only:注册开发者菜单的"清缓存 + reload"项(内部 __DEV__ gate,生产为 no-op)。
   useEffect(() => {
     registerDevCacheMenu();
+    registerDevApkUpdateMenu();
   }, []);
   // Dev-only:JS 停摆探测器,把 JS 线程忙死的时间边界钉进 Metro 日志流(内部 __DEV__ gate)。
   useEffect(() => startJsStallWatchdog(), []);
@@ -423,6 +426,7 @@ function RootLayout() {
         <ThemeProvider>
           {/* 语言 Provider 常驻 root:恢复持久化 override,覆盖含 (auth) 在内的全部屏幕 */}
           <LocaleProvider>
+            <AndroidApkUpdateOverlay />
             {/* handoff Provider 常驻 root(PR4b):闸门屏切换不重置衔接状态机 */}
             <MobileLoginHandoffProvider>
               <EndpointHandoffBridge status={endpointGate.status} />
@@ -480,7 +484,7 @@ function StartupGateBlockedContent({
 
 /**
  * 强更闸门内容层:命中 minVersion 门槛时的阻断屏,唯一出口是「去更新」
- * (iOS 跳 itms-services / App Store,Android 跳应用商店或 APK 直下)。
+ * (iOS 跳 itms-services / App Store,Android 在 App 内下载 APK 并调用安装器)。
  * 复用既有 update.* 文案(forcedTitle / bundleAvailableBody / releaseNotes / goUpdate),
  * 不新增术语;t() 在此消费,保证语言切换即时生效。
  */

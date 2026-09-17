@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.cindy.apkinstaller'
+version = '0.1.0'
+
+android {
+  namespace "app.cindy.apkinstaller"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+}

@@ -25,6 +25,7 @@ import type { BundleUpdateCheckOutcome } from './manualUpdateCheck';
 import { enterForcedUpdate } from './forcedUpdateStore';
 import { resolveUpdateChannelForDevice } from './canaryChannelStore';
 import type { UpdateChannel } from '@cindy/maker-shared/update-channel';
+import { androidApkUpdater } from './androidApkUpdateService';
 
 type CheckState = 'idle' | 'checking' | 'up-to-date' | 'update-available' | 'error';
 
@@ -38,11 +39,15 @@ interface Options {
 }
 
 async function openInstall(url: string): Promise<void> {
+  if (Platform.OS === 'android') {
+    await androidApkUpdater.start(url);
+    return;
+  }
   try {
     await Linking.openURL(url);
     // itms-services 安装全程由 iOS 系统接管:App 内没有任何回调/进度 UI,唯一反馈是
     // 桌面图标上的进度环。不提示的话用户点完"安装"会以为没反应(平台限制,无法在
-    // App 内展示进度),所以这里补一句引导;Android 走 APK 下载页,不需要这条提示。
+    // App 内展示进度),所以这里补一句引导;Android 使用 App 内下载与安装流程。
     // 注意 openURL 在系统接下 URL 时即 resolve,早于用户在系统弹框里点「安装/取消」,
     // 无法得知用户的选择,措辞必须是条件引导式,不能断言"安装已开始"。
     if (url.startsWith('itms-services://')) {
@@ -53,9 +58,13 @@ async function openInstall(url: string): Promise<void> {
   }
 }
 
-/** 阻断屏的「去更新」出口:解析安装地址并交给系统。无可用地址则 no-op。 */
+function installUrlForPlatform(target: { itmsUrl?: string; installUrl?: string }): string | null {
+  return Platform.OS === 'android' ? target.installUrl?.trim() || null : preferredInstallUrl(target);
+}
+
+/** 阻断屏的「去更新」出口:Android 在 App 内下载,其它平台交给系统。 */
 export function openBundleInstall(target: { itmsUrl?: string; installUrl?: string }): void {
-  const url = preferredInstallUrl(target);
+  const url = installUrlForPlatform(target);
   if (url) void openInstall(url);
 }
 
@@ -70,7 +79,7 @@ export function openBundleInstall(target: { itmsUrl?: string; installUrl?: strin
  */
 export function promptBundleUpdate(evaluation: ReturnType<typeof evaluateBundleUpdate>): void {
   if (!evaluation.target) return;
-  const url = preferredInstallUrl(evaluation.target);
+  const url = installUrlForPlatform(evaluation.target);
   if (!url) return;
 
   if (evaluation.forced) {

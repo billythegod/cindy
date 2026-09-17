@@ -1,4 +1,19 @@
 {
+  "apkDownloading": "Downloading update…",
+  "apkOpeningInstaller": "Opening installer…",
+  "apkPermissionBody": "Allow Cindy to install apps in Android settings, then return here to continue installing.",
+  "apkReady": "The update is downloaded. If you cancelled installation, tap Install Update to open the installer again.",
+  "apkProgress": "{{percent}}%",
+  "apkDownloaded": "{{size}} MB downloaded",
+  "apkAllowInstall": "Allow Installation",
+  "apkInstall": "Install Update",
+  "apkRetry": "Retry Update",
+  "apkCancel": "Cancel Download",
+  "apkError": {
+    "download": "The update could not be downloaded. Check your connection and available storage, then retry.",
+    "install": "The update could not be installed. Retry to download a fresh package and open the installer.",
+    "unavailable": "This installed version does not support in-app installation. Install a newer app package to use this feature."
+  },
   "installHintTitle": "Installing Update",
   "installHintBody": "After tapping Install in the system dialog, return to the home screen to watch the download progress. The system replaces the current version automatically once the download finishes.",
   "openInstallFailedTitle": "Couldn't Open the Install Link",

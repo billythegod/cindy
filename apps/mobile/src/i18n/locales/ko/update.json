@@ -1,4 +1,19 @@
 {
+  "apkDownloading": "업데이트 다운로드 중…",
+  "apkOpeningInstaller": "설치 프로그램을 여는 중…",
+  "apkPermissionBody": "Android 설정에서 Cindy의 앱 설치를 허용한 뒤 여기로 돌아와 설치를 계속하세요.",
+  "apkReady": "업데이트를 다운로드했습니다. 설치를 취소했다면 ‘업데이트 설치’를 눌러 설치 프로그램을 다시 여세요.",
+  "apkProgress": "{{percent}}%",
+  "apkDownloaded": "{{size}} MB 다운로드됨",
+  "apkAllowInstall": "앱 설치 허용",
+  "apkInstall": "업데이트 설치",
+  "apkRetry": "업데이트 재시도",
+  "apkCancel": "다운로드 취소",
+  "apkError": {
+    "download": "업데이트를 다운로드할 수 없습니다. 네트워크와 저장 공간을 확인한 뒤 다시 시도하세요.",
+    "install": "업데이트를 설치할 수 없습니다. 다시 시도하여 패키지를 새로 다운로드하고 설치 프로그램을 여세요.",
+    "unavailable": "현재 설치된 버전은 앱 내 설치를 지원하지 않습니다. 최신 앱 패키지를 설치한 뒤 사용하세요."
+  },
   "installHintTitle": "설치 안내",
   "installHintBody": "시스템 대화상자에서 '설치'를 누른 뒤 홈 화면으로 돌아가 설치 진행 상황을 확인하세요. 다운로드가 완료되면 현재 버전이 자동으로 교체됩니다.",
   "openInstallFailedTitle": "설치 링크를 열 수 없습니다",

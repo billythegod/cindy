@@ -1,4 +1,19 @@
 {
+  "apkDownloading": "正在下載更新…",
+  "apkOpeningInstaller": "正在開啟安裝程式…",
+  "apkPermissionBody": "請在 Android 設定中允許 Cindy 安裝應用程式，然後返回這裡繼續安裝。",
+  "apkReady": "更新已下載。如果剛才取消了安裝，可點選「安裝更新」重新開啟安裝程式。",
+  "apkProgress": "{{percent}}%",
+  "apkDownloaded": "已下載 {{size}} MB",
+  "apkAllowInstall": "允許安裝應用程式",
+  "apkInstall": "安裝更新",
+  "apkRetry": "重試更新",
+  "apkCancel": "取消下載",
+  "apkError": {
+    "download": "無法下載更新。請檢查網路和可用儲存空間後重試。",
+    "install": "無法安裝更新。請重試以重新下載安裝套件並開啟安裝程式。",
+    "unavailable": "目前安裝的版本不支援應用程式內安裝。請安裝新版應用程式後使用此功能。"
+  },
   "installHintTitle": "安裝提示",
   "installHintBody": "在系統彈框中點選「安裝」後，請回到桌面檢視安裝進度；下載完成後系統會自動替換當前版本。",
   "openInstallFailedTitle": "無法開啟安裝連結",
