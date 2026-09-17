@@ -6119,7 +6119,7 @@ describe('Bot Session task end-to-end runtime', () => {
     }
   });
 
-  it.each([10_000, 2_000_000])('recovers the durable delegated terminal receipt despite a later direct turn at restart time %s', async startTime => {
+  it.each([[10_000, 'active'], [2_000_000, 'active'], [10_000, 'archived'], [2_000_000, 'archived']] as const)('recovers the durable terminal at time %s with Session %s', async (startTime, sessionStatus) => {
     await seedPair();
     const execution = { instanceId: 'before-restart', generation: 1 };
     const beforeRestart = createDelegationRuntime({ readSessionExecution: () => execution });
@@ -6157,9 +6157,12 @@ describe('Bot Session task end-to-end runtime', () => {
     h.sqlite!.prepare('UPDATE sessions SET active_turn_started_at = 30000, last_turn_ended_at = 40000 WHERE id = ?').run(started.childSessionId);
     beforeRestart.dispose();
 
+    h.sqlite!.prepare('UPDATE sessions SET status = ? WHERE id = ?').run(sessionStatus, started.childSessionId);
     const afterRestart = createDelegationRuntime({ startTime });
     try {
       await afterRestart.delegation.restore();
+      expect(h.sqlite!.prepare('SELECT status FROM sessions WHERE id = ?').pluck().get(started.childSessionId)).toBe(sessionStatus);
+      expect(afterRestart.started.some(turn => turn.sessionId === started.childSessionId)).toBe(false);
       await expect(
         afterRestart.delegation.getSessionTask('session-1', started.delegationId),
       ).resolves.toMatchObject({

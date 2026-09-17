@@ -1543,6 +1543,28 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       .from(sessions)
       .where(eq(sessions.id, row.childSessionId))
       .limit(1);
+
+    // Restore without releasing input: pending work still owns the original
+    // deadline, while a verified completed result only needs durable replay.
+    if (child && child.status !== 'deleted') await deps.taskControl?.restoreInput(row.childSessionId);
+    const hasOwnedPendingInput = hasPendingDelegationInput(row);
+
+    const snapshot = parseRecord(row.permissionSnapshotJson);
+    const acceptedExecution = snapshot.taskExecution as (DelegationExecutionReceipt & { runSequence: number }) | undefined;
+    const terminal = snapshot.taskTerminal as {
+      runSequence: number; execution: DelegationExecutionReceipt; outcome: 'done' | 'error';
+      resultText?: string; resultMessageClientId?: string; error?: string;
+    } | undefined;
+    if (child && child.status !== 'deleted' && !hasOwnedPendingInput && acceptedExecution && terminal?.execution && terminal.runSequence === row.runSequence
+      && acceptedExecution.runSequence === row.runSequence
+      && terminal.execution.instanceId === acceptedExecution.instanceId
+      && terminal.execution.generation === acceptedExecution.generation
+      && (terminal.outcome === 'done' || terminal.outcome === 'error')) {
+      await settleSessionUnserialized({ childSessionId: row.childSessionId, ...terminal,
+        expectedRunSequence: row.runSequence, hadPendingInputAtTerminal: false });
+      return;
+    }
+
     if (!child || child.status !== 'active') {
       const lastError = child
         ? '应用重启后这项后台任务的执行会话已结束。'
@@ -1553,27 +1575,6 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         lastError,
       });
       if (changed) await deliverCompletion({ ...row, status: 'failed', lastError });
-      return;
-    }
-
-    // Restore without releasing input: pending work still owns the original
-    // deadline, while a verified completed result only needs durable replay.
-    await deps.taskControl?.restoreInput(row.childSessionId);
-    const hasOwnedPendingInput = hasPendingDelegationInput(row);
-
-    const snapshot = parseRecord(row.permissionSnapshotJson);
-    const acceptedExecution = snapshot.taskExecution as (DelegationExecutionReceipt & { runSequence: number }) | undefined;
-    const terminal = snapshot.taskTerminal as {
-      runSequence: number; execution: DelegationExecutionReceipt; outcome: 'done' | 'error';
-      resultText?: string; resultMessageClientId?: string; error?: string;
-    } | undefined;
-    if (!hasOwnedPendingInput && acceptedExecution && terminal?.execution && terminal.runSequence === row.runSequence
-      && acceptedExecution.runSequence === row.runSequence
-      && terminal.execution.instanceId === acceptedExecution.instanceId
-      && terminal.execution.generation === acceptedExecution.generation
-      && (terminal.outcome === 'done' || terminal.outcome === 'error')) {
-      await settleSessionUnserialized({ childSessionId: row.childSessionId, ...terminal,
-        expectedRunSequence: row.runSequence, hadPendingInputAtTerminal: false });
       return;
     }
 
