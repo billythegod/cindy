@@ -42,6 +42,40 @@ beforeEach(() => {
 });
 
 describe('bundle installation platform routing', () => {
+  it.each([
+    'https://updates.example.invalid/install',
+    'https://updates.example.invalid/install?file=app.apk',
+    'market://details?id=com.xd.cindy',
+    'http://updates.example.invalid/new.apk',
+  ])('preserves the external install route for %s, including forced updates', (installUrl) => {
+    const externalTarget = { ...target, installUrl };
+    promptBundleUpdate({ needsUpdate: true, forced: true, target: externalTarget });
+    expect(mocks.forced).toHaveBeenCalledWith(externalTarget);
+    openBundleInstall(externalTarget);
+    expect(mocks.openURL).toHaveBeenCalledWith(installUrl);
+    expect(mocks.start).not.toHaveBeenCalled();
+    mocks.openURL.mockClear();
+    promptBundleUpdate({ needsUpdate: true, forced: false, target: externalTarget });
+    mocks.alert.mock.calls[0][2][1].onPress();
+    expect(mocks.openURL).toHaveBeenCalledWith(installUrl);
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it('downloads an HTTPS APK with query parameters and a fragment', () => {
+    const installUrl = 'https://updates.example.invalid/new.APK?token=test#download';
+    openBundleInstall({ ...target, installUrl });
+    expect(mocks.start).toHaveBeenCalledWith(installUrl);
+    expect(mocks.openURL).not.toHaveBeenCalled();
+  });
+
+  it('reports external installation launch failures', async () => {
+    mocks.openURL.mockRejectedValue(new Error('No handler'));
+    openBundleInstall({ ...target, installUrl: 'market://details?id=com.xd.cindy' });
+    await vi.waitFor(() => expect(mocks.alert).toHaveBeenCalledWith(
+      'update.openInstallFailedTitle', 'update.openInstallFailedBody',
+    ));
+  });
+
   it('Android uses the APK URL and never opens a browser, even when itmsUrl is present', () => {
     openBundleInstall(target);
     expect(mocks.start).toHaveBeenCalledWith(target.installUrl);

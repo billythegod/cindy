@@ -4,6 +4,11 @@ This Android-only local Expo module is autolinked from `apps/mobile/modules`.
 The app downloads with its existing Expo FileSystem dependency; this module
 allocates a private cache file and opens Android's package installer.
 
+Only HTTPS installation URLs whose path ends in `.apk` use the in-app downloader
+(query strings and fragments are allowed). Web installation pages, store deep
+links and other existing installation URLs retain the external system handler,
+including the forced-update exit. No new release-record field is required.
+
 - `prepareDownload()` returns a unique APK path under `cache/cindy-apk-updates`.
   Files older than 24 hours are removed when another download is started.
 - `install(uri)` accepts only files in that directory, checks the APK package
@@ -31,6 +36,12 @@ Do not publish these JavaScript changes as an update for an older native runtime
 The repository's explicit cold-update approval is required before merging.
 
 ## Device verification
+
+Native policy regression tests run from the generated `apps/mobile/android`
+project with `./gradlew :cindy-apk-installer:testDebugUnitTest`. They exercise the
+same path/package/version/signature validation functions called by the module,
+including legacy signing metadata, modern rotation and multi-signer cases.
+They do not replace device tests of PackageManager's APK parsing and installer UI.
 
 For local Debug builds, set `EXPO_PUBLIC_ANDROID_APK_UPDATE_TEST_URL` to an HTTPS
 APK endpoint when starting Metro with the repository's `mobile:sim:start`

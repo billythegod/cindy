@@ -65,36 +65,28 @@ class CindyApkInstallerModule : Module() {
   private fun validatedApk(value: String): File {
     val uri = Uri.parse(value)
     require(uri.scheme == "file") { "Invalid update file" }
-    val file = File(requireNotNull(uri.path)).canonicalFile
-    require(file.parentFile == directory().canonicalFile && file.extension == "apk" && file.isFile && file.length() > 0) {
-      "Invalid update file"
-    }
+    val file = validateApkFile(File(requireNotNull(uri.path)), directory())
     val context = context()
     val manager = context.packageManager
     val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
     val archive = requireNotNull(manager.getPackageArchiveInfo(file.path, flags)) { "Invalid APK" }
     val installed = manager.getPackageInfo(context.packageName, flags)
-    require(archive.packageName == context.packageName) { "Wrong application" }
-    require(versionCode(archive) > versionCode(installed)) { "Update must be newer" }
-    // Accept an authenticated signing-key rotation as well as identical signing keys.
-    // Android's installer performs the final signature/lineage verification before replacement.
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-      val current = requireNotNull(installed.signingInfo).apkContentsSigners.toSet()
-      val incoming = requireNotNull(archive.signingInfo)
-      val compatible = if (incoming.hasMultipleSigners() || current.size > 1) {
-        incoming.apkContentsSigners.toSet() == current
-      } else {
-        incoming.signingCertificateHistory.toSet().containsAll(current)
-      }
-      require(current.isNotEmpty() && compatible) { "Signing identity mismatch" }
-    } else {
-      val current = installed.signatures?.toSet().orEmpty()
-      require(current.isNotEmpty() && archive.signatures?.toSet() == current) { "Signing identity mismatch" }
-    }
+    validateApkIdentity(identity(installed), identity(archive), Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
     return file
   }
 
   @Suppress("DEPRECATION")
-  private fun versionCode(info: PackageInfo): Long =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
+  private fun identity(info: PackageInfo): ApkIdentity {
+    // Accept an authenticated signing-key rotation as well as identical signing keys.
+    // Android's installer performs the final signature/lineage verification before replacement.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      val signing = requireNotNull(info.signingInfo)
+      return ApkIdentity(info.packageName, info.longVersionCode,
+        signing.apkContentsSigners.map { it.toCharsString() }.toSet(),
+        signing.signingCertificateHistory?.map { it.toCharsString() }?.toSet().orEmpty(),
+        signing.hasMultipleSigners())
+    }
+    return ApkIdentity(info.packageName, info.versionCode.toLong(),
+      info.signatures?.map { it.toCharsString() }?.toSet().orEmpty())
+  }
 }

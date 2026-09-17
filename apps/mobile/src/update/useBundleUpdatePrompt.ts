@@ -39,7 +39,14 @@ interface Options {
 }
 
 async function openInstall(url: string): Promise<void> {
-  if (Platform.OS === 'android') {
+  // installUrl also supports web landing pages and store deep links. Only an
+  // explicit HTTPS APK path opts into downloading; preserve other links as-is.
+  let directApk = false;
+  try {
+    const parsed = new URL(url);
+    directApk = parsed.protocol === 'https:' && parsed.pathname.toLowerCase().endsWith('.apk');
+  } catch { /* Existing Linking error handling owns malformed/external URLs. */ }
+  if (Platform.OS === 'android' && directApk) {
     await androidApkUpdater.start(url);
     return;
   }
@@ -62,7 +69,7 @@ function installUrlForPlatform(target: { itmsUrl?: string; installUrl?: string }
   return Platform.OS === 'android' ? target.installUrl?.trim() || null : preferredInstallUrl(target);
 }
 
-/** 阻断屏的「去更新」出口:Android 在 App 内下载,其它平台交给系统。 */
+/** 阻断屏的「去更新」出口:Android 直链 APK 在 App 内下载,其它安装链接交给系统。 */
 export function openBundleInstall(target: { itmsUrl?: string; installUrl?: string }): void {
   const url = installUrlForPlatform(target);
   if (url) void openInstall(url);
