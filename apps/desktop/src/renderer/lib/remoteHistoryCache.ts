@@ -2,7 +2,7 @@ import type { HistoryMessageSource, HistoryViewSnapshot } from '@cindy/maker-sha
 import {
   decodeRemoteHistory,
   encodeRemoteHistory,
-  MAX_HISTORY_CACHE_CHARS,
+  fitsRemoteHistoryCache,
 } from '../../shared/remoteHistoryCache';
 import {
   readCachedMessages,
@@ -35,7 +35,7 @@ export function remoteHistoryCacheWriter(deviceId: string, sessionId: string) {
     )
       return;
     const text = encodeRemoteHistory(snapshot);
-    if (text.length > MAX_HISTORY_CACHE_CHARS) {
+    if (!fitsRemoteHistoryCache(text)) {
       clearCachedMessages(deviceId, sessionId);
       return;
     }

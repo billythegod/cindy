@@ -4,7 +4,7 @@ import {
   projectHistoryView,
   type HistoryViewSnapshot,
 } from '@cindy/maker-shared/message-window';
-import { encodeRemoteHistory } from '../../shared/remoteHistoryCache';
+import { encodeRemoteHistory, fitsRemoteHistoryCache } from '../../shared/remoteHistoryCache';
 import { readRemoteHistoryCache, remoteHistoryCacheWriter } from '../lib/remoteHistoryCache';
 import {
   clearCachedMessages,
@@ -58,6 +58,28 @@ afterEach(() => {
 });
 
 describe('structured history mirror lifecycle', () => {
+  it.each(['中', '\\', '"'])('rejects byte-oversize history containing %s before sending it to Main', async (character) => {
+    await readRemoteHistoryCache('dev', 'session');
+    const large = { ...snapshot, items: projectHistoryView([{ ...row, content: character.repeat(180_000) }], false) };
+    const text = encodeRemoteHistory(large);
+    expect(text.length).toBeLessThan(512 * 1024);
+    expect(Buffer.byteLength(JSON.stringify({ version: 1, updatedAt: Date.now(), messages: [], historyView: text }), 'utf8')).toBeGreaterThan(512 * 1024);
+    remoteHistoryCacheWriter('dev', 'session')(large);
+    await flush();
+    // Existing oversize invalidation still retires a potentially rewound/deleted old page.
+    expect(putMessages).toHaveBeenCalledTimes(1);
+    expect(putMessages.mock.calls[0][2]).toEqual([]);
+    expect(putMessages.mock.calls[0][6]).toBeUndefined();
+  });
+
+  it('reserves enough bytes for the persisted envelope at the ASCII boundary', () => {
+    const text = 'a'.repeat(512 * 1024 - 256 - 2);
+    expect(fitsRemoteHistoryCache(text)).toBe(true);
+    expect(fitsRemoteHistoryCache(text + 'a')).toBe(false);
+    const payload = JSON.stringify({ version: 1, updatedAt: Number.MAX_SAFE_INTEGER, messages: [], historyView: text });
+    expect(Buffer.byteLength(payload, 'utf8')).toBeLessThanOrEqual(512 * 1024);
+  });
+
   it('does not let a writer waiting for clear A cross clear B', async () => {
     await readRemoteHistoryCache('dev', 'session');
     let finishA!: (value: unknown) => void;

@@ -2,6 +2,12 @@ import type { HistoryMessageSource, HistoryViewSnapshot } from '@cindy/maker-sha
 
 /** Same bounded, versioned snapshot in Main's existing account-scoped mirror file. */
 export const MAX_HISTORY_CACHE_CHARS = 512 * 1024;
+
+/** Reserve space for StoredMessages metadata; historyView is itself a JSON string. */
+export function fitsRemoteHistoryCache(text: string): boolean {
+  return text.length <= MAX_HISTORY_CACHE_CHARS
+    && new TextEncoder().encode(JSON.stringify(text)).byteLength + 256 <= 512 * 1024;
+}
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
