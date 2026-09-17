@@ -148,7 +148,9 @@ describe('MakerMemoryManager · owner scope guard (#2341)', () => {
       const originalMeta = await readFile(metaPath, 'utf8');
       const manager = new MakerMemoryManager(deps);
       try {
-        const previouslyOpen = resetMethod === 'resetAll' ? await manager.getStore(WORKDIR) : null;
+        // Reuse the directory under test: an extra project could be removed
+        // before or after the ambiguous entry depending on filesystem order.
+        const previouslyOpen = resetMethod === 'resetAll' ? await manager.getStore(scope) : null;
         for (const metadata of [null, '{broken', JSON.stringify({ absPath: buildBotMemoryScopeKey('wrong-bot') })]) {
           if (metadata === null) await rm(metaPath);
           else await writeFile(metaPath, metadata, 'utf8');
