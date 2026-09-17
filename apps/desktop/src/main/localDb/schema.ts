@@ -517,6 +517,8 @@ export const botDirectMessages = sqliteTable(
       .default('pending'),
     senderName: text('sender_name'),
     recipientName: text('recipient_name'),
+    // Remote conversation captured before a legacy send; never a local Session FK.
+    bridgeSessionId: text('bridge_session_id'),
     content: text('content').notNull(),
     createdAt: integer('created_at').notNull(),
   },

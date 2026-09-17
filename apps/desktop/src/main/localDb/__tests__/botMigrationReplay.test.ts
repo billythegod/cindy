@@ -315,6 +315,12 @@ it('preserves existing private messages while allowing a remote peer without a l
       (id, thread_id, sequence, sender_bot_id, recipient_bot_id, sender_session_id, recipient_name, content, created_at)
       VALUES ('remote-delivery', 'remote', 1, 'a', 'device::bot', 'a-main', 'Remote name', 'remote content', 2);
   `);
+  const bridgeMigration = ALL_MIGRATIONS.find(row => readFileSync(row.sqlPath, 'utf8').includes('ADD `bridge_session_id`'))!;
+  const beforeBridge = db.prepare('SELECT * FROM bot_direct_messages ORDER BY id').all();
+  db.transaction(() => db.exec(readFileSync(bridgeMigration.sqlPath, 'utf8')))();
+  expect(db.prepare('SELECT * FROM bot_direct_messages ORDER BY id').all())
+    .toEqual(beforeBridge.map(row => ({ ...row as Record<string, unknown>, bridge_session_id: null })));
+  db.exec("UPDATE bot_direct_messages SET bridge_session_id='old-remote-session' WHERE id='remote-delivery'");
   expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   expect(db.prepare('SELECT count(*) AS count FROM bot_direct_messages').get()).toEqual({ count: 2 });
 });

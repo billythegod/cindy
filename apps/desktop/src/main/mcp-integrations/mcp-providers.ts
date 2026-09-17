@@ -551,6 +551,11 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         },
       },
       botMessaging: {
+        checkMessage: async (params) => {
+          const svc = tryGetBotDirectMessageService();
+          if (!svc) return { ok: false, errorCode: 'HOST_NOT_READY', message: 'Teammate messaging is unavailable' };
+          return svc.checkMessage(params);
+        },
         listAgents: async ({ callerSessionId }) => {
           const svc = tryGetBotDirectMessageService();
           if (!svc) return { ok: false, errorCode: 'HOST_NOT_READY', message: 'Teammate service is not ready' };

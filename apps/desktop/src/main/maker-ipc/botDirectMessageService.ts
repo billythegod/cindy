@@ -1,5 +1,5 @@
 import { parseBotPeerAddress, botPeerAddress } from '../../shared/botPeerAddress.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { withBotProfileLocks } from './botProfileLock.js';
 
 import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
@@ -52,7 +52,7 @@ type DispatchResult =
     }
   | { ok: false; errorCode: string; message: string };
 
-type BotDirectMessageWakeKind = Extract<DispatchResult, { ok: true }>['wakeKind'];
+type BotDirectMessageWakeKind = Extract<DispatchResult, { ok: true }>['wakeKind'] | 'unknown';
 
 interface BotRosterEntry {
   id: string;
@@ -73,6 +73,7 @@ export type BotDirectMessageResult =
       messageId: string;
       accepted: true;
       delivered: boolean;
+      transport?: 'remote-conversation';
     }
   | {
       ok: false;
@@ -86,9 +87,12 @@ export type BotDirectMessageResult =
 export interface BotMessageTransport {
   selfDeviceId(): string | null;
   verifySender(input: { controllerDeviceId: string; senderBotId: string; targetBotId: string; messageId: string; message: string }, assertCurrent: () => void): Promise<boolean>;
-  resolve(targetId: string): Promise<{ id: string; name: string }>;
+  resolve(targetId: string): Promise<{ id: string; name: string; bridgeSessionId?: string }>;
   list(): Promise<{ agents: Array<{ id: string; name: string; deviceId: string; deviceName: string }>; unavailableDevices: Array<{ deviceId: string; deviceName: string; errorCode: string }> }>;
-  send(input: { targetId: string; senderBotId: string; message: string; messageId: string }, assertCurrent: () => void): Promise<BotDirectMessageResult>;
+  send(input: { targetId: string; senderBotId: string; senderName?: string; message: string; messageId: string; bridgeSessionId?: string }, assertCurrent: () => void): Promise<BotDirectMessageResult>;
+  readReply?(input: { targetId: string; sessionId: string; messageId: string }, assertCurrent: () => void): Promise<{
+    delivered: boolean; replies: Array<{ id: string; content: string }>; truncated: boolean;
+  }>;
 }
 
 export interface BotDirectMessageServiceDeps {
@@ -432,10 +436,12 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
     const remoteTarget = parseBotPeerAddress(input.targetBotId);
     if (remoteTarget && remoteSender) return failed('INVALID_ARGS', 'Remote forwarding is not supported');
     let targetProfile: { name: string; status: string; hiddenAt?: number | null } | undefined;
+    let bridgeSessionId: string | undefined;
     if (remoteTarget) {
       if (!deps.transport?.selfDeviceId()) return failed('DEVICE_LINK_NOT_CONNECTED', 'Device link is not connected');
       try {
         const target = await deps.transport.resolve(input.targetBotId);
+        bridgeSessionId = target.bridgeSessionId;
         targetProfile = { name: target.name, status: 'active' };
       } catch (error) {
         return transportFailure(error);
@@ -593,7 +599,7 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
           .where(eq(botDirectMessageThreads.id, thread.id));
         thread = { ...thread, messageCount: reservedCount };
       }
-      if (thread.messageCount >= thread.maxMessages) {
+      if (thread.messageCount >= thread.maxMessages - (bridgeSessionId ? 1 : 0)) {
         return failed('CONVERSATION_LIMIT_REACHED', '这轮伙伴对话已达到往来上限，请先回到各自主任务整理结果。');
       }
 
@@ -637,7 +643,7 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
         senderSessionId: remoteSender ? null : input.callerSessionId,
         recipientSessionId: targetSessionId,
         deliveryStatus: 'pending',
-        senderName: caller.botName, recipientName: targetProfile.name,
+        senderName: caller.botName, recipientName: targetProfile.name, bridgeSessionId: bridgeSessionId ?? null,
         content: message,
         createdAt: sentAt,
       });
@@ -728,7 +734,7 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
           id: deliveryId, threadId: thread.id, sequence: nextSequence,
           senderBotId: caller.botId, recipientBotId: input.targetBotId,
           senderSessionId: remoteSender ? null : input.callerSessionId, recipientSessionId: targetSessionId,
-          senderName: caller.botName, recipientName: targetProfile.name,
+          senderName: caller.botName, recipientName: targetProfile.name, bridgeSessionId: bridgeSessionId ?? null,
           content: message, deliveryStatus: 'pending', createdAt: sentAt,
         }, caller.botName, targetProfile.name);
         await db.update(botDirectMessages).set({ deliveryStatus: 'delivered' })
@@ -741,7 +747,7 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
         // running tools. Transport writes are never automatically replayed.
         try {
           const result = await deps.transport!.send({ targetId: input.targetBotId,
-            senderBotId: caller.botId, message, messageId: deliveryId }, () => {
+            senderBotId: caller.botId, senderName: caller.botName, message, messageId: deliveryId, bridgeSessionId }, () => {
             if (!ownerIsCurrent()) throw new Error('[OWNER_CHANGED] Account changed');
           });
           if (!ownerIsCurrent()) return { ok: false, errorCode: 'DELIVERY_UNKNOWN', message: 'Account changed before receipt', messageId: deliveryId };
@@ -839,14 +845,121 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
     const scope = deps.captureOwnerScope?.();
     const [row] = await getDbClient().drizzle.select().from(botDirectMessages)
       .where(eq(botDirectMessages.id, input.messageId)).limit(1);
-    if (!row || row.senderBotId !== input.senderBotId || row.recipientBotId !== botPeerAddress(input.controllerDeviceId, input.targetBotId)
+    if (!row || row.bridgeSessionId || row.senderBotId !== input.senderBotId || row.recipientBotId !== botPeerAddress(input.controllerDeviceId, input.targetBotId)
       || row.content !== input.message.trim() || row.deliveryStatus === 'failed' || !row.senderSessionId) return false;
     const caller = await loadCaller(row.senderSessionId);
     if (scope !== undefined && deps.isOwnerScopeCurrent && !deps.isOwnerScopeCurrent(scope)) return false;
     return !!caller && caller.botId === input.senderBotId && caller.role === 'canonical' && caller.linkArchivedAt === null
       && caller.sessionSource === 'bot' && caller.sessionStatus === 'active' && caller.botStatus === 'active';
   };
-  return { messageAgent, receiveRemote, verifyRemoteMessage, listAgents, getThread, restore };
+  /** Read an ordinary remote reply, without fabricating a remote send_to_agent call. */
+  const checkMessage = async (input: { callerSessionId: string; messageId: string }) => {
+    const owner = deps.captureOwnerScope?.();
+    const assertCurrent = () => {
+      if (owner !== undefined && deps.isOwnerScopeCurrent && !deps.isOwnerScopeCurrent(owner)) {
+        throw Object.assign(new Error('Account changed'), { code: 'OWNER_CHANGED' });
+      }
+    };
+    try {
+      const db = getDbClient().drizzle;
+      const caller = await loadCaller(input.callerSessionId);
+      if (
+        !caller ||
+        caller.role !== 'canonical' ||
+        caller.linkArchivedAt !== null ||
+        caller.sessionSource !== 'bot' ||
+        caller.sessionStatus !== 'active' ||
+        caller.botStatus !== 'active'
+      )
+        return failed('NOT_A_BOT_SESSION', 'An active canonical teammate is required');
+      const [sent] = await db
+        .select()
+        .from(botDirectMessages)
+        .where(eq(botDirectMessages.id, input.messageId))
+        .limit(1);
+      assertCurrent();
+      if (!sent || sent.senderBotId !== caller.botId)
+        return failed('NOT_FOUND', 'Message not found');
+      if (!sent.bridgeSessionId || !deps.transport?.readReply)
+        return failed('UNSUPPORTED_CAPABILITY', 'This message uses native teammate replies');
+      if (sent.deliveryStatus === 'failed')
+        return failed('MESSAGE_NOT_SENT', 'Message was rejected');
+      const result = await deps.transport.readReply(
+        { targetId: sent.recipientBotId, sessionId: sent.bridgeSessionId, messageId: sent.id },
+        assertCurrent,
+      );
+      assertCurrent();
+      if (result.replies.length) {
+        const pairKey = pairOf(sent.senderBotId, sent.recipientBotId).join('\u0000');
+        await withPairLock(pairKey, async () => {
+          assertCurrent();
+          const currentCaller = await loadCaller(input.callerSessionId);
+          if (
+            !currentCaller ||
+            currentCaller.botId !== caller.botId ||
+            currentCaller.role !== 'canonical' ||
+            currentCaller.linkArchivedAt !== null ||
+            currentCaller.sessionStatus !== 'active' ||
+            currentCaller.botStatus !== 'active'
+          )
+            throw Object.assign(new Error('Caller inactive'), { code: 'OWNER_CHANGED' });
+          const replyId = `bridge-reply-${createHash('sha256').update(sent.id).digest('hex')}`;
+          const [existing] = await db
+            .select()
+            .from(botDirectMessages)
+            .where(eq(botDirectMessages.id, replyId))
+            .limit(1);
+          const content =
+            '[Ordinary remote conversation reply, read by the sending host; not a remote send_to_agent call]\n\n' +
+            result.replies.map((reply) => reply.content).join('\n\n');
+          assertCurrent();
+          const rows = await db.select().from(botDirectMessages).where(eq(botDirectMessages.threadId, sent.threadId));
+          const count = rows.filter(item => item.deliveryStatus !== 'failed').length;
+          if (!existing && count >= MAX_MESSAGES_PER_THREAD) return;
+          const row = existing ? { ...existing, content } : {
+            id: replyId, threadId: sent.threadId,
+            sequence: rows.reduce((last, item) => Math.max(last, item.sequence), 0) + 1,
+            senderBotId: sent.recipientBotId, recipientBotId: sent.senderBotId,
+            senderSessionId: null, recipientSessionId: input.callerSessionId,
+            senderName: sent.recipientName, recipientName: sent.senderName,
+            bridgeSessionId: sent.bridgeSessionId, content, createdAt: now(), deliveryStatus: 'delivered' as const,
+          };
+          if (existing) await db.update(botDirectMessages).set({ content }).where(eq(botDirectMessages.id, replyId));
+          else await db.insert(botDirectMessages).values(row);
+          // Retry repairs projections after an interrupted write, without re-sending or double counting.
+          await persistDeliveryAnchors(row, sent.recipientName ?? sent.recipientBotId, caller.botName);
+          await persistDeliveryAnchors(sent, caller.botName, sent.recipientName ?? sent.recipientBotId);
+          const nextCount = count + (existing ? 0 : 1);
+          const [thread] = await db.select().from(botDirectMessageThreads).where(eq(botDirectMessageThreads.id, sent.threadId)).limit(1);
+          await db.update(botDirectMessageThreads).set({ messageCount: nextCount,
+            ...(nextCount >= MAX_MESSAGES_PER_THREAD && thread?.closeReason !== 'message-limit' ? { status: 'closed' as const, closeReason: 'message-limit' as const,
+              blockedUntil: now() + LIMIT_COOLDOWN_MS, closedAt: now() } : {}),
+          }).where(eq(botDirectMessageThreads.id, sent.threadId));
+          await db.update(botDirectMessages).set({ deliveryStatus: 'delivered' }).where(eq(botDirectMessages.id, sent.id));
+          assertCurrent();
+          deps.onChanged?.(
+            { threadId: sent.threadId, participantBotIds: [sent.senderBotId, sent.recipientBotId] },
+            owner,
+          );
+        });
+      }
+      return {
+        ok: true as const,
+        message_id: sent.id,
+        target_id: sent.recipientBotId,
+        source: 'remote-conversation' as const,
+        delivered: result.delivered ? true : null,
+        replied: result.replies.length > 0,
+        replies: result.replies,
+        truncated: result.truncated,
+        guidance:
+          'These are persisted ordinary reply text blocks from the remote conversation, not a remote send_to_agent call or proof that the turn has completed. A null delivered value means this read has no delivery evidence; it does not negate an earlier receipt.',
+      };
+    } catch (error) {
+      return transportFailure(error);
+    }
+  };
+  return { messageAgent, receiveRemote, verifyRemoteMessage, listAgents, checkMessage, getThread, restore };
 }
 
 export type BotDirectMessageService = ReturnType<typeof createBotDirectMessageService>;
@@ -854,7 +967,7 @@ export type BotDirectMessageService = ReturnType<typeof createBotDirectMessageSe
 /** Only stable transport codes cross the model boundary; never credentials or raw responses. */
 function transportFailure(error: unknown): BotDirectMessageResult {
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
-  const known = ['DEVICE_OFFLINE', 'REMOTE_DISABLED', 'PERMISSION_DENIED', 'DEVICE_UNRESPONSIVE',
+  const known = ['TARGET_CONVERSATION_CHANGED', 'SESSION_RUNNING', 'DEVICE_OFFLINE', 'REMOTE_DISABLED', 'PERMISSION_DENIED', 'DEVICE_UNRESPONSIVE',
     'ACCESS_REVOKED', 'CHANNEL_NOT_ALLOWED', 'NOT_CONNECTED', 'LINK_NOT_OPEN',
     'DEVICE_LINK_NOT_CONNECTED', 'NOT_FOUND', 'TARGET_BOT_INACTIVE', 'UNSUPPORTED_CAPABILITY', 'OWNER_CHANGED'];
   const errorCode = known.includes(code) ? code : 'REMOTE_UNAVAILABLE';

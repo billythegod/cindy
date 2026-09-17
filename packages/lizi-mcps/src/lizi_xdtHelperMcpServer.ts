@@ -145,6 +145,8 @@ interface SessionTaskCallbacks {
 }
 
 interface BotMessagingCallbacks {
+  checkMessage?(params: { callerSessionId: string; messageId: string }): Promise<
+    { ok: true } | { ok: false; errorCode: string; message: string }>;
   listAgents?(params: { callerSessionId: string }): Promise<
     { ok: true; agents: unknown[]; unavailableDevices: unknown[] }
     | { ok: false; errorCode: string; message: string }>;
@@ -159,9 +161,10 @@ interface BotMessagingCallbacks {
         targetBotId: string;
         targetBotName: string;
         targetSessionId: string;
-        wakeKind: 'resumed' | 'already-active' | 'created' | 'queued';
+        wakeKind: 'resumed' | 'already-active' | 'created' | 'queued' | 'unknown';
         messageId?: string;
         delivered?: boolean;
+        transport?: 'remote-conversation';
       }
     | {
         ok: false;
@@ -353,6 +356,17 @@ function registerSendToAgentEntry(
   sessionCtx: XdtHelperMcpSessionCtx,
 ): void {
   if (!deps.botMessaging) return;
+  if (deps.botMessaging.checkMessage) registry.register({
+    name: 'check_agent_message', category: 'bots',
+    description: 'Read replies to your own message sent through an older remote teammate conversation. Use the message_id returned by send_to_agent when its transport is remote-conversation, or after uncertain delivery. This does not send or retry. It returns persisted ordinary reply text, not proof of a remote tool call or a completed turn. Check when following up; do not poll.',
+    inputShape: { message_id: z.string().min(1).max(80) },
+    handler: async ({ message_id }) => {
+      const callerSessionId = resolveLiziMcpSessionContext(sessionCtx).sessionId;
+      if (!callerSessionId) return errorPayload('NOT_A_BOT_SESSION', 'An active teammate is required');
+      const result = await deps.botMessaging!.checkMessage!({ callerSessionId, messageId: message_id });
+      return result.ok ? okPayload(result) : errorPayload(result.errorCode, result.message);
+    },
+  });
   if (deps.botMessaging.listAgents) registry.register({
     name: 'list_agents', category: 'bots',
     description: 'Discover teammates on this device and other authorized devices. Use the exact returned id with send_to_agent; device names distinguish namesakes. unavailableDevices explains incomplete discovery. Do not guess IDs or poll.',
@@ -401,12 +415,15 @@ function registerSendToAgentEntry(
         accepted: true,
         delivered: result.delivered ?? result.wakeKind !== 'queued',
         replied: false,
+        ...(result.transport ? { transport: result.transport } : {}),
         ...(result.messageId ? { message_id: result.messageId } : {}),
         target_id: result.targetBotId,
         target_name: result.targetBotName,
         wake_kind: result.wakeKind,
         guidance:
-          'The host accepted this message. Queued acceptance is not delivery or a reply. End this turn; only an actual incoming message proves a reply.',
+          result.transport === 'remote-conversation'
+            ? 'The older host accepted a clearly attributed message in its ordinary conversation. Use check_agent_message with message_id to read its reply on follow-up; do not resend or poll. The older teammate does not actively send cross-device replies.'
+            : 'The host accepted this message. Queued acceptance is not delivery or a reply. End this turn; only an actual incoming message proves a reply.',
       });
     },
   });

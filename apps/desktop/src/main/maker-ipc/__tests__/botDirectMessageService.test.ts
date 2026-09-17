@@ -66,6 +66,7 @@ function createDatabase(): Database.Database {
       delivery_status TEXT NOT NULL DEFAULT 'pending',
       sender_name TEXT,
       recipient_name TEXT,
+      bridge_session_id TEXT,
       content TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       UNIQUE(thread_id, sequence)
@@ -675,4 +676,85 @@ describe('cross-device teammate messages', () => {
       .toMatchObject({ ok: false, errorCode: 'TARGET_BOT_INACTIVE' });
     expect(rightDispatch).not.toHaveBeenCalled();
   });
+});
+
+// Legacy transport replies are observations from a conversation, never native inbound sends.
+describe('ordinary remote conversation reply bridge', () => {
+  let sqlite: Database.Database;
+  beforeEach(() => { sqlite = createDatabase(); h.db = drizzle(sqlite); h.createMessage.mockClear(); });
+  afterEach(() => sqlite.close());
+  function harness() {
+    let current = true;
+    let replies: Array<{ id: string; content: string }> = [];
+    const readReply = vi.fn(async () => ({ delivered: replies.length > 0, replies, truncated: false }));
+    const send = vi.fn(async (input: { messageId: string }) => ({ ok: true as const, accepted: true as const,
+      delivered: true, messageId: input.messageId, transport: 'remote-conversation' as const, wakeKind: 'resumed' as const,
+      targetBotId: 'old::mimi', targetBotName: 'Mimi', targetSessionId: '', threadId: '', messageCount: 0, remainingMessages: 0, conversationEnded: false }));
+    const dispatch = vi.fn();
+    const deps = { dispatch, captureOwnerScope: () => 'owner', isOwnerScopeCurrent: () => current,
+      transport: { selfDeviceId: () => 'new', verifySender: async () => false,
+        resolve: async (id: string) => ({ id, name: 'Mimi', bridgeSessionId: 'old-chat' }),
+        list: async () => ({ agents: [], unavailableDevices: [] }), send, readReply } };
+    const service = createBotDirectMessageService(deps);
+    return { service, deps, readReply, send, dispatch, revoke: () => { current = false; },
+      answer: () => { replies = [{ id: 'answer', content: 'Mimi ordinary reply' }]; } };
+  }
+  it('retains the actual conversation across service recreation and bridges a reply only once without waking another turn', async () => {
+    const h = harness();
+    const sent = await h.service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'old::mimi', message: 'Question' });
+    if (!sent.ok) throw new Error('send failed');
+    expect(sent.transport).toBe('remote-conversation');
+    const resumed = createBotDirectMessageService(h.deps);
+    const check = { callerSessionId: 'a-main', messageId: sent.messageId };
+    expect(await resumed.checkMessage(check)).toMatchObject({ ok: true, replied: false, delivered: null });
+    h.answer();
+    expect(await resumed.checkMessage(check)).toMatchObject({ ok: true, replied: true, source: 'remote-conversation', replies: [{ id: 'answer', content: 'Mimi ordinary reply' }] });
+    await resumed.checkMessage(check);
+    expect(h.readReply).toHaveBeenCalledWith({ targetId: 'old::mimi', sessionId: 'old-chat', messageId: sent.messageId }, expect.any(Function));
+    expect(sqlite.prepare('SELECT count(*) AS count FROM bot_direct_messages').get()).toEqual({ count: 2 });
+    expect((await resumed.getThread(sent.threadId, 'bot-a'))).toMatchObject({ ok: true, thread: { messageCount: 2 } });
+    expect(h.dispatch).not.toHaveBeenCalled();
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(await resumed.verifyRemoteMessage({ controllerDeviceId: 'old', senderBotId: 'bot-a', targetBotId: 'mimi', messageId: sent.messageId, message: 'Question' })).toBe(false);
+  });
+  it('allows later exchanges while preserving the six-exchange budget', async () => {
+    const h = harness(); h.answer();
+    for (let n = 0; n < 6; n++) {
+      const sent = await h.service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'old::mimi', message: `Question ${n}` });
+      expect(sent.ok).toBe(true);
+      if (sent.ok) expect(await h.service.checkMessage({ callerSessionId: 'a-main', messageId: sent.messageId })).toMatchObject({ ok: true, replied: true });
+    }
+    expect(await h.service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'old::mimi', message: 'Too many' })).toMatchObject({ ok: false, errorCode: 'CONVERSATION_LIMIT_REACHED' });
+    expect(h.send).toHaveBeenCalledTimes(6);
+    const last = sqlite.prepare("SELECT id FROM bot_direct_messages WHERE sender_bot_id='bot-a' ORDER BY sequence DESC LIMIT 1").get() as { id: string };
+    const cooldown = Date.now() + 60_000;
+    sqlite.prepare('UPDATE bot_direct_message_threads SET blocked_until=?').run(cooldown);
+    await h.service.checkMessage({ callerSessionId: 'a-main', messageId: last.id });
+    expect(sqlite.prepare('SELECT blocked_until FROM bot_direct_message_threads').get()).toEqual({ blocked_until: cooldown });
+  });
+  it('does not expose another sender messages or return stale-owner replies', async () => {
+    const h = harness();
+    const sent = await h.service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'old::mimi', message: 'Question' });
+    if (!sent.ok) throw new Error('send failed');
+    expect(await h.service.checkMessage({ callerSessionId: 'b-main', messageId: sent.messageId })).toMatchObject({ ok: false, errorCode: 'NOT_FOUND' });
+    expect(await h.service.checkMessage({ callerSessionId: 'ordinary', messageId: sent.messageId })).toMatchObject({ ok: false, errorCode: 'NOT_A_BOT_SESSION' });
+    expect(h.readReply).not.toHaveBeenCalled();
+    h.readReply.mockImplementationOnce(async () => { h.revoke(); return { delivered: true, replies: [{ id: 'late', content: 'secret' }], truncated: false }; });
+    expect(await h.service.checkMessage({ callerSessionId: 'a-main', messageId: sent.messageId })).toMatchObject({ ok: false, errorCode: 'OWNER_CHANGED' });
+    expect(sqlite.prepare('SELECT count(*) AS count FROM bot_direct_messages').get()).toEqual({ count: 1 });
+  });
+  it('repairs a partial reply projection on re-read without duplicating a response or dispatch', async () => {
+    const local = harness(); local.answer();
+    const sent = await local.service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'old::mimi', message: 'Question' });
+    if (!sent.ok) throw new Error('send failed');
+    h.createMessage.mockRejectedValueOnce(new Error('projection unavailable'));
+    const args = { callerSessionId: 'a-main', messageId: sent.messageId };
+    expect(await local.service.checkMessage(args)).toMatchObject({ ok: false });
+    expect(await local.service.checkMessage(args)).toMatchObject({ ok: true, replied: true });
+    expect(sqlite.prepare('SELECT count(*) AS count FROM bot_direct_messages').get()).toEqual({ count: 2 });
+    expect(sqlite.prepare('SELECT message_count FROM bot_direct_message_threads').get()).toEqual({ message_count: 2 });
+    expect(local.send).toHaveBeenCalledTimes(1);
+    expect(local.dispatch).not.toHaveBeenCalled();
+  });
+
 });
