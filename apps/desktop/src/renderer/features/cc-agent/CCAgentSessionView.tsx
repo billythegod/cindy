@@ -84,7 +84,6 @@ import { PlanViewerCard } from '@/components/new-chat/PlanViewerCard';
 import { PlanActionCard } from '@/components/new-chat/PlanActionCard';
 import { InteractionPromptHost } from '@/components/interaction-portal';
 import {
-  hasBotAssistantOutputInCurrentTurn,
   MessageStream,
   type InlinePlanVisibility,
 } from '@/components/chat/MessageStream';
@@ -4521,11 +4520,6 @@ export function CCAgentSessionView({
   const composerRuntimeVisible =
     !pendingPlanReview &&
     (agentStatus.isRunning || backgroundTasksActive || runningWorkflow !== null);
-  const botAssistantOutputStarted = useMemo(
-    () => Boolean(botChatIdentity) && hasBotAssistantOutputInCurrentTurn(messages),
-    [botChatIdentity, messages],
-  );
-  const botThinkingVisible = composerRuntimeVisible && !botAssistantOutputStarted;
 
   const content = (
     // Layout: single scroll container (full height) + sticky input overlay at bottom.
@@ -4783,7 +4777,7 @@ export function CCAgentSessionView({
               style={{ width: inputWidth }}
             >
               {botChatIdentity ? (
-                botThinkingVisible ? (
+                composerRuntimeVisible ? (
                   <div
                     data-testid="bot-thinking-indicator"
                     role="status"

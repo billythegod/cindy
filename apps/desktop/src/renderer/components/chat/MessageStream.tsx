@@ -1,3 +1,5 @@
+import { simplifyBotRenderItems } from '@/features/bots/botConversationPresentation';
+export { simplifyBotRenderItems } from '@/features/bots/botConversationPresentation';
 import { placeBotTaskCardsAfterIntroduction } from '@cindy/maker-shared/botCollaboration';
 /**
  * MessageStream
@@ -484,89 +486,6 @@ export interface InlinePlanVisibility {
 // ---------------------------------------------------------------------------
 
 // Item types and pure work grouping live in messageWorkGroups; window/DOM behavior stays here.
-function isBotInternalActivity(item: RenderItem): boolean {
-  if (
-    item.type === 'tool_segment' ||
-    item.type === 'agent_task' ||
-    item.type === 'work_group' ||
-    item.type === 'agent_plan' ||
-    item.type === 'turn_changes'
-  ) {
-    return true;
-  }
-  return item.type === 'message' && item.message.role === 'thinking';
-}
-
-export function simplifyBotRenderItems(
-  items: readonly RenderItem[],
-  isStreaming: boolean,
-): RenderItem[] {
-  const visible = items.filter((item) => !isBotInternalActivity(item));
-  if (!isStreaming) return visible;
-
-  // 当前回合的普通 assistant 正文从首字开始流式展示；工具媒体、交付卡等容易
-  // 改变布局的结果仍等回合完成后出现。这样既不泄露内部工作过程，也不会把整段
-  // 答案藏到 done 后才突然闪现。
-  let currentTurnStart = -1;
-  for (let index = visible.length - 1; index >= 0; index -= 1) {
-    const item = visible[index];
-    if (
-      item.type === 'message' &&
-      item.message.role === 'user' &&
-      item.message.delivery !== 'steer' &&
-      !item.message.isSyntheticTrigger
-    ) {
-      currentTurnStart = index;
-      break;
-    }
-  }
-  if (currentTurnStart < 0) return visible;
-  return visible.filter((item, index) => {
-    if (index <= currentTurnStart) return true;
-    if (item.type !== 'message') return false;
-    if (item.message.role === 'user') return !item.message.isSyntheticTrigger;
-    // A direct-message stamp is the durable entry into the Bot-to-Bot conversation,
-    // not an expanding work/result card. The reverse delivery starts another hidden
-    // canonical turn; hiding system cards during that turn used to make the already
-    // persisted "sent" stamp flash and disappear until streaming finished.
-    if (item.message.systemCardType === 'bot-direct-message' || item.message.systemCardType === 'bot-session-task') return true;
-    return (
-      item.message.role === 'assistant' &&
-      !item.message.systemCardType &&
-      item.message.content.trim().length > 0
-    );
-  });
-}
-
-/**
- * 当前可见用户 turn 是否已经产出正文。Bot composer 用它把「正在思考」限制在
- * 首字到来之前；子代理内部行、系统卡、空 assistant 和合成续跑行都不参与判断。
- */
-export function hasBotAssistantOutputInCurrentTurn(messages: readonly ChatMessage[]): boolean {
-  let currentTurnStart = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (isSubagentInternalMessage(message)) continue;
-    if (message.role === 'user' && message.delivery !== 'steer' && !message.isSyntheticTrigger) {
-      currentTurnStart = index;
-      break;
-    }
-  }
-  if (currentTurnStart < 0) return false;
-  for (let index = currentTurnStart + 1; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (isSubagentInternalMessage(message)) continue;
-    if (
-      message.role === 'assistant' &&
-      !message.systemCardType &&
-      message.content.trim().length > 0
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function isRenderWindowBoundaryItem(item: RenderItem | undefined): boolean {
   return item?.type === 'fork_origin' || (item?.type === 'message' && item.message.role === 'user');
 }
@@ -5882,6 +5801,7 @@ export function MessageStream({
                             isStreaming={item.isStreaming}
                             startedAtMs={item.startedAtMs}
                             childItems={childItems}
+                            compact={simplifiedBotConversation}
                             deferred={item.deferred}
                           />
                         </div>
