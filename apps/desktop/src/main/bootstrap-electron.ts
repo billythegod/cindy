@@ -1,3 +1,4 @@
+import { registerFilePeerIpc } from './device-link/filePeer';
 import { registerLoginItemIpc } from './login-item-ipc.js';
 import { retainProviderPresentationAfterAuthChange } from './maker-host/provider-presentation-store.js';
 import { codexAccountState } from './maker-host/codex-account-auth.js';
@@ -12,7 +13,7 @@ import {
   auditRegisteredWorktrees,
 } from './worktree/recycleMaintenance';
 import { requestWorktreeRecycle } from './worktree/managedRecycle';
-import { recycleSessionWorktreeForStatusChange } from './localDb/ipc/sessions';
+import { patchSessionMetaInDb, recycleSessionWorktreeForStatusChange } from './localDb/ipc/sessions';
 import { tryGetDbClient } from './localDb/client/current';
 import {
   app,
@@ -326,12 +327,14 @@ import {
 import { broadcastCindyMakeSourceStatus } from './cindy-make/sourceStatusBroadcast.js';
 import { cindyMakeManager } from './cindy-make/manager.js';
 import { broadcastCindyMakeState } from './cindy-make/stateBroadcast.js';
-import { CINDY_MAKE_RUN_ID_PATTERN } from './cindy-make/sourcePaths.js';
-import { prepareCindyMakeWorkspace } from './cindy-make/taskWorkspace.js';
 import {
   createMakeToolchainEnvironment,
   resolveMakeToolEnvironment,
 } from './cindy-make/toolchainEnvironment.js';
+import { CINDY_MAKE_RUN_ID_PATTERN } from './cindy-make/sourcePaths.js';
+import { prepareCindyMakeWorkspace } from './cindy-make/taskWorkspace.js';
+import { restoreCindyMakeTaskState, startCindyMakeTask } from './cindy-make/taskRuntime.js';
+import { configureCindyMakeTaskManagement, manageCindyMakeTask } from './cindy-make/taskManagement.js';
 import { createStorageIpcHandlers } from './cindy-media/storageIpc';
 import {
   collectDatabaseSizeWarningStatus,
@@ -818,6 +821,7 @@ import {
   setChatEmbeddingEnabled,
   resetCacheForNewDb as resetChatEmbedderCache,
 } from './embedders/chat-history-embedder.js';
+import { registerWorkingStatusIpc } from './maker-ipc/workingStatus.js';
 import { registerMakerTitleIpc } from './maker-ipc/title.js';
 import { registerAuxiliaryModelSettingsIpc } from './maker-ipc/auxiliary-model-settings.js';
 import { registerContactsIpc } from './maker-ipc/contacts-ipc.js';
@@ -839,6 +843,7 @@ import { prewarmModelPricing } from './usage/modelPricing.js';
 import { registerMakerBinaryVersionIpc } from './maker-ipc/binary-version.js';
 import { registerCrossAgentConvertIpc } from './cross-agent-convert/ipc.js';
 import { registerFileBrowserIpc } from './file-browser/index.js';
+import { disposeHtmlPreviews } from './file-browser/html-preview-ipc.js';
 import { disposeRemoteFileBrowser } from './file-browser/remote-deps.js';
 import { registerFileBrowserDeviceOp } from './file-browser/device-op.js';
 import { registerSearchIpc } from './file-browser/search/index.js';
@@ -6036,6 +6041,7 @@ const registerIpcHandlers = () => {
         onProviderModelAutoRefreshConfigured: markMakerProviderRefreshConfigured,
       });
       registerMakerTitleIpc({ isSessionTurnPendingCompletion });
+      registerWorkingStatusIpc();
       registerAuxiliaryModelSettingsIpc();
       registerMakerHelpIpc(ipcMaker);
       registerHelpFeedbackIpc();
@@ -7437,69 +7443,105 @@ const registerIpcHandlers = () => {
   ipcMain.handle('app:get-cindy-make-source-status', async (event) => {
     assertTrustedAppRendererEvent(event);
     const userData = app.getPath('userData');
-    let env;
+    let env: Awaited<ReturnType<typeof createMakeToolchainEnvironment>> | undefined;
     try {
       env = await createMakeToolchainEnvironment(userData);
     } catch {
       // The persisted status remains usable when tool discovery is unavailable.
     }
-    return readCurrentCindySourceStatus(makeSourceRoot(userData), env);
+    return cindyMakeManager.refreshSourceStatus(() =>
+      readCurrentCindySourceStatus(makeSourceRoot(userData), env),
+    );
   });
   // 源码准备是全局单例:进度广播给所有窗口,任意窗口都能停止它。
   subscribeCindySourceStatus(broadcastCindyMakeSourceStatus);
   cindyMakeManager.subscribe(broadcastCindyMakeState);
+  configureCindyMakeTaskManagement({
+    isAlive: (id) => getMakerIfReady()?.isSessionAlive(id),
+    isRunning: (id) => getMakerIfReady()?.getSession(id)?.isTurnRunning() ?? false,
+    setStatus: patchSessionMetaInDb,
+    recycle: recycleSessionWorktreeForStatusChange,
+  });
+  cindyMakeManager.setProjectBusyProbe(
+    (root) =>
+      getMakerIfReady()
+        ?.listActiveSessions()
+        .some((session) => {
+          const relative = path.relative(path.join(root, 'worktrees'), session.workDir);
+          return (
+            session.isTurnRunning() &&
+            relative.length > 0 &&
+            !relative.startsWith('..') &&
+            !path.isAbsolute(relative)
+          );
+        }) ?? false,
+  );
   ipcMain.handle('app:get-cindy-make-state', async (event) => {
     assertTrustedAppRendererEvent(event);
+    try {
+      await restoreCindyMakeTaskState();
+      for (const [runId, report] of Object.entries(cindyMakeManager.getState().tasks ?? {})) {
+        if (report.task) cindyMakeManager.projectTaskSession(runId, {
+          executing: getMakerIfReady()?.getSession(report.task.sessionId)?.isTurnRunning() ?? false,
+        });
+      }
+    } catch {
+      throwIpcError('INTERNAL', 'Could not restore Cindy Make preparation state');
+    }
     return cindyMakeManager.getState();
+  });
+  ipcMain.handle('app:manage-cindy-make-task', async (event, sessionId: unknown, action: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    await manageCindyMakeTask(sessionId, action).catch((error) => {
+      if (error instanceof Error && error.message.startsWith('[')) throw error;
+      throwIpcError('INTERNAL', 'cleanupFailed');
+    });
   });
   ipcMain.handle('app:cancel-cindy-make-source', async (event): Promise<{ success: boolean }> => {
     assertTrustedAppRendererEvent(event);
     return { success: cancelCindySourcePreparation() };
   });
 
-  ipcMain.handle(
-    'app:open-cindy-make-source-dir',
-    async (event): Promise<{ success: boolean }> => {
+  ipcMain.handle('app:open-cindy-make-source-dir', async (event): Promise<{ success: boolean }> => {
     assertTrustedAppRendererEvent(event);
     return openMakeSourceDirectory(app.getPath('userData'), {
       openPath: (directory) => shell.openPath(directory),
     });
   });
 
-  // 个人版制作任务的独立开发目录:从个人版基线建任务分支 + worktree 并安装依赖。
+  // 个人版制作任务的独立开发目录:先从个人版基线建任务分支 + worktree。
   // 只认 runId 形状;路径全部由 main 从 userData 派生,renderer 只拿回结果。
-  ipcMain.handle('app:prepare-cindy-make-workspace', async (event, rawRunId: unknown) => {
+  ipcMain.handle('app:start-cindy-make-task', async (event, input: unknown) => {
     assertTrustedAppRendererEvent(event);
-    if (typeof rawRunId !== 'string' || !CINDY_MAKE_RUN_ID_PATTERN.test(rawRunId)) {
-      throwIpcError('INVALID_PARAMS', 'invalid Cindy Make run id');
-    }
+    return startCindyMakeTask(input, event.sender.id).catch((error) => {
+      if (error instanceof Error && error.message.startsWith('[')) throw error;
+      throwIpcError('INTERNAL', 'Could not start Cindy Make preparation');
+    });
+  });
+  ipcMain.handle('app:cancel-cindy-make-task', async (event, runId: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    if (typeof runId !== 'string' || !CINDY_MAKE_RUN_ID_PATTERN.test(runId))
+      throwIpcError('INVALID_PARAMS', 'Invalid Cindy Make run');
+    return { success: cindyMakeManager.cancel(runId, event.sender.id) === 'cancelled' };
+  });
+  ipcMain.handle('app:prepare-cindy-make-workspace', async (event, runId: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    if (typeof runId !== 'string' || !CINDY_MAKE_RUN_ID_PATTERN.test(runId))
+      throwIpcError('INVALID_PARAMS', 'Invalid Cindy Make run');
     const userData = app.getPath('userData');
-    const env = await createMakeToolchainEnvironment(userData);
     try {
-      const signal = AbortSignal.timeout(20 * 60_000);
-      const processEnvironment = await resolveMakeToolEnvironment(
-        env,
-        ['git', 'node', 'pnpm', 'python'],
-        signal,
-      );
-      return await prepareCindyMakeWorkspace(userData, rawRunId, signal, {
-        processEnvironment,
+      return await cindyMakeManager.withProject(makeSourceRoot(userData), async () => {
+        const signal = AbortSignal.timeout(20 * 60_000);
+        const env = await createMakeToolchainEnvironment(userData);
+        const processEnvironment = await resolveMakeToolEnvironment(
+          env,
+          ['git', 'node', 'pnpm', 'python'],
+          signal,
+        );
+        return prepareCindyMakeWorkspace(userData, runId, signal, { processEnvironment });
       });
-    } catch (error) {
-      const code = (error as { code?: unknown } | null)?.code;
-      createSchedulerLogger('cindy-make').warn('workspace preparation failed', {
-        runId: rawRunId,
-        code,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      throwIpcError(
-        code === 'environmentNotReady' ? 'PRECONDITION_FAILED' : 'INTERNAL',
-        code === 'installFailed'
-          ? 'Cindy Make workspace dependency install failed'
-          : code === 'environmentNotReady'
-            ? 'Cindy Make source is not prepared'
-            : 'Cindy Make workspace preparation failed',
-      );
+    } catch {
+      throwIpcError('INTERNAL', 'Cindy Make workspace preparation failed');
     }
   });
 
@@ -9230,6 +9272,7 @@ app.on('ready', async () => {
   // owning modules above; future collections/actions do not add tunnel channels.
   registerRemoteResourcesIpc();
   registerDeviceLinkIpc();
+  registerFilePeerIpc();
   registerRemoteDesktopIpc(isGlobalVoiceInputOverlaySender);
   void startupPurgeDrain
     .then(({ purged, pending }) => {
@@ -9296,7 +9339,7 @@ app.on('ready', async () => {
 //   - process.on('uncaughtException')—— main 进程未捕获异常
 //   - app.on('render-process-gone')  —— renderer 崩 (main 还活)
 //
-// 三个阶段串成 sync → async(并发+6s 超时, 见下方 installQuitHandler) → post-async,
+// 三个阶段串成 sync → async(并发+16s 超时, 见下方 installQuitHandler) → post-async,
 // 然后 app.exit(<code>)。
 // 散落的 fire-and-forget 已经收掉, 进程不会在 disposer 跑完之前死。
 // 真硬崩 (segfault / kill -9) JS 层无能为力, 子进程靠 stdin EOF 自死。
@@ -9665,6 +9708,7 @@ onQuit('anthropic-compat-proxy', () => disposeAnthropicCompatProxy(), 'async');
 onQuit('browser-runtime', () => disposeBrowserRuntime(), 'async');
 // Remote file-service clients: 先于 pool 关闭, 挂断远端 daemon 的 exec channel。
 onQuit('remote-file-browser', () => disposeRemoteFileBrowser(), 'async');
+onQuit('html-previews', disposeHtmlPreviews, 'async');
 // Remote SSH pool: 主动断开所有活动连接, 防止 ssh2 子句柄阻塞 Node 进程退出。
 // post-async(非 async):shutdown-maker 在 async 阶段关 sessions 时, PiAgent.close()
 // 会经 pi-manager RPC 发 kill 杀远端 daemon —— 若 pool 在 async 并发先
@@ -9686,7 +9730,10 @@ onQuit('ios-simulator-ownership-registry', flushIOSSimulatorOwnershipRegistry, '
 onQuit('db-client', () => lifecycleDbClientManager.dispose('quit'), 'post-async');
 onQuit('local-db-close', () => localDbCloseDb(), 'post-async');
 
-installQuitHandler(6000);
+// A display restore may join an in-flight native mode write (5s), restore the
+// original mode (5s), then await Electron geometry (5s). Keep a margin before
+// the existing 20s hard-exit watchdog; completed disposers never wait this long.
+installQuitHandler(16000);
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
