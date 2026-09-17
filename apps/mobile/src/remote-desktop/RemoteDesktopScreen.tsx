@@ -2128,12 +2128,13 @@ export default function RemoteDesktopScreen() {
             top: landscape
               ? insets.top + spacing.lg
               : edgePadding.paddingTop + spacing.xs,
-            // Island/notch sits mid-edge in landscape, so the top-left corner
-            // stays clear even when insets.left is large. Only honor the left
-            // inset when the top edge is also unsafe — that means a physical
-            // cutout actually occupies the corner, not a centered island.
+            // iOS landscape: Island/notch sits mid-edge, so the top-left
+            // corner stays clear even when insets.left is large. Skip that
+            // inset unless the top edge is also unsafe — a physical cutout
+            // occupying the corner, not a centered island. Android left
+            // insets are an unsafe strip (cutout/curve), not an island.
             left: landscape
-              ? (insets.top > 0 ? insets.left : 0) +
+              ? (Platform.OS === "ios" && insets.top === 0 ? 0 : insets.left) +
                 spacing.lg +
                 (Platform.OS === "ios" ? spacing.xs : 0)
               : edgePadding.paddingLeft + spacing.lg,

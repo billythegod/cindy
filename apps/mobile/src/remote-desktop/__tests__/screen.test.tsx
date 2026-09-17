@@ -1429,6 +1429,46 @@ describe("remote desktop controls", () => {
     );
     expect(style.left).toBe(68);
   });
+  it("honors Android landscape left insets even when the top edge is clear", async () => {
+    fixture.platform = "android";
+    fixture.size = { width: 874, height: 402 };
+    fixture.safe = { top: 0, bottom: 21, left: 62, right: 62 };
+    act(() => root.render(<RemoteDesktopScreen />));
+    act(() =>
+      fixture.message!({
+        nativeEvent: {
+          data: JSON.stringify({ type: "orientation", angle: 90 }),
+        },
+      }),
+    );
+    const style = Object.assign(
+      {},
+      ...fixture.views["remoteDesktop.backPosition"].style
+        .flat(Infinity)
+        .filter(Boolean),
+    );
+    expect(style.left).toBe(78);
+  });
+  it("does not treat Android status-bar plus mid-edge inset as an iOS island", async () => {
+    fixture.platform = "android";
+    fixture.size = { width: 874, height: 402 };
+    fixture.safe = { top: 24, bottom: 21, left: 62, right: 62 };
+    act(() => root.render(<RemoteDesktopScreen />));
+    act(() =>
+      fixture.message!({
+        nativeEvent: {
+          data: JSON.stringify({ type: "orientation", angle: 90 }),
+        },
+      }),
+    );
+    const style = Object.assign(
+      {},
+      ...fixture.views["remoteDesktop.backPosition"].style
+        .flat(Infinity)
+        .filter(Boolean),
+    );
+    expect(style.left).toBe(78);
+  });
   it("restores a centered bottom toolbar after a full rotation without remounting the viewer", async () => {
     await connect();
     const viewer = host.querySelector('[data-testid="remoteDesktop.viewer"]');
