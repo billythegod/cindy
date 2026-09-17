@@ -358,7 +358,7 @@ function registerSendToAgentEntry(
   if (!deps.botMessaging) return;
   if (deps.botMessaging.checkMessage) registry.register({
     name: 'check_agent_message', category: 'bots',
-    description: 'Read replies to your own message sent through an older remote teammate conversation. Use the message_id returned by send_to_agent when its transport is remote-conversation, or after uncertain delivery. This does not send or retry. It returns persisted ordinary reply text, not proof of a remote tool call or a completed turn. Check when following up; do not poll.',
+    description: 'Check your own remote message: read native acceptance receipts or ordinary replies from an older teammate conversation. Use the message_id returned by send_to_agent when its transport is remote-conversation, or after uncertain delivery. This does not send or retry. It returns native acceptance or persisted ordinary reply text, not proof of engine delivery, a remote tool call, or a completed turn. Check when following up; do not poll.',
     inputShape: { message_id: z.string().min(1).max(80) },
     handler: async ({ message_id }) => {
       const callerSessionId = resolveLiziMcpSessionContext(sessionCtx).sessionId;

@@ -83,6 +83,21 @@ export function createBotMessageTransport(deps: {
       );
       return result.verified === true;
     },
+    async readReceipt(input, assertCurrent) {
+      const address = parseBotPeerAddress(input.targetId);
+      if (!address) throw unavailable('INVALID_ARGS');
+      await device(address.deviceId);
+      assertCurrent();
+      const result = await value<{ messageId: string; accepted: true | null }>(
+        address.deviceId, REMOTE_RESOURCE_INVOKE_CHANNEL, [{ client,
+          collectionId: 'teammates', actionId: 'message-receipt', resourceRef: ref(address.botId),
+          input: { senderBotId: input.senderBotId, messageId: input.messageId },
+        }], assertCurrent);
+      assertCurrent();
+      if (result.messageId !== input.messageId || (result.accepted !== true && result.accepted !== null))
+        throw unavailable('DELIVERY_UNKNOWN');
+      return result;
+    },
     async list() {
       const devices = (await deps.listDevices()).devices.filter(
         (row) => !row.isSelf && !['ios', 'android'].includes(row.platform ?? ''),

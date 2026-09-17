@@ -35,7 +35,13 @@ it('rejects a previously discovered hidden companion and allows it again after r
   });
   const receiveRemote = vi.fn(async () => ({ ok: false as const, errorCode: 'TEST_RECEIPT', message: 'test' }));
   const verifyRemoteMessage = vi.fn(async () => true);
-  setBotRemoteMessageService({ receiveRemote, verifyRemoteMessage });
+  const readRemoteReceipt = vi.fn(async () => ({ messageId: 'delivery-1', accepted: true as const }));
+  setBotRemoteMessageService({ receiveRemote, verifyRemoteMessage, readRemoteReceipt });
+  await expect(remoteResourceRegistry.invoke(context, { client, collectionId: 'teammates',
+    actionId: 'message-receipt', resourceRef: discovered.ref,
+    input: { senderBotId: 'sender', messageId: 'delivery-1', controllerDeviceId: 'spoofed' } }))
+    .resolves.toMatchObject({ effects: [], messageId: 'delivery-1', accepted: true });
+  expect(readRemoteReceipt).toHaveBeenCalledWith({ controllerDeviceId: 'remote-mac', senderBotId: 'sender', targetBotId: 'bot-1', messageId: 'delivery-1' });
   const invoke = () => remoteResourceRegistry.invoke(context, { client, collectionId: 'teammates',
     actionId: 'send-message', resourceRef: discovered.ref,
     input: { senderBotId: 'sender', messageId: 'delivery-1', message: 'hello', controllerDeviceId: 'spoofed' } });

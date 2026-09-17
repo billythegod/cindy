@@ -63,6 +63,26 @@ describe('teammate device transport', () => {
     await expect(transport.send(input, assertCurrent)).rejects.toMatchObject({ code: 'DELIVERY_UNKNOWN' });
   });
 
+  it('reads only a native receipt and preserves revocation, unsupported and mismatched response failures', async () => {
+    let enabled = true;
+    const invoke = vi.fn(async () => ({ ok: true as const, result: { messageId: 'message-1', accepted: true as true | null } }));
+    const transport = createBotMessageTransport({ selfDeviceId: () => 'self', invoke,
+      listDevices: async () => ({ devices: [peer('a', { controlEnabled: enabled })] }) });
+    const args = { targetId: 'a::bot-1', senderBotId: 'sender', messageId: 'message-1' };
+    const guard = vi.fn();
+    expect(await transport.readReceipt!(args, guard)).toEqual({ messageId: 'message-1', accepted: true });
+    expect(invoke).toHaveBeenCalledWith('a', 'maker:remote-resources:invoke', [expect.objectContaining({
+      actionId: 'message-receipt', input: { senderBotId: 'sender', messageId: 'message-1' },
+    })], { preSend: guard });
+    invoke.mockResolvedValueOnce({ ok: true, result: { messageId: 'other', accepted: true } });
+    await expect(transport.readReceipt!(args, guard)).rejects.toMatchObject({ code: 'DELIVERY_UNKNOWN' });
+    invoke.mockResolvedValueOnce({ ok: false, error: { code: 'UNSUPPORTED_CAPABILITY', message: 'old action unavailable' } } as never);
+    await expect(transport.readReceipt!(args, guard)).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
+    enabled = false;
+    await expect(transport.readReceipt!(args, guard)).rejects.toMatchObject({ code: 'REMOTE_DISABLED' });
+    expect(invoke).toHaveBeenCalledTimes(3);
+  });
+
   it('verifies the exact source reservation through the authenticated resource action', async () => {
     const invoke = vi.fn(async () => ({ ok: true as const, result: { verified: true } }));
     const assertCurrent = vi.fn();

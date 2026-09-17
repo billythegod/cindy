@@ -121,6 +121,100 @@ describe('botDirectMessageService', () => {
 
   afterEach(() => sqlite.close());
 
+  it('coalesces concurrent roster discovery across sessions and clears failed flights', async () => {
+    let settle!: (value: { agents: []; unavailableDevices: [] }) => void;
+    let fail!: (error: Error) => void;
+    let started!: () => void;
+    let start = new Promise<void>(resolve => { started = resolve; });
+    const list = vi.fn(() => new Promise<{ agents: []; unavailableDevices: [] }>((resolve, reject) => {
+      settle = resolve; fail = reject; started();
+    }));
+    const service = createBotDirectMessageService({ dispatch, transport: {
+      selfDeviceId: () => 'local', list, resolve: async id => ({ id, name: id }),
+      verifySender: async () => false, send: async () => { throw new Error('unused'); },
+    } });
+    const calls = [service.listAgents('a-main'), service.listAgents('b-main')];
+    await start;
+    // Drain the other caller's local roster reads before settling the shared flight.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(list).toHaveBeenCalledOnce();
+    fail(new Error('offline'));
+    expect((await Promise.all(calls)).every(result => result.ok && result.discoveryError === 'REMOTE_DIRECTORY_UNAVAILABLE')).toBe(true);
+    start = new Promise<void>(resolve => { started = resolve; });
+    const retry = service.listAgents('a-main');
+    await start;
+    settle({ agents: [], unavailableDevices: [] });
+    expect(await retry).toMatchObject({ ok: true, unavailableDevices: [] });
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not share or clear a new owner roster flight when an old account settles', async () => {
+    let owner = 1;
+    const resolvers: Array<(value: { agents: []; unavailableDevices: [] }) => void> = [];
+    const list = vi.fn(() => new Promise<{ agents: []; unavailableDevices: [] }>(resolve => resolvers.push(resolve)));
+    const service = createBotDirectMessageService({ dispatch, captureOwnerScope: () => owner,
+      isOwnerScopeCurrent: captured => captured === owner, transport: {
+        selfDeviceId: () => 'local', list, resolve: async id => ({ id, name: id }),
+        verifySender: async () => false, send: async () => { throw new Error('unused'); },
+      } });
+    const old = service.listAgents('a-main');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    owner = 2;
+    const current = service.listAgents('b-main');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(list).toHaveBeenCalledTimes(2);
+    resolvers[0]({ agents: [], unavailableDevices: [] });
+    expect(await old).toMatchObject({ ok: false, errorCode: 'OWNER_CHANGED' });
+    const joined = service.listAgents('a-main');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(list).toHaveBeenCalledTimes(2);
+    resolvers[1]({ agents: [], unavailableDevices: [] });
+    expect((await Promise.all([current, joined])).every(result => result.ok)).toBe(true);
+  });
+
+  it('reclaims a definite pre-send rejection only through the original database after an owner switch', async () => {
+    let current = true;
+    const nextOwnerDb = createDatabase();
+    const service = createBotDirectMessageService({ dispatch,
+      captureOwnerScope: () => 'original', isOwnerScopeCurrent: () => current,
+      transport: { selfDeviceId: () => 'local', list: async () => ({ agents: [], unavailableDevices: [] }),
+        resolve: async id => ({ id, name: 'Remote' }), verifySender: async () => false,
+        send: async () => {
+          current = false;
+          h.db = drizzle(nextOwnerDb);
+          return { ok: false, errorCode: 'OWNER_CHANGED', message: 'Not sent' };
+        },
+      },
+    });
+    try {
+      expect(await service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'peer::bot-b', message: 'not sent' }))
+        .toMatchObject({ ok: false, errorCode: 'OWNER_CHANGED' });
+      expect(sqlite.prepare('SELECT delivery_status FROM bot_direct_messages').get()).toEqual({ delivery_status: 'failed' });
+      expect(sqlite.prepare('SELECT message_count FROM bot_direct_message_threads').get()).toEqual({ message_count: 0 });
+      expect(nextOwnerDb.prepare('SELECT count(*) AS count FROM bot_direct_messages').get()).toEqual({ count: 0 });
+      expect(h.createMessage).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally { nextOwnerDb.close(); h.db = drizzle(sqlite); }
+  });
+
+  it('keeps native receipt reconciliation from crossing an owner switch', async () => {
+    let current = true;
+    const service = createBotDirectMessageService({ dispatch,
+      captureOwnerScope: () => 'original', isOwnerScopeCurrent: () => current,
+      transport: { selfDeviceId: () => 'local', list: async () => ({ agents: [], unavailableDevices: [] }),
+        resolve: async id => ({ id, name: 'Remote' }), verifySender: async () => false,
+        send: async () => ({ ok: false, errorCode: 'DELIVERY_UNKNOWN', message: 'Lost response' }),
+        readReceipt: async input => { current = false; return { messageId: input.messageId, accepted: true }; },
+      },
+    });
+    const sent = await service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'peer::bot-b', message: 'uncertain' });
+    expect(await service.checkMessage({ callerSessionId: 'a-main', messageId: sent.messageId! }))
+      .toMatchObject({ ok: false, errorCode: 'OWNER_CHANGED' });
+    expect(sqlite.prepare('SELECT delivery_status FROM bot_direct_messages').get()).toEqual({ delivery_status: 'pending' });
+    expect(h.createMessage).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it('delivers a trusted Bot DM into the target canonical Cindy task', async () => {
     const service = createBotDirectMessageService({
       dispatch,
@@ -559,6 +653,8 @@ describe('cross-device teammate messages', () => {
     const list = async () => ({ agents: [{ id: 'right::bot-b', name: 'Mimi', deviceId: 'right', deviceName: 'Studio' }], unavailableDevices: [] });
     left = createBotDirectMessageService({ dispatch: leftDispatch, transport: {
       selfDeviceId: () => 'left', resolve, list,
+      readReceipt: (input, assertCurrent) => { assertCurrent(); return atRight(() => right.readRemoteReceipt({
+        controllerDeviceId: 'left', senderBotId: input.senderBotId, targetBotId: 'bot-b', messageId: input.messageId })); },
       verifySender: input => atRight(() => right.verifyRemoteMessage({ ...input, controllerDeviceId: 'left' })),
       send: async (input, assertCurrent) => {
         assertCurrent();
@@ -618,6 +714,43 @@ describe('cross-device teammate messages', () => {
     expect(rightDispatch).toHaveBeenCalledOnce();
     expect(await atRight(() => right.receiveRemote({ controllerDeviceId: 'left', senderBotId: 'bot-a',
       targetBotId: 'bot-b', message: 'changed', messageId: result.messageId! }))).toMatchObject({ ok: false, errorCode: 'PERMISSION_DENIED' });
+  });
+
+  it('reconciles a lost native receipt without dispatching again, refunding acceptance, or claiming a reply', async () => {
+    failResponse = true;
+    const sent = await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: 'lost receipt' }));
+    const args = { callerSessionId: 'a-main', messageId: sent.messageId! };
+    expect(await atLeft(() => left.checkMessage({ ...args, callerSessionId: 'b-main' }))).toMatchObject({ ok: false, errorCode: 'NOT_FOUND' });
+    expect(await atLeft(() => left.checkMessage(args))).toMatchObject({ ok: true, source: 'native-receipt', accepted: true, delivered: null, replied: false });
+    const anchorCount = h.createMessage.mock.calls.length;
+    await atLeft(() => left.checkMessage(args));
+    expect(h.createMessage).toHaveBeenCalledTimes(anchorCount);
+    expect(rightDispatch).toHaveBeenCalledOnce();
+    expect(leftDispatch).not.toHaveBeenCalled();
+    expect(leftDb.prepare('SELECT delivery_status FROM bot_direct_messages').get()).toEqual({ delivery_status: 'delivered' });
+    expect(leftDb.prepare('SELECT message_count FROM bot_direct_message_threads').get()).toEqual({ message_count: 1 });
+    for (const change of [{ controllerDeviceId: 'other' }, { senderBotId: 'bot-b' }, { targetBotId: 'bot-a' }]) {
+      expect(await atRight(() => right.readRemoteReceipt({ controllerDeviceId: 'left', senderBotId: 'bot-a',
+        targetBotId: 'bot-b', messageId: sent.messageId!, ...change }))).toMatchObject({ accepted: null });
+    }
+  });
+
+  it('retains unknown budget when a peer has no durable acceptance and allows a new thread after idle expiry', async () => {
+    failResponse = true;
+    const sent = await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: 'uncertain' }));
+    rightDb.prepare("UPDATE bot_direct_messages SET delivery_status='pending'").run();
+    expect(await atLeft(() => left.checkMessage({ callerSessionId: 'a-main', messageId: sent.messageId! })))
+      .toMatchObject({ ok: true, accepted: null, delivered: null, replied: false });
+    expect(leftDb.prepare('SELECT delivery_status FROM bot_direct_messages').get()).toEqual({ delivery_status: 'pending' });
+    expect(leftDb.prepare('SELECT message_count FROM bot_direct_message_threads').get()).toEqual({ message_count: 1 });
+    expect(await atRight(() => right.readRemoteReceipt({ controllerDeviceId: 'left', senderBotId: 'bot-a', targetBotId: 'bot-b', messageId: 'absent' })))
+      .toMatchObject({ accepted: null });
+    leftDb.prepare('UPDATE bot_direct_message_threads SET expires_at=0').run();
+    rightDb.prepare('UPDATE bot_direct_message_threads SET expires_at=0').run();
+    failResponse = false;
+    expect(await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: 'new question' })))
+      .toMatchObject({ ok: true, messageCount: 1 });
+    expect(rightDispatch).toHaveBeenCalledTimes(2);
   });
 
   it('enforces the existing twelve-message limit across both devices', async () => {

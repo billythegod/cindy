@@ -90,6 +90,7 @@ export interface BotMessageTransport {
   resolve(targetId: string): Promise<{ id: string; name: string; bridgeSessionId?: string }>;
   list(): Promise<{ agents: Array<{ id: string; name: string; deviceId: string; deviceName: string }>; unavailableDevices: Array<{ deviceId: string; deviceName: string; errorCode: string }> }>;
   send(input: { targetId: string; senderBotId: string; senderName?: string; message: string; messageId: string; bridgeSessionId?: string }, assertCurrent: () => void): Promise<BotDirectMessageResult>;
+  readReceipt?(input: { targetId: string; senderBotId: string; messageId: string }, assertCurrent: () => void): Promise<{ messageId: string; accepted: true | null }>;
   readReply?(input: { targetId: string; sessionId: string; messageId: string }, assertCurrent: () => void): Promise<{
     delivered: boolean; replies: Array<{ id: string; content: string }>; truncated: boolean;
   }>;
@@ -674,8 +675,12 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
       }
 
       let accepted = false;
-      const rollbackReservation = async () => {
-        if (!ownerIsCurrent()) return;
+      const rollbackReservation = async (detachedKnownRejection = false) => {
+        // `db` was captured before reservation and is bound to that owner's database
+        // (both the worker proxy and in-process Drizzle handle). A known rejection
+        // may clean up that handle after logout, but must never reacquire the current
+        // client's database. A disposed handle fails closed; no new-owner broadcast.
+        if (!detachedKnownRejection && !ownerIsCurrent()) return;
         if (accepted) return;
         await db
           .update(botDirectMessages)
@@ -750,11 +755,15 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
             senderBotId: caller.botId, senderName: caller.botName, message, messageId: deliveryId, bridgeSessionId }, () => {
             if (!ownerIsCurrent()) throw new Error('[OWNER_CHANGED] Account changed');
           });
-          if (!ownerIsCurrent()) return { ok: false, errorCode: 'DELIVERY_UNKNOWN', message: 'Account changed before receipt', messageId: deliveryId };
-          if (!result.ok) {
-            if (result.errorCode !== 'DELIVERY_UNKNOWN') await withPairLock(pairKey, rollbackReservation);
+          if (!result.ok && result.errorCode !== 'DELIVERY_UNKNOWN') {
+            // Preserve a definite pre-send/rejection result even if the owner changed.
+            // If its old handle has already closed, retain the conservative reservation
+            // until the existing thread expiry; never write through a new owner's client.
+            await withPairLock(pairKey, () => rollbackReservation(true)).catch(() => undefined);
             return { ...result, messageId: deliveryId };
           }
+          if (!ownerIsCurrent()) return { ok: false, errorCode: 'DELIVERY_UNKNOWN', message: 'Account changed before receipt', messageId: deliveryId };
+          if (!result.ok) return { ...result, messageId: deliveryId };
           await withPairLock(pairKey, onAccepted);
           return { ...result, targetBotId: input.targetBotId, targetBotName: targetProfile.name,
             targetSessionId: '', threadId: thread.id, messageId: deliveryId,
@@ -823,6 +832,9 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
         { id: senderId, name: sender.name, messageId: input.messageId });
     } catch (error) { return transportFailure(error); }
   };
+  // One in-flight discovery per current owner, shared by all local teammate sessions.
+  // Never cache settled rosters, or let an old account's flight serve a new owner.
+  let rosterFlight: { scope: unknown; promise: ReturnType<BotMessageTransport['list']> } | undefined;
   const listAgents = async (callerSessionId: string) => {
     const scope = deps.captureOwnerScope?.();
     const caller = await loadCaller(callerSessionId);
@@ -833,7 +845,21 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
     const local = (await activeRoster()).filter(row => row.id !== caller.botId);
     let remote: Awaited<ReturnType<BotMessageTransport['list']>> = { agents: [], unavailableDevices: [] };
     let discoveryError: string | undefined;
-    try { if (deps.transport) remote = await deps.transport.list(); }
+    try {
+      if (scope !== undefined && deps.isOwnerScopeCurrent && !deps.isOwnerScopeCurrent(scope))
+        return { ok: false as const, errorCode: 'OWNER_CHANGED', message: 'Account changed' };
+      if (deps.transport) {
+        if (!rosterFlight || (rosterFlight.scope !== undefined && deps.isOwnerScopeCurrent
+          && !deps.isOwnerScopeCurrent(rosterFlight.scope))) {
+          const flight = { scope, promise: deps.transport.list() };
+          rosterFlight = flight;
+          void flight.promise.finally(() => {
+            if (rosterFlight === flight) rosterFlight = undefined;
+          }).catch(() => undefined);
+        }
+        remote = await rosterFlight.promise;
+      }
+    }
     catch { discoveryError = 'REMOTE_DIRECTORY_UNAVAILABLE'; }
     if (scope !== undefined && deps.isOwnerScopeCurrent && !deps.isOwnerScopeCurrent(scope)) {
       return { ok: false as const, errorCode: 'OWNER_CHANGED', message: 'Account changed' };
@@ -852,7 +878,20 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
     return !!caller && caller.botId === input.senderBotId && caller.role === 'canonical' && caller.linkArchivedAt === null
       && caller.sessionSource === 'bot' && caller.sessionStatus === 'active' && caller.botStatus === 'active';
   };
-  /** Read an ordinary remote reply, without fabricating a remote send_to_agent call. */
+  /** Read only the receipt belonging to the authenticated source device and exact pair. */
+  const readRemoteReceipt = async (input: { controllerDeviceId: string; senderBotId: string; targetBotId: string; messageId: string }) => {
+    const scope = deps.captureOwnerScope?.();
+    const [row] = await getDbClient().drizzle.select().from(botDirectMessages)
+      .where(and(eq(botDirectMessages.id, input.messageId),
+        eq(botDirectMessages.senderBotId, botPeerAddress(input.controllerDeviceId, input.senderBotId)),
+        eq(botDirectMessages.recipientBotId, input.targetBotId))).limit(1);
+    if (scope !== undefined && deps.isOwnerScopeCurrent && !deps.isOwnerScopeCurrent(scope))
+      throw Object.assign(new Error('Account changed'), { code: 'OWNER_CHANGED' });
+    // Missing/pending/failed rows are not proof of non-delivery: a dispatch may still
+    // be settling. A durable accepted row proves acceptance, not engine delivery.
+    return { messageId: input.messageId, accepted: row?.deliveryStatus === 'delivered' ? true as const : null };
+  };
+  /** Read a native receipt or ordinary legacy reply without re-sending model/tool work. */
   const checkMessage = async (input: { callerSessionId: string; messageId: string }) => {
     const owner = deps.captureOwnerScope?.();
     const assertCurrent = () => {
@@ -880,10 +919,40 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
       assertCurrent();
       if (!sent || sent.senderBotId !== caller.botId)
         return failed('NOT_FOUND', 'Message not found');
-      if (!sent.bridgeSessionId || !deps.transport?.readReply)
-        return failed('UNSUPPORTED_CAPABILITY', 'This message uses native teammate replies');
       if (sent.deliveryStatus === 'failed')
         return failed('MESSAGE_NOT_SENT', 'Message was rejected');
+      if (!sent.bridgeSessionId) {
+        if (!parseBotPeerAddress(sent.recipientBotId) || !deps.transport?.readReceipt)
+          return failed('UNSUPPORTED_CAPABILITY', 'Receipt lookup is unavailable');
+        const receipt = await deps.transport.readReceipt({ targetId: sent.recipientBotId,
+          senderBotId: caller.botId, messageId: sent.id }, assertCurrent);
+        assertCurrent();
+        if (receipt.messageId !== sent.id)
+          return failed('DELIVERY_UNKNOWN', 'Receipt identity mismatch');
+        if (receipt.accepted === true) {
+          const pairKey = pairOf(sent.senderBotId, sent.recipientBotId).join('\u0000');
+          await withPairLock(pairKey, async () => {
+            const currentCaller = await loadCaller(input.callerSessionId);
+            assertCurrent();
+            if (!currentCaller || currentCaller.botId !== caller.botId || currentCaller.role !== 'canonical'
+              || currentCaller.linkArchivedAt !== null || currentCaller.sessionStatus !== 'active' || currentCaller.botStatus !== 'active')
+              throw Object.assign(new Error('Caller inactive'), { code: 'OWNER_CHANGED' });
+            const [row] = await db.select().from(botDirectMessages).where(eq(botDirectMessages.id, sent.id)).limit(1);
+            assertCurrent();
+            if (!row || row.deliveryStatus !== 'pending') return;
+            await persistDeliveryAnchors(row, caller.botName, row.recipientName ?? row.recipientBotId);
+            assertCurrent();
+            await db.update(botDirectMessages).set({ deliveryStatus: 'delivered' }).where(eq(botDirectMessages.id, row.id));
+            assertCurrent();
+            deps.onChanged?.({ threadId: row.threadId, participantBotIds: [row.senderBotId, row.recipientBotId] }, owner);
+          });
+        }
+        return { ok: true as const, message_id: sent.id, target_id: sent.recipientBotId,
+          source: 'native-receipt' as const, accepted: receipt.accepted, delivered: null, replied: false,
+          guidance: 'This read only confirms durable acceptance, not engine delivery or a reply. Unknown receipts retain their budget until the existing thread expiry/cooldown. Do not resend or poll.' };
+      }
+      if (!deps.transport?.readReply)
+        return failed('UNSUPPORTED_CAPABILITY', 'Reply lookup is unavailable');
       const result = await deps.transport.readReply(
         { targetId: sent.recipientBotId, sessionId: sent.bridgeSessionId, messageId: sent.id },
         assertCurrent,
@@ -959,7 +1028,7 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
       return transportFailure(error);
     }
   };
-  return { messageAgent, receiveRemote, verifyRemoteMessage, listAgents, checkMessage, getThread, restore };
+  return { messageAgent, receiveRemote, verifyRemoteMessage, readRemoteReceipt, listAgents, checkMessage, getThread, restore };
 }
 
 export type BotDirectMessageService = ReturnType<typeof createBotDirectMessageService>;
