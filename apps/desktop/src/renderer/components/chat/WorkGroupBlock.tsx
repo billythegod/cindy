@@ -304,7 +304,9 @@ export function WorkGroupBlock({
 
   // 多取一条即可判断展开是否能露出更多活动，显示仍只取最近 5 条。
   const recentActivities = useMemo(
-    () => projectRecentWorkActivities(childItems, isStreaming, MAX_LIVE_WORK_ACTIVITIES + 1),
+    () => isStreaming
+      ? projectRecentWorkActivities(childItems, true, MAX_LIVE_WORK_ACTIVITIES + 1)
+      : [],
     [childItems, isStreaming],
   );
   const liveActivities = useMemo(
@@ -453,7 +455,7 @@ export function WorkGroupBlock({
               'flex flex-col gap-2',
             )}
           >
-            {childItems.map((child) => (
+            {effectiveExpanded && childItems.map((child) => (
               <Fragment key={child.key}>
                 <ExpandedWorkGroupChild
                   child={child}

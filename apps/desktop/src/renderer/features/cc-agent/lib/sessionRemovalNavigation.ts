@@ -4,10 +4,13 @@ export function getVisibleSidebarSessionIds(root?: Document | Element | null): s
   const ids: string[] = [];
   const seen = new Set<string>();
   const coveringAncestors = findSearchOverlayCoveringAncestors(queryRoot);
+  // Many rows share the same ancestors. Read each element's computed style
+  // once per synchronous snapshot, without retaining stale visibility across updates.
+  const elementVisibility = new Map<HTMLElement, boolean>();
   Array.from(
     queryRoot.querySelectorAll<HTMLElement>('[data-sidebar-session-row="true"][data-session-id]'),
   )
-    .filter((node) => isRenderedVisible(node, coveringAncestors))
+    .filter((node) => isRenderedVisible(node, coveringAncestors, elementVisibility))
     .sort(compareSidebarRowOrder)
     .forEach((node) => {
       const id = node.dataset.sessionId;
@@ -51,7 +54,11 @@ function findSearchOverlayCoveringAncestors(queryRoot: Document | Element): Elem
   return ancestors;
 }
 
-function isRenderedVisible(node: HTMLElement, coveringAncestors: readonly Element[]): boolean {
+function isRenderedVisible(
+  node: HTMLElement,
+  coveringAncestors: readonly Element[],
+  elementVisibility: Map<HTMLElement, boolean>,
+): boolean {
   if (isCoveredBySearchOverlay(node, coveringAncestors)) return false;
   if (
     typeof node.closest === 'function' &&
@@ -61,18 +68,19 @@ function isRenderedVisible(node: HTMLElement, coveringAncestors: readonly Elemen
   }
   const view = node.ownerDocument?.defaultView;
   for (let current: HTMLElement | null = node; current != null; current = current.parentElement) {
-    if (current.hasAttribute?.('hidden')) return false;
-
-    const style = view?.getComputedStyle?.(current);
-    if (!style) continue;
-    if (
-      style.display === 'none' ||
-      style.visibility === 'hidden' ||
-      style.visibility === 'collapse'
-    ) {
-      return false;
+    let visible = elementVisibility.get(current);
+    if (visible === undefined) {
+      const style = view?.getComputedStyle?.(current);
+      visible =
+        !current.hasAttribute?.('hidden') &&
+        (!style ||
+          (style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            style.visibility !== 'collapse' &&
+            (style.opacity === '' || Number(style.opacity) !== 0)));
+      elementVisibility.set(current, visible);
     }
-    if (style.opacity !== '' && Number(style.opacity) === 0) return false;
+    if (!visible) return false;
   }
   return true;
 }

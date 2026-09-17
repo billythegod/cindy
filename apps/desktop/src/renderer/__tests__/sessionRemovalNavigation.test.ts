@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   getVisibleSidebarSessionIds,
@@ -34,6 +34,31 @@ describe('pickSessionIdAfterRemoval', () => {
 });
 
 describe('getVisibleSidebarSessionIds', () => {
+  it('shares ancestor style reads within a snapshot but observes later visibility changes', () => {
+    const root = document.createElement('div');
+    const parent = document.createElement('div');
+    root.append(parent);
+    document.body.append(root);
+    for (const id of ['a', 'b', 'c']) {
+      const row = document.createElement('div');
+      row.dataset.sidebarSessionRow = 'true';
+      row.dataset.sessionId = id;
+      parent.append(row);
+    }
+    const styles = vi.spyOn(window, 'getComputedStyle');
+    try {
+      expect(getVisibleSidebarSessionIds(root)).toEqual(['a', 'b', 'c']);
+      expect(styles.mock.calls.filter(([node]) => node === parent)).toHaveLength(1);
+      parent.style.opacity = '0';
+      expect(getVisibleSidebarSessionIds(root)).toEqual([]);
+      parent.style.opacity = '1';
+      expect(getVisibleSidebarSessionIds(root)).toEqual(['a', 'b', 'c']);
+    } finally {
+      styles.mockRestore();
+      root.remove();
+    }
+  });
+
   it('reads sidebar row ids in DOM order and de-duplicates repeated rows', () => {
     const root = {
       querySelectorAll: () => [

@@ -29,10 +29,10 @@
  *   Agent → Timer 沿用原 Clock 的 gap-1.5(6px),Timer → 标题同为 6px。
  */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { Archive, ChevronRight, EllipsisVertical, Play, Undo } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { withSidebarNavigation, type SidebarNavigationProps } from './sidebarNavigation';
 import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/lib/utils';
@@ -320,7 +320,8 @@ export function hasSessionSelectionModifier(modifiers?: SessionClickModifiers): 
  * 背景:2026-07 切换会话卡顿,实测整栏重画单次 80-96ms、每次切换连跑 3 遍,
  * 根源就是行内全表订阅 + 无 memo。
  */
-export const SessionItem = memo(function SessionItem({
+export const SessionItem = withSidebarNavigation<SessionItemProps>(function SessionItem({
+  navigate,
   session,
   isActive,
   isRunning,
@@ -337,7 +338,7 @@ export const SessionItem = memo(function SessionItem({
   matchIndices,
   sourceLabel,
   insideAutomationGroup = false,
-}: SessionItemProps) {
+}: SessionItemProps & SidebarNavigationProps) {
   const { t } = useTranslation();
   const cindyMakePreparing = useCindyMakePreparing(session);
   const prRefs = usePrRefsForSession(session.id);
@@ -436,7 +437,6 @@ export const SessionItem = memo(function SessionItem({
   // schedulesStore 'changed' 刷新 → 列表为空 → 徽章消失。
   const boundSchedules = useSessionBoundSchedules(session.id);
   const hasAutomationMeta = boundSchedules.length > 0 || isAutomationGenerated;
-  const navigate = useNavigate();
   // 自动化创建(非绑定)会话的 Timer 点击:scheduleId 不在 Session 上,点击时查
   // sidebar index runs(sessionId → scheduleId)再跳;查不到(run 已删等)退化为
   // 直接打开自动化页。一次性点击查询,不在渲染路径上常驻拉数据。

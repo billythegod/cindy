@@ -30,7 +30,7 @@ import {
   type ReactNode,
 } from 'react';
 import { HistoryViewHandoff, renderHistoryView, historyPrefetchThreshold } from '@cindy/maker-shared/message-window';
-import { getRemoteHistoryView, type HistoryChatMessage } from '@/lib/makerChatStore';
+import { getRemoteHistoryView, makerChatStore, type HistoryChatMessage } from '@/lib/makerChatStore';
 import { createPortal } from 'react-dom';
 import { GitFork } from 'lucide-react';
 import { SelectionQuoteButton } from './SelectionQuoteButton';
@@ -75,10 +75,12 @@ import { BrandLoadingMark } from '@/components/branding/BrandLoadingMark';
 import { useMessageNavRailPreference } from '@/hooks/useMessageNavRailPreference';
 import { HISTORY_GAP_SPLIT_MS } from '@/lib/historyGap';
 import { resolveToolFilePath, type KnownLocalFileRef } from '@/lib/localPathResolver';
-import { collectGeneratedFiles, type GeneratedFileRef } from '@/lib/generatedFiles';
+import type { GeneratedFileRef } from '@/lib/generatedFiles';
+import { collectCachedGeneratedFiles } from './generatedFilesProjection';
 import { useTurnChangeSets } from './useTurnChangeSets';
 import {
   canCompensateMessageHeight,
+  findRenderItemElement,
   rememberedItemIntrinsicSize,
   viewportAnchorCorrection,
 } from './messageViewportCompensation';
@@ -710,10 +712,10 @@ export function snapRenderWindowStartIdx(
   return clamped;
 }
 
-function ForkOriginMarker({ onClick }: { onClick?: () => void }) {
+function ForkOriginMarker({ onClick, renderItemKey }: { onClick?: () => void; renderItemKey?: string }) {
   const { t } = useTranslation();
   return (
-    <div className="flex items-center gap-4 py-3">
+    <div data-render-item-key={renderItemKey} className="flex items-center gap-4 py-3">
       <div className="h-px flex-1 bg-[var(--border-default)]" />
       <button
         type="button"
@@ -1060,6 +1062,28 @@ function deferredWorkContainsClientId(
  * 走同样的 recover。每次扫描 O(n × m) 其中 m 是平均 toolCalls/segment,典型 n=200
  * 时几毫秒,可接受。
  */
+export function restoreClientIdFromKey(key: string): string | undefined {
+  // Synthetic cards are anchored to a real source row, including generated files.
+  const prefix = ['work-summary-', 'subagent-media-', 'genfiles-', 'msg-', 'seg-', 'work-', 'media-', 'ghostcard-']
+    .find((prefix) => key.startsWith(prefix));
+  return prefix ? key.slice(prefix.length) || undefined : undefined;
+}
+
+export function restoreClientIdForItem(item: RenderItem): string | undefined {
+  if (item.type === 'fork_origin') return undefined;
+  if (item.type === 'agent_plan') return item.sourceClientIds[0];
+  if (item.type === 'turn_changes') return item.changeSet.anchorClientId ?? undefined;
+  if (item.type === 'ghost_card') return item.toolCall.clientId;
+  if (item.type === 'work_group') return restoreClientIdFromKey(item.key) ?? collectDeleteAnchorClientIds([item])[0];
+  return collectDeleteAnchorClientIds([item])[0] ?? restoreClientIdFromKey(item.key);
+}
+
+export function viewportRestoreNeedsMoreContent(
+  desiredScrollTop: number, scrollHeight: number, viewportHeight: number, coversEnd: boolean,
+): boolean {
+  return !coversEnd && desiredScrollTop > Math.max(0, scrollHeight - viewportHeight) + 1;
+}
+
 function recoverLostAnchorIdx(items: RenderItem[], lostKey: string): number {
   const dashIdx = lostKey.indexOf('-');
   if (dashIdx < 0) return -1;
@@ -1289,18 +1313,12 @@ function hasVisibleExactChildAnchor(itemElement: HTMLElement): boolean {
   return false;
 }
 
-/**
- * Whether a restored viewport anchor still belongs to the bounded default tail.
- * This is intentionally limited to the restore path; user-created anchored
- * windows remain unbounded until the separate bidirectional-window change.
- */
-export function isViewportAnchorWithinDefaultTail(
-  items: RenderItem[],
-  viewportTopKey: string,
-  windowSize = RENDER_WINDOW_INITIAL_ITEMS,
-): boolean {
-  const idx = findRestorableViewportItemIdx(items, viewportTopKey);
-  return idx >= Math.max(0, items.length - windowSize);
+/** Prefer the saved card itself before falling back to its source message. */
+export function resolveSavedViewportKey(items: RenderItem[], snapshot: SessionScrollSnapshot): string | null {
+  const index = findRestorableViewportItemIdx(items, snapshot.viewportTopKey);
+  if (index >= 0) return items[index].key;
+  const clientId = snapshot.restoreClientId ?? snapshot.messageClientId ?? restoreClientIdFromKey(snapshot.viewportTopKey);
+  return clientId ? renderItemKeyForClientId(items, clientId) : null;
 }
 
 /**
@@ -1850,7 +1868,7 @@ export function buildRenderItems(
     }
     const workingDir = opts?.workingDir ?? '';
     if (workingDir) {
-      for (const file of collectGeneratedFiles(slice, workingDir)) {
+      for (const file of collectCachedGeneratedFiles(slice, workingDir)) {
         const normalized = pathKey(file.path);
         if (exactPaths.has(normalized) && changeSets.length > 0) continue;
         generatedByPath.set(normalized, file);
@@ -2579,8 +2597,7 @@ export function MessageStream({
   // 的全局 querySelector 找锚点用。
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  /** 渲染 item 的内层 flex 容器 —— 其 children 与 visibleRenderItems 按索引一一对应,
-   *  「按条目相对定位」的还原逻辑靠它反查视口顶端那条 item 的 DOM 节点。 */
+  /** 渲染 item 的内层 flex 容器；按 data-render-item-key 定位，异步卡片可不占 DOM。 */
   const itemsRef = useRef<HTMLDivElement>(null);
 
   // ── 切会话恢复浏览位置(默认常开) ──
@@ -2595,6 +2612,18 @@ export function MessageStream({
   const restoringRef = useRef<boolean>(
     restoreSnapshotRef.current ? restoreSnapshotRef.current.isNearBottom === false : false,
   );
+  const restoreLoadRef = useRef<'idle' | 'pending' | 'loaded' | 'failed' | 'settled'>('idle');
+  const restoreMountedRef = useRef(false);
+  const [restoreRevision, setRestoreRevision] = useState(0);
+  const restoreCancelledRef = useRef(false);
+  const initialHistoryClearedRef = useRef(historyCleared);
+  if (historyCleared !== initialHistoryClearedRef.current || focusMessageClientId) {
+    restoreCancelledRef.current = true;
+  }
+  useEffect(() => {
+    restoreMountedRef.current = true;
+    return () => { restoreMountedRef.current = false; };
+  }, []);
   /** Whether we should keep pinning the viewport to the bottom. */
   const isNearBottomRef = useRef(!restoringRef.current);
   /** Set while we programmatically change scrollTop, so the scroll handler
@@ -2659,14 +2688,6 @@ export function MessageStream({
     if (!snap.isNearBottom && snap.viewportTopKey) return snap.viewportTopKey;
     return null;
   });
-  const restoreDefaultViewportRef = useRef(
-    Boolean(
-      restoringRef.current &&
-      restoreSnapshotRef.current?.windowAnchorKey === null &&
-      restoreSnapshotRef.current?.isNearBottom === false &&
-      restoreSnapshotRef.current?.viewportTopKey,
-    ),
-  );
   // 两段式默认窗口的当前尺寸(FIRST_PAINT → 空闲期扩到 INITIAL)。只影响
   // firstVisibleItemKey === null 的"默认窗口"分支;锚点窗口不看它。
   // "默认窗口 + 非贴底"快照已在上面转为锚点窗口,不再进本分支;仅
@@ -2922,12 +2943,14 @@ export function MessageStream({
   // Desktop 的加载体感)。挂载后的滚动定位不受影响:pin-to-bottom 与 applyRestore
   // 都由 ResizeObserver 在内容真正挂载时驱动,首帧空内容它们自然 no-op。
   // 各 auto-fill effect 均有 `visibleRenderItems.length === 0` 早退守卫,空帧不误触发。
-  const [firstMountDeferred, setFirstMountDeferred] = useState(true);
+  // Warm history already has a bounded first-paint window. An empty shell adds
+  // another render and frame to every switch without doing any useful loading.
+  const [firstMountDeferred, setFirstMountDeferred] = useState(() => !historyLoaded);
   useEffect(() => {
-    // rAF 保证外壳那一帧真正上屏后才挂消息树;卸载时取消,防 setState-after-unmount。
+    if (!firstMountDeferred) return;
     const raf = requestAnimationFrame(() => setFirstMountDeferred(false));
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [firstMountDeferred]);
 
   const { items: visibleRenderItems, startIdx: visibleStartIdx } = useMemo(() => {
     if (firstMountDeferred) return { items: EMPTY_RENDER_ITEMS, startIdx: 0 };
@@ -2965,23 +2988,6 @@ export function MessageStream({
       }
     }
 
-    // A default-tail snapshot can become stale while the session is in the
-    // background. If enough messages arrive, the saved viewport anchor is no
-    // longer in the bounded tail; prefer a bounded tail first paint over
-    // mounting the entire anchor-to-end range. The layout effect below clears
-    // the stale anchor state before the next paint.
-    if (
-      restoreDefaultViewportRef.current &&
-      restoringRef.current &&
-      idx < Math.max(0, allRenderItems.length - RENDER_WINDOW_INITIAL_ITEMS)
-    ) {
-      const defaultStartIdx = snapRenderWindowStartIdx(
-        allRenderItems,
-        Math.max(0, allRenderItems.length - RENDER_WINDOW_INITIAL_ITEMS),
-      );
-      return { items: allRenderItems.slice(defaultStartIdx), startIdx: defaultStartIdx };
-    }
-
     const startIdx = snapRenderWindowStartIdx(allRenderItems, idx);
     const windowItemCount = resolveAnchoredWindowItemCount(startIdx, idx, anchoredForwardItems);
     return {
@@ -2996,28 +3002,51 @@ export function MessageStream({
     firstMountDeferred,
   ]);
 
-  // If a restored default-tail anchor fell out of the tail while this session
-  // was backgrounded, permanently fall back to the bounded default window for
-  // this mount. This also prevents expandWindow from treating the stale key as
-  // a user-created anchored window.
-  useLayoutEffect(() => {
-    if (!restoreDefaultViewportRef.current || !restoringRef.current || firstVisibleItemKey === null)
+  // An explicit saved reading position is independent of automatic tail fill.
+  // Reuse the store's bounded, epoch-guarded local/remote history lookup.
+  useEffect(() => {
+    if (!restoringRef.current || !historyLoaded || firstMountDeferred) return;
+    if (restoreCancelledRef.current) {
+      restoringRef.current = false;
       return;
+    }
     const snap = restoreSnapshotRef.current;
-    if (!snap?.viewportTopKey) return;
-    if (allRenderItems.length === 0) return;
-    const anchorIdx = findRestorableViewportItemIdx(allRenderItems, snap.viewportTopKey);
-    // History hydration can temporarily omit the anchor; retain restore mode
-    // until a later render can locate it instead of treating it as deleted.
-    if (anchorIdx < 0) return;
-    if (isViewportAnchorWithinDefaultTail(allRenderItems, snap.viewportTopKey)) return;
-    restoreDefaultViewportRef.current = false;
+    if (!snap || !sessionId) return;
+    const clientId = snap.restoreClientId ?? snap.messageClientId ?? restoreClientIdFromKey(snap.viewportTopKey);
+    const restoredKey = resolveSavedViewportKey(allRenderItems, snap);
+    if (restoredKey) {
+      restoreSnapshotRef.current = { ...snap, viewportTopKey: restoredKey };
+      if (!visibleRenderItems.some((item) => item.key === restoredKey)) {
+        restoreLoadRef.current = 'loaded';
+        setFirstVisibleItemKey(restoredKey);
+        setAnchoredForwardItems(RENDER_WINDOW_FIRST_PAINT_ITEMS);
+      } else {
+        restoreLoadRef.current = applyRestoreRef.current() ? 'settled' : 'loaded';
+      }
+      return;
+    }
+    if (restoreLoadRef.current === 'pending') return;
+    if (restoreLoadRef.current === 'idle' && clientId) {
+      restoreLoadRef.current = 'pending';
+      const finish = (found: boolean) => {
+        if (!restoreMountedRef.current || !restoringRef.current || restoreCancelledRef.current) return;
+        restoreLoadRef.current = found ? 'loaded' : 'failed';
+        setRestoreRevision((value) => value + 1);
+      };
+      void makerChatStore.loadAroundMessageClientId(sessionId, clientId, { radius: 60 }).then(
+        (row) => finish(row !== null),
+        () => finish(false),
+      );
+      return;
+    }
+    // A deleted/non-displayable anchor must not leave the view stuck restoring.
+    restoreLoadRef.current = 'settled';
     restoringRef.current = false;
-    isNearBottomRef.current = false;
-    setIsNearBottom(false);
+    isNearBottomRef.current = true;
+    setIsNearBottom(true);
     setFirstVisibleItemKey(null);
-    setDefaultWindowItems(RENDER_WINDOW_INITIAL_ITEMS);
-  }, [allRenderItems, firstVisibleItemKey]);
+  }, [allRenderItems, visibleRenderItems, historyLoaded, historyCleared, firstMountDeferred,
+    sessionId, restoreRevision]);
 
   // 两段式默认窗口第二段:首帧(非空)提交后,空闲期把默认窗口扩回 INITIAL。
   // 只在仍钉底时扩(prepend 在视口上方,pin-to-bottom layout effect 同帧重钉,
@@ -3062,18 +3091,17 @@ export function MessageStream({
     const container = scrollRef.current;
     const items = itemsRef.current;
     if (!container || !items) return null;
-    const vis = visibleRenderItemsRef.current;
     const cTop = container.getBoundingClientRect().top;
     const children = items.children;
     for (let i = 0; i < children.length; i++) {
       const rect = (children[i] as HTMLElement).getBoundingClientRect();
       // 第一条「底边还在容器顶边下方」的 item = 正好跨过视口顶边的那条。
-      if (rect.bottom - cTop > 0) {
-        const key = vis[i]?.key;
+      if (rect.height > 0 && rect.bottom - cTop > 0) {
+        const key = children[i].getAttribute('data-render-item-key');
         if (!key) return null;
         const snapshot: ViewportTopSnapshot = {
           viewportTopKey: key,
-          offset: Math.max(0, cTop - rect.top),
+          offset: cTop - rect.top,
         };
         const itemElement = children[i] as HTMLElement;
         const childAnchor = pickIntersectingChildAnchor(
@@ -3159,10 +3187,7 @@ export function MessageStream({
       refreshViewportAnchor();
       return;
     }
-    const vis = visibleRenderItemsRef.current;
-    const idx = snapshot ? vis.findIndex((item) => item.key === snapshot.viewportTopKey) : -1;
-    const itemElement =
-      idx >= 0 ? (itemsRef.current?.children[idx] as HTMLElement | undefined) : undefined;
+    const itemElement = findRenderItemElement(itemsRef.current, snapshot?.viewportTopKey);
     if (
       !shouldRefreshExpandedChildViewportAnchor({
         snapshotMessageClientId: clientId,
@@ -3180,9 +3205,7 @@ export function MessageStream({
   const scrollKeyToViewportTop = useCallback(
     (key: string, offset: number) => {
       const container = scrollRef.current;
-      const idx = visibleRenderItemsRef.current.findIndex((item) => item.key === key);
-      const child =
-        idx >= 0 ? (itemsRef.current?.children[idx] as HTMLElement | undefined) : undefined;
+      const child = findRenderItemElement(itemsRef.current, key);
       if (!container || !child) return false;
       const delta = viewportAnchorCorrection(
         container.getBoundingClientRect().top,
@@ -3624,7 +3647,7 @@ export function MessageStream({
     // 锚定窗向下扩到真正盖住尾部,且用户已经贴在当前窗口底 → 切回默认尾窗并
     // 恢复跟随。扩窗发生在本次 scroll 之后,同一帧的 handleScroll 还看不到
     // windowCoversEnd=true,没有下一次滚动时会永远停在「已到底、但不跟」。
-    if (!wasCovering && windowCoversEnd && firstVisibleItemKey !== null) {
+    if (!restoringRef.current && !wasCovering && windowCoversEnd && firstVisibleItemKey !== null) {
       const el = scrollRef.current;
       if (!el) return;
       const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -3647,20 +3670,13 @@ export function MessageStream({
     const items = itemsRef.current;
     const sizes = restoreSnapshotRef.current?.itemHeights;
     if (!items || !sizes) return;
-    // Some cards render null. Without one DOM row per item, index-based
-    // estimates would be applied to a neighbouring message instead.
-    if (items.children.length !== visibleRenderItems.length) {
-      for (const element of Array.from(items.children)) {
-        (element as HTMLElement).style.containIntrinsicBlockSize = '';
-      }
-      return;
-    }
     const width = items.getBoundingClientRect().width;
-    visibleRenderItems.forEach((item, index) => {
-      const element = items.children[index] as HTMLElement | undefined;
-      const size = rememberedItemIntrinsicSize(sizes.byKey[item.key], sizes.width, width);
-      if (element) element.style.containIntrinsicBlockSize = size ?? '';
-    });
+    for (const child of Array.from(items.children)) {
+      const element = child as HTMLElement;
+      const key = element.getAttribute('data-render-item-key');
+      element.style.containIntrinsicBlockSize = key
+        ? rememberedItemIntrinsicSize(sizes.byKey[key], sizes.width, width) ?? '' : '';
+    }
   }, [visibleRenderItems]);
 
   // 把视口滚回快照记录的「锚点 item + 偏移」。按条目相对定位,所以即使上方图片 /
@@ -3670,33 +3686,56 @@ export function MessageStream({
     const snap = restoreSnapshotRef.current;
     const container = scrollRef.current;
     const items = itemsRef.current;
-    if (!snap || !container || !items) return;
+    if (!snap || !container || !items) return false;
     const idx = findRestorableViewportItemIdx(visibleRenderItemsRef.current, snap.viewportTopKey);
-    if (idx < 0) return; // 锚点 item 不在当前窗口(消息被删 / clear)→ 放弃还原,停在默认位置
-    const child = items.children[idx] as HTMLElement | undefined;
-    if (!child) return;
+    if (idx < 0) return false; // 锚点 item 不在当前窗口(消息被删 / clear)→ 放弃还原,停在默认位置
+    const child = findRenderItemElement(items, visibleRenderItemsRef.current[idx]?.key);
+    if (!child) return false;
+    const messageTarget = snap.messageClientId
+      ? queryMessageElement(container, snap.messageClientId) : null;
+    const useMessageTarget = messageTarget && messageTarget.getBoundingClientRect().height > 0;
+    const target = useMessageTarget ? messageTarget : child;
+    const offset = useMessageTarget ? snap.messageOffset ?? 0 : snap.offset;
+    const desiredScrollTop = container.scrollTop + viewportAnchorCorrection(
+      container.getBoundingClientRect().top, target.getBoundingClientRect().top, offset,
+    );
+    // A bounded restored window may have some overflow, yet still lack enough
+    // content below the anchor to place it at its saved offset. Grow forward
+    // before scrolling so the browser cannot clamp the restored position.
+    if (viewportRestoreNeedsMoreContent(
+      desiredScrollTop, container.scrollHeight, container.clientHeight, windowCoversEndRef.current,
+    )) {
+      restoreLoadRef.current = 'loaded';
+      const nextCount = anchoredForwardItemsRef.current + RENDER_WINDOW_GROWTH_ITEMS;
+      setAnchoredForwardItems((count) => Math.max(count, nextCount));
+      return false;
+    }
     // A work group can remount collapsed or settle internally after its outer
     // row was positioned. Prefer the same visible child when it still exists.
     if (
       snap.messageClientId &&
       scrollMessageToViewportTop(snap.messageClientId, snap.messageOffset ?? 0)
     ) {
+      restoreLoadRef.current = 'settled';
       refreshViewportAnchor();
-      return;
+      return true;
     }
     const cTop = container.getBoundingClientRect().top;
     const rect = child.getBoundingClientRect();
     // 期望 child 顶端落在 (容器顶边 - offset) 处;向下滚 delta 会让 rect.top 上移 delta。
     const delta = rect.top - (cTop - snap.offset);
     if (Math.abs(delta) < 1) {
+      restoreLoadRef.current = 'settled';
       refreshViewportAnchor();
-      return;
+      return true;
     }
     const generation = beginProgrammaticScroll();
     container.scrollTop += delta;
+    restoreLoadRef.current = 'settled';
     requestAnimationFrame(() => {
       if (finishProgrammaticScroll(generation) === false) refreshViewportAnchor();
     });
+    return true;
   }, [
     beginProgrammaticScroll,
     finishProgrammaticScroll,
@@ -3712,22 +3751,23 @@ export function MessageStream({
   // 滚动时持续调用(DOM 一定存活),unmount cleanup 兜底最后一帧;量测失败则跳过。
   const saveRafRef = useRef<number | null>(null);
   const saveScrollSnapshot = useCallback((includeHeights = false) => {
+    // Do not overwrite the reading position with the temporary tail while loading it.
+    if (restoringRef.current && restoreLoadRef.current !== 'settled') return;
     const measured = refreshViewportAnchor();
     if (!sessionId || !measured) return;
     const items = itemsRef.current;
     let itemHeights: SessionScrollSnapshot['itemHeights'];
     const visible = visibleRenderItemsRef.current;
-    // Only capture sizes on leave, and bound them to the last mounted tail.
-    // A missing ghost/generated-files card shifts every following DOM index.
-    // Omit this optional cache rather than persisting heights under wrong keys.
-    if (includeHeights && items && items.children.length === visible.length) {
+    // Only capture sizes on leave, bounded to the last mounted window. Match
+    // keys because async cards can disappear without occupying a DOM row.
+    if (includeHeights && !isNearBottomRef.current && items) {
       const byKey: Record<string, number> = {};
       for (
         let index = Math.max(0, visible.length - RENDER_WINDOW_INITIAL_ITEMS);
         index < visible.length;
         index++
       ) {
-        const element = items.children[index] as HTMLElement | undefined;
+        const element = findRenderItemElement(items, visible[index].key);
         if (!element) continue;
         const style = getComputedStyle(element);
         // contain-intrinsic-size describes the content box, excluding padding/borders.
@@ -3743,6 +3783,10 @@ export function MessageStream({
       viewportTopKey: measured.viewportTopKey,
       offset: measured.offset,
       messageClientId: measured.messageClientId,
+      restoreClientId: measured.messageClientId ?? (() => {
+        const item = visible.find((item) => item.key === measured.viewportTopKey);
+        return item ? restoreClientIdForItem(item) : undefined;
+      })(),
       messageOffset: measured.messageOffset,
       itemHeights,
       isNearBottom: isNearBottomRef.current,
@@ -4929,6 +4973,7 @@ export function MessageStream({
     }
     let anchor = snapshot;
     if (restoringRef.current) {
+      if (restoreLoadRef.current !== 'settled') return;
       const snap = restoreSnapshotRef.current;
       if (
         !snap?.viewportTopKey ||
@@ -5735,12 +5780,12 @@ export function MessageStream({
                 >
                   {visibleRenderItems.map((item) => {
                     if (item.type === 'fork_origin') {
-                      return <ForkOriginMarker key={item.key} onClick={onOpenForkOrigin} />;
+                      return <ForkOriginMarker renderItemKey={item.key} key={item.key} onClick={onOpenForkOrigin} />;
                     }
 
                     if (item.type === 'agent_plan') {
                       return (
-                        <div key={item.key} data-inline-plan-key={item.key}>
+                        <div key={item.key} data-render-item-key={item.key} data-inline-plan-key={item.key}>
                           <InlinePlanCard
                             todos={item.todos}
                             animated={
@@ -5758,6 +5803,7 @@ export function MessageStream({
                       return (
                         <TurnChangesCard
                           key={item.key}
+                          renderItemKey={item.key}
                           sessionId={sessionId}
                           changeSet={item.changeSet}
                         />
@@ -5768,6 +5814,7 @@ export function MessageStream({
                       return (
                         <GeneratedFilesCard
                           key={item.key}
+                          renderItemKey={item.key}
                           files={item.files}
                           turnStartMs={item.turnStartMs}
                           turnEndMs={item.turnEndMs}
@@ -5781,6 +5828,7 @@ export function MessageStream({
                       return (
                         <AgentActionsBlock
                           key={item.key}
+                          renderItemKey={item.key}
                           toolCalls={item.toolCalls}
                           resultMap={item.resultMap}
                           settledIds={item.settledIds}
@@ -5793,6 +5841,7 @@ export function MessageStream({
                       return (
                         <AgentTaskCard
                           key={item.key}
+                          renderItemKey={item.key}
                           toolCall={item.toolCall}
                           update={item.update}
                           result={item.result}
@@ -5868,7 +5917,7 @@ export function MessageStream({
                         // 落到组容器(与 AgentActionsBlock 的容器锚点同一约定)。
                         // 视口子锚点不读这个聚合列表，只认已渲染的 data-message-client-id。
                         <div
-                          key={item.key}
+                          key={item.key} data-render-item-key={item.key}
                           className="scroll-mt-20"
                           data-message-client-ids={collectWorkGroupClientIds(item.children).join(
                             ' ',
@@ -5898,7 +5947,7 @@ export function MessageStream({
                       // 常态包一层 div(结构稳定,回锚媒体到达时卡片 iframe 不重挂);
                       // 回锚媒体(如 mivo 视频)挂卡正下方,与 tool_media 同款间距。
                       return (
-                        <div key={item.key} className="flex flex-col gap-2">
+                        <div key={item.key} data-render-item-key={item.key} className="flex flex-col gap-2">
                           <GhostToolCard
                             callId={item.callId}
                             ghostId={item.ghostId}
@@ -5921,7 +5970,7 @@ export function MessageStream({
                       // tool-result-media: 跳出 tool_segment 折叠卡片,渲染体在
                       // ToolMediaList(与 ghost_card 回锚媒体共用单一来源)。
                       return (
-                        <div key={item.key} className="flex flex-col gap-2">
+                        <div key={item.key} data-render-item-key={item.key} className="flex flex-col gap-2">
                           <ToolMediaList items={item.items} sessionId={sessionId} />
                         </div>
                       );
@@ -5937,6 +5986,7 @@ export function MessageStream({
                       return (
                         <ThinkingCard
                           key={item.key}
+                          renderItemKey={item.key}
                           blockKey={msg.clientId}
                           content={msg.content}
                           isStreaming={msg.isStreaming}
@@ -5997,7 +6047,7 @@ export function MessageStream({
                       const startsUnread = botUnreadBoundaryClientId === msg.clientId;
                       return (
                         <div
-                          key={item.key}
+                          key={item.key} data-render-item-key={item.key}
                           data-message-client-id={msg.clientId}
                           className={cn('scroll-mt-20 transition-colors', highlightClass)}
                         >
@@ -6037,7 +6087,7 @@ export function MessageStream({
 
                     return (
                       <div
-                        key={item.key}
+                        key={item.key} data-render-item-key={item.key}
                         data-message-client-id={msg.clientId}
                         {...shareAttributes}
                         className={cn(

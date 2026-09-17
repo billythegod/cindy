@@ -31,7 +31,10 @@ import {
   buildRenderItems,
   groupWorkRuns,
   snapRenderWindowStartIdx,
-  isViewportAnchorWithinDefaultTail,
+  resolveSavedViewportKey,
+  restoreClientIdFromKey,
+  restoreClientIdForItem,
+  viewportRestoreNeedsMoreContent,
   resolveAnchoredWindowItemCount,
   resolveDefaultWindowStartIdx,
   shouldBoostDefaultWindow,
@@ -602,22 +605,47 @@ describe('first-paint content budget (clampTailWindowStartByBudget)', () => {
   });
 });
 
-describe('restored default-tail window bound', () => {
+describe('restored reading position', () => {
+  it('grows a short restored window when overflow still cannot accommodate the saved offset', () => {
+    // Regression: 98 px of overflow existed, but restoring needed 330 px.
+    expect(viewportRestoreNeedsMoreContent(330, 1242, 1144, false)).toBe(true);
+    expect(viewportRestoreNeedsMoreContent(330, 1600, 1144, false)).toBe(false);
+    expect(viewportRestoreNeedsMoreContent(330, 1242, 1144, true)).toBe(false);
+    expect(viewportRestoreNeedsMoreContent(0, 900, 1144, false)).toBe(false);
+  });
+
+  it('retains real source identifiers for synthetic cards and compound keys', () => {
+    expect(restoreClientIdFromKey('genfiles-user-with-dashes')).toBe('user-with-dashes');
+    expect(restoreClientIdFromKey('work-summary-tool-with-dashes')).toBe('tool-with-dashes');
+    expect(restoreClientIdFromKey('subagent-media-tool-with-dashes')).toBe('tool-with-dashes');
+    expect(restoreClientIdFromKey('ghostcard-tool-with-dashes')).toBe('tool-with-dashes');
+    expect(restoreClientIdFromKey('fork-origin-session')).toBeUndefined();
+    expect(restoreClientIdForItem({ type: 'agent_plan', key: 'plan-changing', todos: [], sourceClientIds: ['plan-source'] }))
+      .toBe('plan-source');
+    expect(restoreClientIdForItem({ type: 'generated_files', key: 'genfiles-user', files: [], turnStartMs: null, turnEndMs: null }))
+      .toBe('user');
+  });
+
   const items = Array.from({ length: RENDER_WINDOW_INITIAL_ITEMS + 40 }, (_, i) => ({
     key: `message-m-${i}`,
     type: 'message' as const,
     message: mkAssistant(`m-${i}`),
   }));
 
-  it('accepts an anchor still inside the current default tail', () => {
-    expect(
-      isViewportAnchorWithinDefaultTail(items, items[items.length - RENDER_WINDOW_INITIAL_ITEMS].key),
-    ).toBe(true);
-    expect(isViewportAnchorWithinDefaultTail(items, items.at(-1)!.key)).toBe(true);
+  it('restores an old anchor outside the tail using a bounded window', () => {
+    const snapshot = { windowAnchorKey: null, viewportTopKey: items[0].key, offset: 18, isNearBottom: false };
+    expect(resolveSavedViewportKey(items, snapshot)).toBe(items[0].key);
+    expect(resolveAnchoredWindowItemCount(0, 0, RENDER_WINDOW_FIRST_PAINT_ITEMS))
+      .toBe(RENDER_WINDOW_FIRST_PAINT_ITEMS);
+    expect(resolveSavedViewportKey(items.slice(1), snapshot)).toBeNull();
   });
 
-  it('rejects an anchor pushed out of the tail by background appends', () => {
-    expect(isViewportAnchorWithinDefaultTail(items, items[0].key)).toBe(false);
-    expect(isViewportAnchorWithinDefaultTail(items, 'message-m-missing')).toBe(false);
+  it('prefers a saved generated-files card over its earlier source user row', () => {
+    const source = { type: 'message' as const, key: 'msg-user', message: mkUser('user') };
+    const card = { type: 'generated_files' as const, key: 'genfiles-user', files: [], turnStartMs: null, turnEndMs: null };
+    const snapshot = { windowAnchorKey: null, viewportTopKey: card.key, restoreClientId: 'user', offset: 12, isNearBottom: false };
+    expect(resolveSavedViewportKey([source, card], snapshot)).toBe(card.key);
+    expect(resolveSavedViewportKey([source], snapshot)).toBe(source.key);
+    expect(resolveSavedViewportKey([], snapshot)).toBeNull();
   });
 });

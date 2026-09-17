@@ -21,7 +21,7 @@
  * DraggableCardColumns 错落瀑布(每列独立 SortableJS 实例 + 跨列 group,多列也可整卡拖拽)。
  */
 
-import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type {
   DragEvent as ReactDragEvent,
   MouseEvent as ReactMouseEvent,
@@ -30,7 +30,7 @@ import type {
 } from 'react';
 import { Archive, ChevronRight, EllipsisVertical, Undo } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { withSidebarNavigation, type SidebarNavigationProps } from './sidebarNavigation';
 
 import { cn } from '@/lib/utils';
 import { SessionStatusIcon } from './SessionStatusIcon';
@@ -143,7 +143,8 @@ export type SessionCardProps = SessionItemProps & {
   hideBottomDivider?: boolean;
 };
 
-export const SessionCard = memo(function SessionCard({
+export const SessionCard = withSidebarNavigation<SessionCardProps>(function SessionCard({
+  navigate,
   session,
   isActive,
   isRunning,
@@ -161,9 +162,8 @@ export const SessionCard = memo(function SessionCard({
   variant = 'card',
   isFirst = false,
   hideBottomDivider = false,
-}: SessionCardProps) {
+}: SessionCardProps & SidebarNavigationProps) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const cindyMakePreparing = useCindyMakePreparing(session);
   // mod+1..9 序号徽标:模块 store 按 sessionId 精准订阅,非按住态恒为 null。
   const ordinalBadgeLabel = useSessionOrdinalBadge(session.id);
