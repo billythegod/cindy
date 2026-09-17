@@ -1557,6 +1557,17 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       return;
     }
 
+    // Pending owned input supersedes even a durable terminal receipt: replaying
+    // that receipt first would complete the delegation before its supplement.
+    if (deps.taskControl) {
+      await deps.taskControl.restoreInput(row.childSessionId);
+      if (hasPendingDelegationInput(row)) {
+        prepareQueuedResume(row);
+        await deps.taskControl.resumeInput(row.childSessionId);
+        return;
+      }
+    }
+
     const snapshot = parseRecord(row.permissionSnapshotJson);
     const acceptedExecution = snapshot.taskExecution as (DelegationExecutionReceipt & { runSequence: number }) | undefined;
     const terminal = snapshot.taskTerminal as {
@@ -1571,15 +1582,6 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       await settleSessionUnserialized({ childSessionId: row.childSessionId, ...terminal,
         expectedRunSequence: row.runSequence, hadPendingInputAtTerminal: false });
       return;
-    }
-
-    if (deps.taskControl) {
-      await deps.taskControl.restoreInput(row.childSessionId);
-      if (hasPendingDelegationInput(row)) {
-        prepareQueuedResume(row);
-        await deps.taskControl.resumeInput(row.childSessionId);
-        return;
-      }
     }
 
     if (

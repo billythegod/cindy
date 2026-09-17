@@ -4412,7 +4412,7 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
-  it('restores an owned supplement after the turn ended before its terminal receipt was saved', async () => {
+  it.each([false, true])('restores an owned supplement before replaying or awaiting a terminal receipt (saved: %s)', async (savedTerminal) => {
     await seedPair();
     const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
     const before = createDelegationRuntime({ taskControl: true, queueSnapshots,
@@ -4421,6 +4421,14 @@ describe('Bot Session task end-to-end runtime', () => {
     try {
       const task = await before.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
       if (!task.ok) throw new Error('missing task');
+      if (savedTerminal) {
+        // The native terminal receipt is durable, but settlement was interrupted.
+        h.sqlite!.exec("CREATE TEMP TRIGGER fail_terminal_commit BEFORE UPDATE OF status ON bot_delegations WHEN NEW.status = 'completed' BEGIN SELECT RAISE(FAIL, 'fixture restart'); END");
+        await expect(before.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done',
+          execution: { instanceId: 'before-restart', generation: 1 }, resultText: 'Earlier result.',
+          hadPendingInputAtTerminal: false })).rejects.toThrow();
+        h.sqlite!.exec('DROP TRIGGER fail_terminal_commit');
+      }
       await before.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Queued supplement.' });
       h.sqlite!.prepare('UPDATE sessions SET last_turn_ended_at = 10000 WHERE id = ?').run(task.childSessionId);
       before.dispose();
