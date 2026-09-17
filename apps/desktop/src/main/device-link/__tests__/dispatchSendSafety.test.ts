@@ -1023,7 +1023,7 @@ describe('background database admission covers the complete remote list lifecycl
 });
 
 
-it.each(['local-db:sessions:list', 'local-db:sessions:get'])('reports DB overload during %s replay as backpressure without sending unchecked data', async (channel) => {
+it.each(['local-db:sessions:list', 'local-db:sessions:get', 'local-db:sessions:interrupted-pending', 'maker:list-active'])('reports DB overload during %s replay as backpressure without sending unchecked data', async (channel) => {
   const client = mkClient({ sendInvokeResult: vi.fn().mockImplementationOnce(() => { throw new DeviceLinkError('BACKPRESSURE', 'full'); }) });
   __testing.setActiveClient(client as never);
   __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'overloaded-list', { ok: true, result: [{ id: 'private' }] }, channel, ['s1']);
@@ -1035,7 +1035,7 @@ it.each(['local-db:sessions:list', 'local-db:sessions:get'])('reports DB overloa
   });
 });
 
-it.each(['maker:send', 'maker:input:enqueue'])(
+it.each(['maker:send', 'maker:input:enqueue', 'maker:remote-resources:list', 'maker:remote-resources:get', 'local-db:bots:list', 'local-db:bots:get'])(
   'never marks a completed %s as safely retryable when outbox authorization overloads', async (channel) => {
     const client = mkClient({ sendInvokeResult: vi.fn().mockImplementationOnce(() => { throw new DeviceLinkError('BACKPRESSURE', 'full'); }) });
     __testing.setActiveClient(client as never);
@@ -1077,7 +1077,7 @@ it('does not reexecute a cached send after authorization overloads and another c
   expect(client.closeLink).not.toHaveBeenCalled();
 });
 
-it.each(['maker:send', 'maker:input:enqueue'])('does not advertise retry after %s succeeds and post-handler authorization overloads', async (channel) => {
+it.each(['maker:send', 'maker:input:enqueue', 'maker:remote-resources:list', 'maker:remote-resources:get', 'local-db:bots:list', 'local-db:bots:get'])('does not advertise retry after %s succeeds and post-handler authorization overloads', async (channel) => {
   const handler = vi.fn(() => ({ accepted: true }));
   registry.register(channel, handler);
   setRemoteBotSessionLookup(async () => {
@@ -1087,6 +1087,19 @@ it.each(['maker:send', 'maker:input:enqueue'])('does not advertise retry after %
   expect(await runInvoke('ctrl-1', { channel, args: ['s1', { text: 'hello' }] })).toMatchObject({ ok: false, error: { code: 'IPC_ERROR' } });
   expect(handler).toHaveBeenCalledTimes(1);
 });
+
+it.each(['local-db:sessions:list', 'local-db:sessions:get', 'local-db:sessions:interrupted-pending', 'maker:list-active'])(
+  'keeps completed %s reads retryable after post-handler authorization overloads', async (channel) => {
+    const handler = vi.fn(() => []);
+    registry.register(channel, handler);
+    setRemoteBotSessionLookup(async () => {
+      if (handler.mock.calls.length) throw new Error('db worker RPC queue overloaded: op="rawAll"');
+      return 'ordinary';
+    });
+    expect(await runInvoke('ctrl-1', { channel, args: ['s1'] })).toMatchObject({ ok: false, error: { code: 'BACKPRESSURE' } });
+    expect(handler).toHaveBeenCalledTimes(1);
+  },
+);
 
 it('keeps pre-handler overload safely retryable without executing the mutation', async () => {
   const handler = vi.fn();

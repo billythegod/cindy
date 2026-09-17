@@ -24,7 +24,7 @@ import { requestFilePeer, stopFilePeers } from './filePeer';
 import {
   computeAllowlistHash,
   canCoalesceRemoteListing,
-  isPeerResetRetryableReadChannel,
+  isCompletedInvokeRetryableReadChannel,
   INVOKE_TIMEOUT_OVERRIDES_MS,
   MAX_FRAME_BYTES,
   PROTOCOL_VERSION,
@@ -657,10 +657,6 @@ const BACKGROUND_REMOTE_INVOKE_CHANNELS: ReadonlySet<string> = new Set([
 /** Include pre/post authorization and cached delivery, not only the IPC handler. */
 function withRemoteDbAdmission<T>(channel: string | undefined, fn: () => T): T {
   return channel && BACKGROUND_REMOTE_INVOKE_CHANNELS.has(channel) ? runAsBackgroundDbRpc(fn) : fn();
-}
-/** Completed mutations must never acquire the controller's safe-to-resend signal. */
-function canRetryCompletedRemoteRead(channel: string | undefined): boolean {
-  return !!channel && (isPeerResetRetryableReadChannel(channel) || BACKGROUND_REMOTE_INVOKE_CHANNELS.has(channel));
 }
 /** 隧道回包必须低于 4MB 传输上限与 per-controller 4MB 准入；2MB 给 envelope 留余量。 */
 const REMOTE_SCHEDULE_INDEX_MAX_BYTES = 2 * 1024 * 1024;
@@ -2844,7 +2840,7 @@ async function authorizeRemoteBotResult(
       return { ok: true, result: await projectRemoteSessionResult(channel ?? '', result.result) };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (isDbWorkerOverloadedError(message) && canRetryCompletedRemoteRead(channel)) {
+      if (isDbWorkerOverloadedError(message) && isCompletedInvokeRetryableReadChannel(channel)) {
         return { ok: false, error: { code: 'BACKPRESSURE', message } };
       }
       return { ok: false, error: { code: 'IPC_ERROR', message: '[NOT_FOUND] Session does not exist' } };
@@ -3772,7 +3768,7 @@ async function executeRemoteInvoke(src: string, payload: InvokePayload | undefin
     // 被控端 handler 的 throwIpcError `[CODE] message` 原样透传,
     // 控制端 renderer 继续用 extractIpcError 解码
     const message = err instanceof Error ? err.message : String(err);
-    if (isDbWorkerOverloadedError(message) && (!handlerCompleted || canRetryCompletedRemoteRead(payload.channel))) {
+    if (isDbWorkerOverloadedError(message) && (!handlerCompleted || isCompletedInvokeRetryableReadChannel(payload.channel))) {
       return { ok: false, error: { code: 'BACKPRESSURE', message } };
     }
     return { ok: false, error: { code: 'IPC_ERROR', message } };
