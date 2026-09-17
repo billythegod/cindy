@@ -12,6 +12,7 @@ import {
   subscribeRemoteFavoritesChanged,
 } from "@/device-link/DeviceLinkContext";
 import { startFocusedTopicSubscription } from "@/device-link/focusedTopicSubscription";
+import { useUnresponsiveDevices } from "@/device-link/unresponsiveDevicesStore";
 import type { MobileModelFavorite } from "./unifiedMobileModels";
 
 export function mobileFavorite(item: RemoteModelFavorite): MobileModelFavorite {
@@ -58,9 +59,10 @@ export function mobileFavoriteMutation(
   return expected ? { kind: "update", expected, item } : { kind: "add", item };
 }
 export function useRemoteMobileFavorites(scope: string, visible: boolean) {
-  const { invoke, connectionEpoch, status, subscribe, unsubscribe } =
+  const { invoke, connectionEpoch, status, subscribe, unsubscribe, recoveringDeviceIds } =
     useDeviceLink();
   const deviceId = (JSON.parse(scope) as [string, string])[1];
+  const unavailable = useUnresponsiveDevices().has(deviceId) || recoveringDeviceIds.has(deviceId);
   const binding = JSON.stringify([scope, connectionEpoch, status, visible]);
   const current = useRef(binding);
   current.current = binding;
@@ -72,7 +74,7 @@ export function useRemoteMobileFavorites(scope: string, visible: boolean) {
   const [error, setError] = useState<unknown>(null);
   const valid = () => current.current === binding;
   const refresh = async () => {
-    if (!visible || status !== "online") return;
+    if (!visible || status !== "online" || unavailable) return;
     const request = ++seq.current;
     try {
       const items = parseModelFavorites(
@@ -84,13 +86,13 @@ export function useRemoteMobileFavorites(scope: string, visible: boolean) {
       }
     } catch (error) {
       if (valid() && seq.current === request) {
-        setState(null);
+        // A transient failed refresh must not erase this binding's last snapshot.
         setError(error);
       }
     }
   };
   useEffect(() => {
-    if (!visible || status !== "online") return;
+    if (!visible || status !== "online" || unavailable) return;
     void refresh();
     const off = subscribeRemoteFavoritesChanged((source) => {
       if (source === deviceId) void refresh();
@@ -111,7 +113,7 @@ export function useRemoteMobileFavorites(scope: string, visible: boolean) {
       app.remove();
       ++seq.current;
     };
-  }, [binding, invoke, subscribe, unsubscribe]);
+  }, [binding, invoke, subscribe, unsubscribe, unavailable]);
   const items = state?.binding === binding ? state.items : [];
   return {
     items: items.map(mobileFavorite),

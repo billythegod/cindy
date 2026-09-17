@@ -6,12 +6,17 @@ const h = vi.hoisted(() => ({
   invoke: vi.fn(),
   push: null as null | ((device: string) => void),
   view: null as any,
+  unresponsive: new Set<string>(),
   context: {
     connectionEpoch: 1,
     status: "online",
+    recoveringDeviceIds: new Set<string>(),
     subscribe: vi.fn(async () => {}),
     unsubscribe: vi.fn(async () => {}),
   },
+}));
+vi.mock("@/device-link/unresponsiveDevicesStore", () => ({
+  useUnresponsiveDevices: () => h.unresponsive,
 }));
 vi.mock("react-native", () => ({
   AppState: { addEventListener: () => ({ remove: vi.fn() }) },
@@ -46,9 +51,27 @@ beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   h.invoke.mockReset().mockResolvedValue([item]);
   h.context.status = "online";
+  h.context.recoveringDeviceIds.clear();
+  h.unresponsive.clear();
   root = createRoot(document.createElement("div"));
 });
 afterEach(() => act(() => root.unmount()));
+it.each(['peer', 'unresponsive'])('retains favorites and refreshes after %s recovery without a relay reconnect', async kind => {
+  await act(async () => root.render(createElement(Probe, {})));
+  h.invoke.mockRejectedValueOnce(new Error('temporarily offline'));
+  await act(async () => h.push?.('a'));
+  expect(h.view.items).toEqual([mobileFavorite(item)]);
+  const devices = kind === 'peer' ? h.context.recoveringDeviceIds : h.unresponsive;
+  devices.add('a');
+  await act(async () => root.render(createElement(Probe, {})));
+  const calls = h.invoke.mock.calls.length;
+  devices.delete('a');
+  h.invoke.mockResolvedValue([{ ...item, effort: 'low' }]);
+  await act(async () => root.render(createElement(Probe, {})));
+  expect(h.invoke).toHaveBeenCalledTimes(calls + 1);
+  expect(h.view.items[0].effort).toBe('low');
+  expect(h.view.error).toBeNull();
+});
 it("maps engine spelling and treats unchanged field order as no operation", () => {
   const mobile = mobileFavorite(item);
   expect(mobile.agent).toBe("claude-code");
