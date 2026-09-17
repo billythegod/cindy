@@ -87,6 +87,8 @@ import { removeTurnChangeSetsForSession } from '../../turn-change-set/store.js';
 import { quiesceSessionBeforeWorktreeRecycle } from './sessionRemovalOperations.js';
 import { withSessionRouteLock, withSessionRouteLocks } from '../sessionRouteLock.js';
 import { cleanupSessionRuntimeForTerminalStatus } from '../sessionRuntimeCleanup.js';
+import { cindyMakeManager } from '../../cindy-make/manager.js';
+import { recycleCindyMakeTask } from '../../cindy-make/taskManagement.js';
 import { broadcastSubagentRunsInvalidated } from './subagentRuns.js';
 import { compactSessionToolResultsBestEffort } from '../toolResultCompaction.js';
 import { consumeWritableDirectoryPickerGrants } from '../../maker-ipc/writableDirectoryPickerGrant.js';
@@ -460,6 +462,8 @@ async function recycleSessionWorktreeInQueue(
       ownerIsCurrent() && recycle.isSessionStillRemovable(id, mediaDb);
     const closeAndRecycle = async (targetSessionId: string, scanOwners: boolean): Promise<void> => {
       if (!(await isStillRemovable(targetSessionId))) return;
+      // Settle preparation before taking the send route lock it may be waiting for.
+      await cindyMakeManager.settleTasksForSession(targetSessionId);
       await withSessionRouteLock(targetSessionId, async () => {
         const shouldRecycle = await quiesceSessionBeforeWorktreeRecycle(targetSessionId, {
           isOwnerCurrent: ownerIsCurrent,
@@ -474,6 +478,7 @@ async function recycleSessionWorktreeInQueue(
           },
         });
         if (!shouldRecycle || !ownerIsCurrent()) return;
+        await recycleCindyMakeTask(targetSessionId, mediaDb, ownerIsCurrent);
 
         // Keep irreversible cleanup under the same task route lock as the final
         // status check. A concurrent restore/start/send must not slip between
@@ -822,6 +827,9 @@ export function createSessionRemoteHostIdReader(): (sessionId: string) => Promis
 
 export interface SessionRowSnapshot {
   status: string;
+  /** Bound schedule cold resumes preserve the owner's permission choice. */
+  permissionMode?: string | null;
+  planModeEnabled?: boolean | null;
   title: string | null;
   userSendAt: number | null;
   workingDir: string | null;
@@ -842,6 +850,8 @@ async function selectSessionRowSnapshot(id: string): Promise<SessionRowSnapshot 
   const [row] = await db
     .select({
       status: sessions.status,
+      permissionMode: sessions.permissionMode,
+      planModeEnabled: sessions.planModeEnabled,
       title: sessions.title,
       userSendAt: sessions.userSendAt,
       workingDir: sessions.workingDir,
@@ -1329,6 +1339,12 @@ export function registerSessionIpc(
     const ALLOWED_AGENT_KINDS = new Set<string>(['cc', 'codex', 'pi']);
     if (bodyObj.agentKind !== undefined && !ALLOWED_AGENT_KINDS.has(bodyObj.agentKind as string)) {
       throwIpcError('INVALID_PARAMS', `invalid agentKind: ${String(bodyObj.agentKind)}`);
+    }
+    if (
+      bodyObj.title !== undefined &&
+      (typeof bodyObj.title !== 'string' || bodyObj.title.length > 200)
+    ) {
+      throwIpcError('INVALID_PARAMS', 'title must be a string no longer than 200 characters');
     }
     const ALLOWED_WORKSPACE_KINDS = new Set<string>(['project', 'dialogue']);
     if (
