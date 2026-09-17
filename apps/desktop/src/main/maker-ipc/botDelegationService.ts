@@ -3291,7 +3291,18 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     });
   };
 
-  const pendingBoundaryValidations = new Map<string, Map<string, Promise<string[]>>>();
+  type BoundaryValidation = {
+    promise: Promise<string[]>;
+    revalidate: () => Promise<string[]>;
+    failed: boolean;
+  };
+  const pendingBoundaryValidations = new Map<string, Map<string, BoundaryValidation>>();
+  const trackBoundaryValidation = (promise: Promise<string[]>, revalidate: () => Promise<string[]>): BoundaryValidation => {
+    const entry = { promise, revalidate, failed: false };
+    // A database exception is retryable; a resolved list of declined IDs is not.
+    void promise.catch(() => { entry.failed = true; });
+    return entry;
+  };
 
   const validateTerminalQueueBoundary = async (params: Parameters<typeof settleSessionUnserialized>[0]): Promise<string[]> => {
     if (!params.execution || !params.pendingInputClientIds?.length) return [];
@@ -3318,15 +3329,15 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     // Publish an awaitable validation before the first database await. Queue drain
     // is already scheduled by the synchronous event adapter at this point.
     if (params.execution && params.pendingInputClientIds?.length) {
-      const validation = validateTerminalQueueBoundary(params);
+      const originalBoundary = { ...params, execution: { ...params.execution }, pendingInputClientIds: [...params.pendingInputClientIds] };
+      const revalidate = () => validateTerminalQueueBoundary(originalBoundary);
+      const validation = revalidate();
       let pending = pendingBoundaryValidations.get(params.childSessionId);
       if (!pending) pendingBoundaryValidations.set(params.childSessionId, pending = new Map());
       for (const id of params.pendingInputClientIds) {
         const previous = pending.get(id);
-        const gate = previous ? previous.catch(() => undefined).then(() => validation) : validation;
-        // Settlement observes validation errors even if no queue consumer arrives.
-        void gate.catch(() => undefined);
-        pending.set(id, gate);
+        const gate = previous ? previous.promise.catch(() => undefined).then(() => validation) : validation;
+        pending.set(id, trackBoundaryValidation(gate, revalidate));
       }
       await validation;
     }
@@ -3351,8 +3362,14 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   const acceptQueuedSessionInput = async (childSessionId: string, clientId: string, supersedesClientId?: string, restoredFromSnapshot = false): Promise<void> => {
     const validations = pendingBoundaryValidations.get(childSessionId);
     const validationId = validations?.has(clientId) ? clientId : supersedesClientId ?? clientId;
-    const validation = validations?.get(validationId);
-    const declinedIds = validation ? await validation : [];
+    let validation = validations?.get(validationId);
+    if (validation?.failed) {
+      // Keep the original event receipt and ownership IDs, not the current live
+      // generation. A retry must prove that boundary again after SQLite recovers.
+      validation = trackBoundaryValidation(validation.revalidate(), validation.revalidate);
+      validations!.set(validationId, validation);
+    }
+    const declinedIds = validation ? await validation.promise : [];
     let boundary = pendingExecutionInputs.get(childSessionId);
     const hasVerifiedBoundary = boundary?.clientIds.includes(clientId)
       || (supersedesClientId !== undefined && boundary?.clientIds.includes(supersedesClientId));

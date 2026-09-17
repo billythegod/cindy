@@ -4536,6 +4536,37 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
+  it.each([false, true])('revalidates a retry clone after transient boundary read failure (receipt changed: %s)', async changed => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Queued work.' });
+      if (!task.ok) throw new Error('missing task');
+      const clientId = `bot-delegation-interject:${task.delegationId}:pending`;
+      const failingRead = vi.spyOn(h.db!, 'select').mockImplementationOnce(() => { throw new Error('temporary database failure'); });
+      const terminal = runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        pendingInputClientIds: [clientId], hadPendingInputAtTerminal: true });
+      const firstAcceptance = runtime.delegation.acceptQueuedSessionInput(task.childSessionId, clientId);
+      const attempts = await Promise.allSettled([terminal, firstAcceptance]);
+      expect(attempts.every(result => result.status === 'rejected')).toBe(true);
+      failingRead.mockRestore();
+      execution = { instanceId: 'native', generation: 2 };
+      if (changed) h.sqlite!.prepare("UPDATE bot_delegations SET permission_snapshot_json = json_set(permission_snapshot_json, '$.taskExecution.generation', 3) WHERE id = ?").run(task.delegationId);
+      const retry = runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'retry-clone', clientId);
+      if (changed) {
+        await expect(retry).rejects.toThrow('Delegated queue boundary validation was declined');
+        expect(h.sqlite!.prepare("SELECT json_extract(permission_snapshot_json, '$.taskExecution.generation') FROM bot_delegations WHERE id = ?").pluck().get(task.delegationId)).toBe(3);
+      } else {
+        await retry;
+        await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+          resultText: 'Retry result.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+        expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+          .toEqual({ status: 'completed', result_summary: 'Retry result.' });
+      }
+    } finally { vi.restoreAllMocks(); runtime.dispose(); }
+  });
+
   it('awaits terminal receipt validation when queue acceptance overtakes settlement', async () => {
     await seedPair();
     let execution = { instanceId: 'native', generation: 1 };
