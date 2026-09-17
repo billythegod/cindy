@@ -3008,6 +3008,7 @@ interface ElectronAPI {
   openCindyMakeToolsDir: () => Promise<{ success: boolean }>;
   getCindyMakeSourceStatus: () => Promise<import('../shared/cindyMakeDoctor').MakeSourceStatus>;
   getCindyMakeState: () => Promise<import('../shared/cindyMakeDoctor').CindyMakeGlobalState>;
+  manageCindyMakeTask: (sessionId: string, action: 'finish' | 'delete') => Promise<void>;
   openCindyMakeSourceDir: () => Promise<{ success: boolean }>;
   onCindyMakeState: (
     listener: (state: import('../shared/cindyMakeDoctor').CindyMakeGlobalState) => void,
@@ -3018,10 +3019,12 @@ interface ElectronAPI {
   ) => () => void;
   /** Stop the running source operation from any window. */
   cancelCindyMakeSource: () => Promise<{ success: boolean }>;
-  /** Create the per-task worktree for a Cindy Make run; resolves with its path and branch. */
+  /** Compatibility entry point: prepare a worktree and its dependencies. */
   prepareCindyMakeWorkspace: (
     runId: string,
   ) => Promise<import('../shared/cindyMakeDoctor').MakeTaskWorkspace>;
+  startCindyMakeTask: (input: import('../shared/cindyMakeDoctor').CindyMakeTaskStart) => Promise<string>;
+  cancelCindyMakeTask: (runId: string) => Promise<{ success: boolean }>;
 
   /**
    * Reveal a file in the OS file manager (Explorer / Finder). Accepts either
@@ -4644,11 +4647,11 @@ interface ElectronAPI {
         modelChain: import('../shared/botModelChain').BotModelRoute[];
         isCustomized: boolean;
       }>;
-      list: (body?: { lastReadAtByBotId?: Record<string, number> }) => Promise<unknown[]>;
+      list: (body?: { lastReadAtByBotId?: Record<string, number>; welcomeContext?: import('../shared/botWelcomeContext').BotWelcomeContext; locale?: import('../shared/locale').SupportedLocale }) => Promise<unknown[]>;
       get: (botId: string) => Promise<unknown>;
       generateDraft: (body: import('../shared/botCreation').BotCreationRequest) => Promise<import('../shared/botCreation').BotCreationDraft>;
       generateAvatar: (token: string) => Promise<{ avatarImageBase64: string }>;
-      chooseAvatar: (body: { botId: string }) => Promise<{
+      chooseAvatar: (body: { botId: string; avatarImageBase64?: string }) => Promise<{
         canceled: boolean;
         profile?: unknown;
       }>;
@@ -5768,6 +5771,9 @@ interface ElectronAPI {
         resumeSessionId?: string;
       },
     ) => Promise<import('@cindy/maker-core').ContextUsageData>;
+
+    /** main 侧权威运行态回填(#4513):该会话是否真的在 turn 中(tracker + live isTurnRunning)。 */
+    getSessionTurnActive: (sessionId: string) => Promise<{ inTurn: boolean }>;
 
     abortSession: (sessionId: string) => Promise<void>;
     closeSession: (sessionId: string, opts?: { preserveWorkspace?: boolean }) => Promise<void>;
