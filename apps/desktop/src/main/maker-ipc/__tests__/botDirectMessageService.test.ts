@@ -712,6 +712,7 @@ describe('cross-device teammate messages', () => {
   let leftDispatch: ReturnType<typeof vi.fn>;
   let rightDispatch: ReturnType<typeof vi.fn>;
   let failResponse = false;
+  let beforeLeftSend: (() => Promise<void>) | undefined;
   const atLeft = <T>(run: () => T) => scope.run(leftSql, run);
   const atRight = <T>(run: () => T) => scope.run(rightSql, run);
 
@@ -721,6 +722,7 @@ describe('cross-device teammate messages', () => {
     h.resolveDb = () => scope.getStore();
     h.createMessage.mockReset().mockResolvedValue({ id: 'anchor' });
     failResponse = false;
+    beforeLeftSend = undefined;
     const dispatch = () => vi.fn(async (params: { targetSessionId: string; onAccepted?: () => Promise<void> }) => {
       await params.onAccepted?.();
       return { ok: true as const, targetSessionId: params.targetSessionId, wakeKind: 'queued' as const };
@@ -735,6 +737,7 @@ describe('cross-device teammate messages', () => {
       verifySender: input => atRight(() => right.verifyRemoteMessage({ ...input, controllerDeviceId: 'left' })),
       send: async (input, assertCurrent) => {
         assertCurrent();
+        await beforeLeftSend?.();
         const result = await atRight(() => right.receiveRemote({ controllerDeviceId: 'left', senderBotId: input.senderBotId,
           targetBotId: 'bot-b', message: input.message, messageId: input.messageId }));
         if (failResponse) throw new Error('response lost');
@@ -777,6 +780,50 @@ describe('cross-device teammate messages', () => {
     ]);
     expect(result.every(item => item.ok)).toBe(true);
     expect(leftDispatch).toHaveBeenCalledOnce(); expect(rightDispatch).toHaveBeenCalledOnce();
+  });
+
+  it.each(['message-limit', 'idle-timeout'] as const)('rolls back against the current %s closure after a concurrent reverse send', async closeReason => {
+    for (let n = 0; n < 10; n++) {
+      const result = n % 2 === 0
+        ? await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: `seed ${n}` }))
+        : await atRight(() => right.messageAgent({ callerSessionId: 'b-main', targetBotId: 'left::bot-a', message: `seed ${n}` }));
+      expect(result.ok).toBe(true);
+    }
+    let release!: () => void;
+    let signalStarted!: () => void;
+    const started = new Promise<void>(resolve => { signalStarted = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    beforeLeftSend = async () => { signalStarted(); await gate; };
+    const pending = atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: 'reserved eleventh' }));
+    try {
+      await started;
+      expect(leftDb.prepare('SELECT message_count, status FROM bot_direct_message_threads').get())
+        .toEqual({ message_count: 11, status: 'active' });
+      expect(await atRight(() => right.messageAgent({ callerSessionId: 'b-main', targetBotId: 'left::bot-a', message: 'concurrent twelfth' })))
+        .toMatchObject({ ok: true });
+      const closed = leftDb.prepare('SELECT message_count, status, close_reason, blocked_until, closed_at FROM bot_direct_message_threads').get() as any;
+      expect(closed).toMatchObject({ message_count: 12, status: 'closed', close_reason: 'message-limit' });
+      if (closeReason === 'idle-timeout') {
+        // Simulate a later lifecycle closure while the outgoing request is waiting.
+        leftDb.prepare("UPDATE bot_direct_message_threads SET close_reason='idle-timeout'").run();
+      }
+      rightDb.prepare("UPDATE bot_profiles SET status='paused' WHERE id='bot-b'").run();
+      release();
+      expect(await pending).toMatchObject({ ok: false, errorCode: 'TARGET_BOT_INACTIVE' });
+      expect(leftDb.prepare('SELECT delivery_status FROM bot_direct_messages WHERE sequence=11').get())
+        .toEqual({ delivery_status: 'failed' });
+      expect(leftDb.prepare('SELECT message_count, status, close_reason, blocked_until, closed_at FROM bot_direct_message_threads').get())
+        .toEqual(closeReason === 'message-limit'
+          ? { message_count: 11, status: 'active', close_reason: null, blocked_until: null, closed_at: null }
+          : { ...closed, message_count: 11, close_reason: 'idle-timeout' });
+      if (closeReason === 'message-limit') {
+        beforeLeftSend = undefined;
+        rightDb.prepare("UPDATE bot_profiles SET status='active' WHERE id='bot-b'").run();
+        expect(await atLeft(() => left.messageAgent({ callerSessionId: 'a-main', targetBotId: 'right::bot-b', message: 'use released slot' })))
+          .toMatchObject({ ok: true, messageCount: 12, remainingMessages: 0, conversationEnded: true });
+        expect(leftDb.prepare('SELECT max(sequence) AS sequence FROM bot_direct_messages').get()).toEqual({ sequence: 13 });
+      }
+    } finally { release(); await pending; }
   });
 
   it('keeps an uncertain remote delivery reserved across recovery and deduplicates receipt retries', async () => {

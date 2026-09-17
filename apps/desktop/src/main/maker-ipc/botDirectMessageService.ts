@@ -717,11 +717,16 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
             ),
           );
         const liveCount = liveReservations.length;
+        // A reverse send may have reached the limit while this remote request
+        // awaited its receipt outside the pair lock. Re-read under the lock so
+        // rollback releases that closure without reopening a different one.
+        const [currentThread] = await db.select().from(botDirectMessageThreads)
+          .where(eq(botDirectMessageThreads.id, thread.id)).limit(1);
         await db
           .update(botDirectMessageThreads)
           .set({
             messageCount: liveCount,
-            ...(ended && liveCount < thread.maxMessages
+            ...(currentThread?.closeReason === 'message-limit' && liveCount < currentThread.maxMessages
               ? {
                   status: 'active' as const,
                   closeReason: null,
