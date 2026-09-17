@@ -80,10 +80,14 @@ pub(crate) fn run_with_lock<F: FnMut(InstallerEvent)>(
         if let Some(lock) = lock {
             release_update_lock(lock);
         }
+        // Electron already force-quit Cindy before this process started. This
+        // path never reaches run_inner's PID wait, so Close would otherwise
+        // leave the unmodified install shut down.
+        relaunch_restored_app(&args);
         emit(InstallerEvent::Failed {
             error: "更新文件已不存在或无法读取，请重新检查更新".into(),
             can_retry: false,
-            install_unmodified: true,
+            install_unmodified: false,
             install_restored: false,
         });
         return;
@@ -717,6 +721,16 @@ pub(crate) fn file_is_medium_replaceable_from_access(
         return Some(false);
     }
     None
+}
+
+/// WRITE_DAC / WRITE_OWNER are enough to replace Cindy.exe after UAC even when
+/// the current DACL denies add/write/delete. Unknown ACL-control fails open
+/// toward High-IL staging and a de-elevated launch.
+pub(crate) fn acl_control_pins_install_writable(
+    write_dac: Option<bool>,
+    write_owner: Option<bool>,
+) -> bool {
+    !matches!(write_dac, Some(false)) || !matches!(write_owner, Some(false))
 }
 
 pub(crate) fn collect_medium_writable_unpacked_files(
@@ -2205,7 +2219,22 @@ fn open_directory_handle(path: &Path) -> io::Result<File> {
 
 #[cfg(windows)]
 fn directory_medium_token_can_modify_windows(app_dir: &Path) -> Option<bool> {
-    let check = || directory_grants_add_file(app_dir);
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, WRITE_DAC, WRITE_OWNER,
+    };
+    let check = || match directory_grants_add_file(app_dir) {
+        Some(true) => Some(true),
+        other => {
+            if acl_control_pins_install_writable(
+                path_grants_access(app_dir, WRITE_DAC, FILE_FLAG_BACKUP_SEMANTICS),
+                path_grants_access(app_dir, WRITE_OWNER, FILE_FLAG_BACKUP_SEMANTICS),
+            ) {
+                Some(true)
+            } else {
+                other
+            }
+        }
+    };
     if process_is_elevated() {
         with_medium_integrity(check).flatten()
     } else {
@@ -2281,17 +2310,33 @@ fn existing_install_files_medium_writable_windows(app_dir: &Path, exe_name: &str
 fn file_is_medium_replaceable(path: &Path) -> Option<bool> {
     use windows_sys::Win32::Storage::FileSystem::{
         DELETE, FILE_ADD_FILE, FILE_ATTRIBUTE_NORMAL, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS,
+        WRITE_DAC, WRITE_OWNER,
     };
 
     let parent = path.parent();
-    file_is_medium_replaceable_from_access(
+    let replaceable = file_is_medium_replaceable_from_access(
         file_grants_generic_write(path),
         path_grants_access(path, DELETE, FILE_ATTRIBUTE_NORMAL),
         parent.and_then(|dir| {
             path_grants_access(dir, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS)
         }),
         parent.and_then(|dir| path_grants_access(dir, FILE_ADD_FILE, FILE_FLAG_BACKUP_SEMANTICS)),
-    )
+    );
+    if matches!(replaceable, Some(true)) {
+        return Some(true);
+    }
+    if acl_control_pins_install_writable(
+        path_grants_access(path, WRITE_DAC, FILE_ATTRIBUTE_NORMAL),
+        path_grants_access(path, WRITE_OWNER, FILE_ATTRIBUTE_NORMAL),
+    ) || parent.is_some_and(|dir| {
+        acl_control_pins_install_writable(
+            path_grants_access(dir, WRITE_DAC, FILE_FLAG_BACKUP_SEMANTICS),
+            path_grants_access(dir, WRITE_OWNER, FILE_FLAG_BACKUP_SEMANTICS),
+        )
+    }) {
+        return Some(true);
+    }
+    replaceable
 }
 
 #[cfg(windows)]
@@ -3486,6 +3531,17 @@ mod tests {
             acquire > elevate,
             "the elevated child must acquire the lock after the UAC handoff"
         );
+        let bind_err = wrapper_body
+            .find("bind_zip_sha256")
+            .expect("bind_zip_sha256 in run_with_lock");
+        let inner_call = wrapper_body
+            .find("run_inner(")
+            .expect("run_inner follows bind");
+        let bind_fail = &wrapper_body[bind_err..inner_call];
+        assert!(
+            bind_fail.contains("relaunch_restored_app"),
+            "Electron already force-quit Cindy; a pre-run_inner digest failure must relaunch the unmodified install:\n{bind_fail}"
+        );
     }
 
     #[test]
@@ -4076,6 +4132,22 @@ mod tests {
             "write, delete, and parent replace rights all denied stay protected"
         );
         assert!(
+            super::acl_control_pins_install_writable(Some(true), Some(false)),
+            "WRITE_DAC after UAC can replace Cindy.exe even when current write/delete is denied"
+        );
+        assert!(
+            super::acl_control_pins_install_writable(Some(false), Some(true)),
+            "WRITE_OWNER likewise lets the medium user take the DACL after classification"
+        );
+        assert!(
+            super::acl_control_pins_install_writable(None, Some(false)),
+            "unknown ACL-control must de-elevate, not pin the install as protected"
+        );
+        assert!(
+            !super::acl_control_pins_install_writable(Some(false), Some(false)),
+            "denied WRITE_DAC and WRITE_OWNER do not by themselves pin writable"
+        );
+        assert!(
             super::unpacked_walk_pins_install_writable(super::UnpackedWalk::Unreadable),
             "an unreadable app.asar.unpacked tree must de-elevate, not look protected"
         );
@@ -4196,6 +4268,22 @@ mod tests {
         assert!(
             body.contains("UnpackedWalk::Reparse"),
             "an unpacked reparse point must not look like a complete protected walk:\n{body}"
+        );
+        let start = source
+            .find("fn file_is_medium_replaceable(")
+            .expect("replaceable file probe");
+        let body = &source[start..start + 1200];
+        assert!(
+            body.contains("WRITE_DAC") && body.contains("WRITE_OWNER"),
+            "ACL-control rights must pin writable before Close relaunch:\n{body}"
+        );
+        let start = source
+            .find("fn directory_medium_token_can_modify_windows")
+            .expect("directory medium probe");
+        let body = &source[start..start + 900];
+        assert!(
+            body.contains("WRITE_DAC") && body.contains("WRITE_OWNER"),
+            "a directory that only grants WRITE_DAC must not look protected:\n{body}"
         );
         let temp = TestDir::new();
         let mut args = test_args();
