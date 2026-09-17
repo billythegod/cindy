@@ -2814,12 +2814,12 @@ export default function SessionScreen() {
   // Lead 的 Worker 卡点行进入该 Worker 会话;只读口径由 collaboration.ts 按 orcaRole
   // 自行判定,这里不额外传状态。沿用当前页的 deviceId/deviceName:Worker 与 Lead 同在
   // 这台被控设备上。
-  const openWorkerSession = useCallback((workerSessionId: string) => {
-    guardedPush({
-      pathname: '/sessions/[sessionId]',
-      params: { sessionId: workerSessionId, deviceId, deviceName },
-    });
-  }, [deviceId, deviceName, guardedPush]);
+  // 返回 guardedPush 是否受理:失焦或前进锁命中时它会静默丢弃,卡片据此决定要不要
+  // 把该 Worker 记为已查看 —— 没真正打开就清未读是错的。
+  const openWorkerSession = useCallback((workerSessionId: string) => guardedPush({
+    pathname: '/sessions/[sessionId]',
+    params: { sessionId: workerSessionId, deviceId, deviceName },
+  }), [deviceId, deviceName, guardedPush]);
   const handleComposerInputPressIn = useCallback(() => {
     if (voiceRecordingActiveRef.current || voiceState === 'listening') {
       finishVoiceRecordingRef.current?.();
