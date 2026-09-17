@@ -31,17 +31,27 @@ async function fixture() {
   return { invoke, mod, Probe, view, latest: () => latest! };
 }
 
+function foreground() {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
+
 describe('mounted remote catalog recovery', () => {
-  it('recovers a transient error without a reconnect and deduplicates readers', async () => {
+  it('recovers on foreground entry and deduplicates readers without periodic retries', async () => {
     const f = await fixture();
     const other = render(<f.Probe />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     const before = f.invoke.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(f.invoke.mock.calls.length).toBe(before);
     f.invoke.mockResolvedValue({ providers: [] });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(900);
+      foreground();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(f.invoke.mock.calls.length).toBe(before + 1);
     expect(f.latest().error).toBeNull();
@@ -60,10 +70,12 @@ describe('mounted remote catalog recovery', () => {
     const f = await fixture();
     f.invoke.mockRejectedValue(new Error(error));
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(900);
+      foreground();
+      await vi.advanceTimersByTimeAsync(0);
     });
     const count = f.invoke.mock.calls.length;
     await act(async () => {
+      foreground();
       await vi.advanceTimersByTimeAsync(60_000);
     });
     expect(f.invoke.mock.calls.length).toBe(count);
@@ -98,6 +110,7 @@ describe('mounted remote catalog recovery', () => {
         setDataOwnerGeneration('new-owner');
       }
       await act(async () => {
+        foreground();
         await vi.advanceTimersByTimeAsync(5_000);
       });
       expect(f.invoke.mock.calls.filter(([device]) => device === 'a')).toHaveLength(1);
@@ -113,7 +126,8 @@ describe('mounted remote catalog recovery', () => {
     const count = f.invoke.mock.calls.length;
     f.invoke.mockResolvedValue({ providers: [] });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(900);
+      foreground();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(f.invoke.mock.calls.length).toBe(count + 1);
     expect(f.latest().error).toBeNull();
