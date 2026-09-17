@@ -318,6 +318,7 @@ export function useRemoteDesktopSafety(
     hostMute,
     hostMuteAvailable: hostMuteLoaded && caps?.hostMute === true,
     onHostMute: setHostMute,
-    safetyNotice: clipboardNotice ?? privacyNotice ?? hostMuteNotice,
+    // Failed screen/audio protection must stay visible over transfer notices.
+    safetyNotice: privacyNotice ?? hostMuteNotice ?? clipboardNotice,
   };
 }

@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   request: vi.fn(),
   privacy: false,
   hostMute: false,
+  trace: (_stage: string) => {},
 }));
 vi.mock("react-native", () => ({
   AppState: {
@@ -35,6 +36,9 @@ vi.mock("../../modules/cindy-remote-presentation/src", () => ({
 }));
 vi.mock("./clipboardSync", () => ({
   ClipboardSync: class {
+    constructor(options: { trace: (stage: string) => void }) {
+      h.trace = options.trace;
+    }
     tick = h.tick;
   },
 }));
@@ -106,6 +110,59 @@ it("mute success cannot clear a privacy failure", async () => {
   await act(async () => root.render(createElement(Probe)));
   h.hostMute = true;
   await act(async () => root.render(createElement(Probe)));
+  expect(latest.safetyNotice).toBe("privacyFailed");
+});
+it.each([
+  "clipboardSyncSkipped",
+  "clipboardSyncFailed",
+  "clipboardSyncPermission",
+])(
+  "keeps protection failures visible ahead of %s and preserves the lower-priority notice",
+  async (notice) => {
+    caps.privacyScreen = caps.hostMute = true;
+    h.request.mockImplementation(async (message) => {
+      if (message.enabled && ["privacyScreen", "hostMute"].includes(message.op))
+        throw new Error("PROTECTION_FAILED");
+      return { enabled: message.enabled };
+    });
+    if (notice === "clipboardSyncSkipped")
+      h.tick.mockImplementation(async () => h.trace("content-skipped"));
+    else
+      h.tick.mockRejectedValue(
+        new Error(
+          notice === "clipboardSyncPermission"
+            ? "PASTE_DENIED"
+            : "INVOKE_TIMEOUT",
+        ),
+      );
+    await act(async () => root.render(createElement(Probe)));
+    expect(latest.safetyNotice).toBe(notice);
+    h.privacy = h.hostMute = true;
+    await act(async () => root.render(createElement(Probe)));
+    expect(latest.privacyActive).toBe(false);
+    expect(latest.safetyNotice).toBe("privacyFailed");
+    h.privacy = false;
+    await act(async () => root.render(createElement(Probe)));
+    expect(latest.safetyNotice).toBe("hostMuteFailed");
+    h.hostMute = false;
+    await act(async () => root.render(createElement(Probe)));
+    expect(latest.safetyNotice).toBe(notice);
+  },
+);
+it("clipboard recovery cannot hide a failed privacy screen", async () => {
+  caps.privacyScreen = true;
+  h.privacy = true;
+  h.request.mockImplementation(async (message) => {
+    if (message.op === "privacyScreen") throw new Error("PRIVACY_FAILED");
+    return {};
+  });
+  h.tick.mockRejectedValueOnce(new Error("INVOKE_TIMEOUT"));
+  await act(async () => root.render(createElement(Probe)));
+  expect(latest.safetyNotice).toBe("privacyFailed");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1500);
+  });
+  expect(h.tick).toHaveBeenCalledTimes(2);
   expect(latest.safetyNotice).toBe("privacyFailed");
 });
 afterEach(async () => {
