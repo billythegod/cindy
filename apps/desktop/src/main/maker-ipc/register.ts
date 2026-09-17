@@ -660,7 +660,7 @@ import { registerNewMakerWorktreePreferenceHandler } from './newMakerWorktreePre
 import { registerNewMakerWorktreeBranchPreferenceHandler } from './newMakerWorktreeBranchPreferenceHandler.js';
 import {
   resolveFreshSourceBranch,
-  restoreMissingManagedWorktreeForSession,
+  getManagedWorktreeReadinessForSession,
   WorktreeManager as worktreeManager,
   worktreeStore,
 } from '../worktree/index.js';
@@ -18126,9 +18126,9 @@ async function checkWorkDirExists(
     // deliberately leaves the directory present while keeping the session blocked.
     const normalizedWorkingDir = path.resolve(workingDir).replace(/\\/g, '/');
     if (getManagedWorktreeBasePath(normalizedWorkingDir) !== null) {
-      const ready = await restoreMissingManagedWorktreeForSession(sessionId, workingDir);
-      if (!ready) {
-        if (!suppress && await workingDirectoryRecovery.recover(sessionId, workingDir, undefined, [], 'unrestored-worktree')) return true;
+      const ready = await getManagedWorktreeReadinessForSession(sessionId, workingDir);
+      if (ready !== 'ready') {
+        if (ready === 'gone' && !suppress && await workingDirectoryRecovery.recover(sessionId, workingDir, undefined, [], 'unrestored-worktree')) return true;
         workdirLog.warn('workdir preflight rejected', { ...diagnosticContext, reason: 'managed-worktree-not-ready' });
         if (suppress) {
           log.warn('send: managed worktree not ready (broadcast suppressed, caller has fallback)', {
@@ -18165,8 +18165,8 @@ async function checkWorkDirExists(
     }
     // Cindy 托管 worktree 被外部 PR cleanup / 手动 git 命令移除时，先按 DB 中
     // 的精确 worktree_path 从本地或 origin tracking 分支重建，保留原代码与快照。
-    const restored = await restoreMissingManagedWorktreeForSession(sessionId, workingDir);
-    if (restored) {
+    const restored = await getManagedWorktreeReadinessForSession(sessionId, workingDir);
+    if (restored === 'ready') {
       workdirLog.info('workdir preflight recovered', { ...diagnosticContext, action: 'managed-worktree-restored' });
       log.info('send: restored missing managed worktree', { sessionId, workingDir });
       return true;
@@ -18176,7 +18176,7 @@ async function checkWorkDirExists(
     const unavailable = isUnavailableFilesystemError(error);
     let similar: string | null = null;
     if (
-      !suppress &&
+      restored === 'gone' && !suppress &&
       ((error as NodeJS.ErrnoException).code === 'ENOENT' || unavailable) &&
       getManagedWorktreeBasePath(path.resolve(workingDir).replace(/\\/g, '/')) !== null &&
       await workingDirectoryRecovery.recover(sessionId, workingDir, undefined, [], 'unrestored-worktree')
