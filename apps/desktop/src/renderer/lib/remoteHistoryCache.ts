@@ -1,4 +1,5 @@
 import type { HistoryMessageSource, HistoryViewSnapshot } from '@cindy/maker-shared/message-window';
+import { historyWorkSummaries } from '@cindy/maker-shared/message-window';
 import {
   decodeRemoteHistory,
   encodeRemoteHistory,
@@ -34,6 +35,14 @@ export function remoteHistoryCacheWriter(deviceId: string, sessionId: string) {
       snapshot.error
     )
       return;
+    // A page can be ready while its expanded work is still refreshing. Do not
+    // replace the last usable mirror with a projection whose detail is omitted.
+    if (historyWorkSummaries(snapshot.items).some((summary) => {
+      if (!snapshot.expanded.has(summary.key)) return false;
+      const detail = snapshot.details.get(summary.key);
+      return !detail || !detail.complete || detail.loading || !!detail.error
+        || detail.revision !== summary.revision || detail.lastMessageId !== summary.lastMessageId;
+    })) return;
     const text = encodeRemoteHistory(snapshot);
     if (!fitsRemoteHistoryCache(text)) {
       clearCachedMessages(deviceId, sessionId);

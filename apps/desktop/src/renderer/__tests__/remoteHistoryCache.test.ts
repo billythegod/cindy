@@ -58,6 +58,40 @@ afterEach(() => {
 });
 
 describe('structured history mirror lifecycle', () => {
+  it('keeps the last mirror until current expanded details finish successfully', async () => {
+    await readRemoteHistoryCache('dev', 'session');
+    const writer = remoteHistoryCacheWriter('dev', 'session');
+    const summary = { key: 'work', firstMessageId: 'm', lastMessageId: 'm', revision: 'new',
+      startedAtMs: 0, endedAtMs: 1, isStreaming: false, messageCount: 1, toolCount: 0 };
+    const complete = { messages: [row], revision: 'new', lastMessageId: 'm',
+      complete: true, loading: false, error: null };
+    const expanded: typeof snapshot = { ...snapshot,
+      items: [{ type: 'work', key: 'work', summary }], expanded: new Set(['work']) };
+    writer(expanded); // Missing detail, before the request starts.
+    for (const patch of [
+      { loading: true, complete: false },
+      { loading: false, complete: false, error: 'timeout' },
+      { complete: false },
+      { revision: 'old' },
+      { lastMessageId: 'old' },
+    ]) {
+      writer({ ...expanded, details: new Map([['work', { ...complete, ...patch }]]) });
+    }
+    await flush();
+    expect(putMessages).not.toHaveBeenCalled();
+    writer({ ...expanded, details: new Map([['work', complete]]) });
+    await flush();
+    expect(putMessages).toHaveBeenCalledTimes(1);
+    expect(putMessages.mock.calls[0][6]).toContain('cached text');
+
+    const failed = new Map([['work', { ...complete, complete: false, error: 'timeout' }]]);
+    writer({ ...expanded, expanded: new Set(), details: failed }); // Collapsed.
+    await flush();
+    writer({ ...snapshot, expanded: new Set(['work']), details: failed }); // Removed.
+    await flush();
+    expect(putMessages).toHaveBeenCalledTimes(3);
+  });
+
   it.each(['中', '\\', '"'])('rejects byte-oversize history containing %s before sending it to Main', async (character) => {
     await readRemoteHistoryCache('dev', 'session');
     const large = { ...snapshot, items: projectHistoryView([{ ...row, content: character.repeat(180_000) }], false) };
