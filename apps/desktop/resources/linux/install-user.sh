@@ -128,17 +128,22 @@ if [[ $mode == --apply ]]; then
   [[ $current == "$expected_current" ]] || fail 'Installation changed while the update was pending.'
 fi
 release="releases/$version-$digest"
-if [[ -e $prefix/$release ]]; then
-  if [[ $current == "$release" ]]; then
-    write_launcher
-    exit 0
-  fi
-  fail 'Release directory already exists; inspect it before retrying.'
+if [[ $current == "$release" || ( $current == "$release-"* && ${current#"$release-"} =~ ^[A-Za-z0-9]{8}$ ) ]]; then
+  write_launcher
+  exit 0
+fi
+if [[ -e $prefix/$release || -L $prefix/$release ]]; then
+  # A hard interruption can leave a release before current is switched. It
+  # might also be a retained release still used by a running process: never
+  # overwrite, remove, or trust it. Install the freshly verified payload using
+  # this transaction's existing unique stage suffix instead.
+  release="$release-${stage##*.stage.}"
+  [[ ! -e $prefix/$release && ! -L $prefix/$release ]] || fail 'Release destination is occupied; retry installation.'
 fi
 # Never install setuid/setgid helpers from a system package into user storage.
 find "$payload" -type f -exec chmod u-s,g-s -- {} +
 new_release=$release
-mv -- "$payload" "$prefix/$release"
+mv -T -- "$payload" "$prefix/$release"
 printf 'cindy-user-install-v1:%s\n' "$region" > "$stage/marker"
 mv -T -- "$stage/marker" "$marker"
 ln -s -- "$release" "$stage/current"

@@ -94,8 +94,14 @@ The downloaded package remains available.
 Each update verifies the manifest size and SHA-256 again using a private
 snapshot, checks the package's version/architecture/region, then prepares a new
 release directory. A single rename switches `current`; `previous` and all old
-release directories are retained. Failure before activation leaves the current
-executable intact, removes that transaction's new directory, and allows retry.
+release directories are retained. A handled failure before activation leaves
+the current executable intact and removes that transaction's new directory.
+SIGKILL or power loss can leave an unactivated release behind; retry verifies
+the package again and installs into a fresh directory without overwriting or
+deleting the retained release. Repeating an already active package repairs the
+stable launcher without switching releases. The two pointer renames are not a
+power-loss-atomic pair: interruption after switching `current` can leave
+`previous` pointing to an older retained release rather than its immediate predecessor.
 Application data, credentials, plugins and keyring entries are never copied,
 cleared, re-encrypted or moved by the installer.
 

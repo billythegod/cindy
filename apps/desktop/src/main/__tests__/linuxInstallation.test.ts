@@ -56,12 +56,13 @@ describe.skipIf(process.platform !== 'linux')('user installer transaction smoke 
     }
   });
   afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
-  function run(version: string, apply = false, overrides: { digest?: string; version?: string; region?: string; env?: NodeJS.ProcessEnv } = {}) {
+  function run(version: string, apply = false, overrides: { prefix?: string; digest?: string; version?: string; region?: string; env?: NodeJS.ProcessEnv } = {}) {
     const pkg = packages.get(version)!;
+    const targetPrefix = overrides.prefix ?? prefix;
     const args = apply
-      ? ['--apply', pkg.file, overrides.digest ?? pkg.digest, String(pkg.size), prefix,
-        overrides.version ?? version, overrides.region ?? 'global', fs.readlinkSync(path.join(prefix, 'current'))]
-      : ['--install', pkg.file, overrides.digest ?? pkg.digest, prefix];
+      ? ['--apply', pkg.file, overrides.digest ?? pkg.digest, String(pkg.size), targetPrefix,
+        overrides.version ?? version, overrides.region ?? 'global', fs.readlinkSync(path.join(targetPrefix, 'current'))]
+      : ['--install', pkg.file, overrides.digest ?? pkg.digest, targetPrefix];
     return spawnSync('bash', [installer, ...args], {
       env: { ...process.env, HOME: path.join(root, 'home'), ...overrides.env }, encoding: 'utf8', timeout: 15_000,
     });
@@ -112,6 +113,67 @@ describe.skipIf(process.platform !== 'linux')('user installer transaction smoke 
     expect(find()?.current).toContain('1.0.2');
     expect(findLinuxUserInstallation(path.join(prefix, before, 'Cindy'), path.join(root, 'home'), process.getuid!())).toBeNull();
     expect(findLinuxUserInstallation(path.join(prefix, 'current', 'Cindy'), prefix, process.getuid!())).toBeNull();
+  });
+  it.each([false, true])('retries hard-interrupted installs without modifying retained releases (apply=%s)', (apply) => {
+    const prefix = path.join(root, 'home', `interrupted-${apply}`);
+    if (apply) expect(run('1.0.0', false, { prefix }).status).toBe(0);
+    const before = apply ? fs.readlinkSync(path.join(prefix, 'current')) : null;
+    const release = 'releases/1.0.1-' + packages.get('1.0.1')!.digest;
+    const faultBin = path.join(root, `kill-bin-${apply}`);
+    fs.mkdirSync(faultBin);
+    fs.writeFileSync(path.join(faultBin, 'mv'), [
+      '#!/bin/bash', '/usr/bin/mv "$@" || exit "$?"',
+      // Kill only the installer parent, after its release or marker rename.
+      'if [[ "${@: -1}" == "$CINDY_TEST_KILL_DEST" ]]; then kill -KILL "$PPID"; fi', '',
+    ].join('\n'), { mode: 0o755 });
+    const orphans: string[] = [];
+    for (const destination of [path.join(prefix, release), path.join(prefix, '.cindy-user-install')]) {
+      const interrupted = run('1.0.1', apply, { prefix, env: {
+        PATH: faultBin + path.delimiter + process.env.PATH, CINDY_TEST_KILL_DEST: destination,
+      } });
+      expect(interrupted.signal).toBe('SIGKILL');
+      expect(apply ? fs.readlinkSync(path.join(prefix, 'current')) : fs.existsSync(path.join(prefix, 'current'))).toBe(before ?? false);
+      const releases = fs.readdirSync(path.join(prefix, 'releases')).filter((name) => name.startsWith('1.0.1-'));
+      expect(releases).toHaveLength(orphans.length + 1);
+      for (const name of releases) {
+        if (!orphans.includes(name)) {
+          orphans.push(name);
+          fs.writeFileSync(path.join(prefix, 'releases', name, 'sentinel'), 'retained');
+        }
+      }
+    }
+    expect(run('1.0.1', apply, { prefix, digest: '0'.repeat(64) }).status).not.toBe(0);
+    expect(run('1.0.1', apply, { prefix }).status).toBe(0);
+    const current = fs.readlinkSync(path.join(prefix, 'current'));
+    expect(current.startsWith(release + '-')).toBe(true);
+    expect(current.slice(release.length + 1)).toMatch(/^[A-Za-z0-9]{8}$/);
+    expect(fs.existsSync(path.join(prefix, current, 'sentinel'))).toBe(false);
+    for (const name of orphans) expect(fs.readFileSync(path.join(prefix, 'releases', name, 'sentinel'), 'utf8')).toBe('retained');
+    if (apply) expect(fs.readlinkSync(path.join(prefix, 'previous'))).toBe(before);
+    // A successful suffixed install is still idempotent and repairs its launcher.
+    fs.rmSync(path.join(prefix, 'launch'), { force: true });
+    expect(run('1.0.1', false, { prefix }).status).toBe(0);
+    expect(fs.readlinkSync(path.join(prefix, 'current'))).toBe(current);
+    expect(execFileSync(path.join(prefix, 'launch'), { encoding: 'utf8' })).toBe('fixture\n');
+    expect(findLinuxUserInstallation(path.join(prefix, 'current', 'Cindy'), path.join(root, 'home'), process.getuid!())?.current).toBe(current);
+  });
+  it('reinstalls a retained version without reusing or deleting its directory', () => {
+    const prefix = path.join(root, 'home', 'retained');
+    expect(run('1.0.0', false, { prefix }).status).toBe(0);
+    const original = fs.readlinkSync(path.join(prefix, 'current'));
+    fs.writeFileSync(path.join(prefix, original, 'sentinel'), 'retained');
+    expect(run('1.0.1', true, { prefix }).status).toBe(0);
+    const before = fs.readlinkSync(path.join(prefix, 'current'));
+    expect(run('1.0.0', false, { prefix }).status).toBe(0);
+    expect(fs.readlinkSync(path.join(prefix, 'current'))).not.toBe(original);
+    expect(fs.readlinkSync(path.join(prefix, 'previous'))).toBe(before);
+    expect(fs.readFileSync(path.join(prefix, original, 'sentinel'), 'utf8')).toBe('retained');
+    expect(fs.existsSync(path.join(prefix, 'current', 'sentinel'))).toBe(false);
+    const dangling = path.join(prefix, 'releases', '1.0.2-' + packages.get('1.0.2')!.digest);
+    fs.symlinkSync('missing-release', dangling);
+    expect(run('1.0.2', true, { prefix }).status).toBe(0);
+    expect(fs.readlinkSync(dangling)).toBe('missing-release');
+    expect(fs.existsSync(path.join(prefix, 'current', 'Cindy'))).toBe(true);
   });
   it('registers a valid stable desktop entry with no real desktop changes', () => {
     const bin = path.join(root, 'fake-bin');
