@@ -3362,6 +3362,7 @@ describe('Bot Session task end-to-end runtime', () => {
     taskControl?: boolean;
     queueSnapshots?: Map<string, AgentInputQueuedMessage[]>;
     onNativeStarted?: (sessionId: string) => void;
+    beforeNativeAcceptance?: (sessionId: string) => void;
     appliedOnResume?: () => string[];
     reconcileWorktree?: Parameters<typeof createBotDelegationService>[0]['reconcileWorktree'];
     stopUnsupported?: boolean;
@@ -3498,6 +3499,7 @@ describe('Bot Session task end-to-end runtime', () => {
       );
       if (params.dispatcherSessionId) h.sqlite!.prepare('UPDATE messages SET agent_meta = ? WHERE session_id = ? AND client_id = ?')
         .run(JSON.stringify({ origin: { kind: 'session', senderSessionId: params.dispatcherSessionId } }), params.targetSessionId, clientId);
+      options.beforeNativeAcceptance?.(params.targetSessionId);
       await params.onAccepted?.();
       h.sqlite!.prepare('UPDATE sessions SET active_turn_started_at = ? WHERE id = ?')
         .run(currentTime, params.targetSessionId);
@@ -3527,6 +3529,7 @@ describe('Bot Session task end-to-end runtime', () => {
         const persisted = sendOpts.persistUserMessage;
         if (!persisted) throw new Error('Missing coordinator user row');
         writeMessage(id, persisted.clientId, 'user', persisted.content);
+        options.beforeNativeAcceptance?.(id);
         await persisted.onPersisted?.();
         const row = readSession(id)!;
         started.push({ sessionId: id, ...row });
@@ -3639,7 +3642,7 @@ describe('Bot Session task end-to-end runtime', () => {
       }
     };
 
-    const settleChild = async (sessionId: string, reply: string): Promise<void> => {
+    const settleChild = async (sessionId: string, reply: string, execution?: { instanceId: string; generation: number }): Promise<void> => {
       const pendingIndex = pendingTurns.findIndex((turn) => turn.sessionId === sessionId);
       if (pendingIndex >= 0) pendingTurns.splice(pendingIndex, 1);
       writeMessage(sessionId, `assistant-${++seq}`, 'assistant', reply);
@@ -3652,6 +3655,7 @@ describe('Bot Session task end-to-end runtime', () => {
         childSessionId: sessionId,
         outcome: 'done',
         resultText: reply,
+        ...(execution ? { execution } : {}),
       });
     };
 
@@ -4044,6 +4048,48 @@ describe('Bot Session task end-to-end runtime', () => {
       const before = runtime.started.length;
       await runtime.delegation.restore();
       expect(runtime.started).toHaveLength(before);
+    } finally { runtime.dispose(); }
+  });
+
+  it.each([false, true])('binds queued continuation start only at native acceptance (cold: %s)', async cold => {
+    await seedPair();
+    const receipts = new Map<string, { instanceId: string; generation: number }>();
+    const runtime = createDelegationRuntime({ taskControl: true, queueSnapshots: new Map(),
+      readSessionExecution: id => receipts.get(id) ?? null,
+      beforeNativeAcceptance: id => receipts.set(id, {
+        instanceId: receipts.get(id)?.instanceId ?? `native-${id}`,
+        generation: (receipts.get(id)?.generation ?? 0) + 1,
+      }),
+    });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Initial task.' });
+      if (!task.ok) throw new Error('missing task');
+      const initialReceipt = receipts.get(task.childSessionId)!;
+      await runtime.settleChild(task.childSessionId, 'Initial result.', initialReceipt);
+      await runtime.dispatch({ targetSessionId: task.childSessionId, message: 'Independent user turn.', clientId: 'direct-user-turn' });
+      const directReceipt = receipts.get(task.childSessionId)!;
+      expect(await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Continue the task.' }))
+        .toMatchObject({ ok: false, errorCode: 'STOP_UNCONFIRMED' });
+      await runtime.settleChild(task.childSessionId, 'Direct turn ended.', directReceipt);
+      runtime.coordinator!.setExecutionPaused(task.childSessionId, true);
+      const continued = await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Continue the task.' });
+      expect(continued).toMatchObject({ ok: true });
+      expect(runtime.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue.map(item => item.clientId))
+        .toContain(`bot-delegation-start:${task.delegationId}:2`);
+      const read = () => h.sqlite!.prepare("SELECT status, json_extract(permission_snapshot_json, '$.taskExecution') AS receipt FROM bot_delegations WHERE id = ?").get(task.delegationId);
+      expect(read()).toEqual({ status: 'queued', receipt: JSON.stringify({ ...initialReceipt, runSequence: 1 }) });
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution: directReceipt, resultText: 'Unrelated direct result.' });
+      expect(read()).toEqual({ status: 'queued', receipt: JSON.stringify({ ...initialReceipt, runSequence: 1 }) });
+      if (cold) receipts.delete(task.childSessionId);
+      runtime.coordinator!.setExecutionPaused(task.childSessionId, false);
+      runtime.coordinator!.resume(task.childSessionId);
+      await vi.waitFor(() => expect(runtime.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(3));
+      expect(read()).toEqual({ status: 'running', receipt: JSON.stringify({ ...receipts.get(task.childSessionId), runSequence: 2 }) });
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution: directReceipt, resultText: 'Late direct result.' });
+      expect((read() as { status: string }).status).toBe('running');
+      await runtime.settleChild(task.childSessionId, 'Continuation result.', receipts.get(task.childSessionId));
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Continuation result.' });
     } finally { runtime.dispose(); }
   });
 
