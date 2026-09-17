@@ -468,9 +468,7 @@ export function useUnifiedRowActions(options: UnifiedRowActionsOptions): Unified
    * 顺序与 G2 一致:**live 真写成了才**落收藏 store 的这次编辑 —— 写穿失败时收藏原样保留,
    * 不留「收藏行写着新档、任务还在旧档」的半套状态。
    *
-   * 这里的 `live` 恒是**一笔**写入(改的是哪一格就写哪一格:深度 / Fast;引擎编辑传 null),
-   * 所以不存在 applyDefaultsLive 那种「第一笔落了、第二笔没落」的中间态,不需要回滚
-   * (2026-08-17 review 第五轮 M1 同族核对)。要在这里加第二笔时,必须一并把回滚补上。
+   * 收藏持久化是第二笔写入；失败时必须等待运行配置回滚，再向调用方报告失败。
    */
   const applySelectedFavoriteEdit = (args: {
     anchor: UnifiedAnchor;
@@ -489,9 +487,17 @@ export function useUnifiedRowActions(options: UnifiedRowActionsOptions): Unified
     /** 落收藏 store 的这次编辑。 */
     commit: () => void | Promise<void>;
   }): ActionResult => {
+    const commitOrRestore = async (restore: () => unknown) => {
+      try {
+        await args.commit();
+      } catch (error) {
+        await restore();
+        throw error;
+      }
+    };
     if (args.live && isLiveRow(args.entry, args.config)) {
       return args.live().then((applied) => {
-        if (applied) return args.commit();
+        if (applied) return commitOrRestore(async () => { await args.rollback?.(); });
         if (args.rollback) return args.rollback();
       });
     }
@@ -508,7 +514,14 @@ export function useUnifiedRowActions(options: UnifiedRowActionsOptions): Unified
         // 按编辑后的目标值(wire id / 引擎)重记这条锚点。草稿分支下面那条 onSelect 里的
         // `favoriteUid: args.uid` 是同一个语义,两条链路必须一致(2026-08-17 review K3)。
         favoriteUid: args.uid,
-        onApplied: args.commit,
+        onApplied: () => commitOrRestore(() => sessionEngineFilter?.onCrossEngineSelect({
+          providerId: args.anchor.providerId,
+          modelId: args.config.wireModelId ?? args.anchor.modelId,
+          targetAgent: args.config.agent,
+          effort: args.config.effort ?? '',
+          fast: args.config.fast,
+          favoriteUid: args.uid,
+        })),
       });
     }
     return runLive(() =>
@@ -519,7 +532,13 @@ export function useUnifiedRowActions(options: UnifiedRowActionsOptions): Unified
         rowModelId: args.anchor.modelId,
       }),
     ).then((applied) => {
-      if (applied) return args.commit();
+      if (applied) return commitOrRestore(() => onSelect(
+        args.anchor.providerId, args.config.wireModelId ?? args.anchor.modelId,
+        args.config.effort ?? '', {
+          engine: args.config.engine, fast: args.config.fast,
+          favoriteUid: args.uid, rowModelId: args.anchor.modelId,
+        },
+      ));
     });
   };
 
