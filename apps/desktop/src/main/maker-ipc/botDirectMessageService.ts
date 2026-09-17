@@ -1,4 +1,4 @@
-import { parseBotPeerAddress, botPeerAddress } from '../../shared/botPeerAddress.js';
+import { parseBotPeerAddress, botPeerAddress, MAX_BOT_PEER_ADDRESS_CHARS } from '../../shared/botPeerAddress.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { withBotProfileLocks } from './botProfileLock.js';
 
@@ -25,7 +25,7 @@ import {
 
 const MAX_MESSAGE_CHARS = 16_000;
 const MAX_SENDER_NAME_CHARS = 48;
-const MAX_SENDER_ID_CHARS = 162;
+const MAX_SENDER_ID_CHARS = MAX_BOT_PEER_ADDRESS_CHARS;
 /** Six request/reply pairs are enough to clarify a handoff without letting two Bots chatter forever. */
 const MAX_MESSAGES_PER_THREAD = 12;
 const THREAD_IDLE_TIMEOUT_MS = 15 * 60_000;

@@ -368,6 +368,14 @@ describe("cindy_helper MCP server", () => {
       expect(checkMessage).toHaveBeenCalledWith({ callerSessionId: 'bot-a-main', messageId: 'message-1' });
       const roster = parsePayload(await client.callTool({ name: 'list_agents', arguments: {} }));
       expect(roster).toMatchObject({ ok: true, agents: [{ id: 'studio::bot-b', name: 'Mimi', deviceName: 'Studio' }] });
+      const longTarget = 'd'.repeat(80) + '::' + 'b'.repeat(128);
+      expect(parsePayload(await client.callTool({ name: 'call_tool', arguments: { name: 'send_to_agent',
+        args: { target_id: longTarget, message: 'Full-length identity' } } }))).toMatchObject({ ok: true });
+      expect(messageAgent).toHaveBeenLastCalledWith({ callerSessionId: 'bot-a-main', targetBotId: longTarget, message: 'Full-length identity' });
+      expect(parsePayload(await client.callTool({ name: 'call_tool', arguments: { name: 'send_to_agent',
+        args: { target_id: longTarget + 'b', message: 'Too long' } } }))).toMatchObject({ ok: false, errorCode: 'INVALID_ARGS' });
+      expect(messageAgent).toHaveBeenCalledTimes(2);
+
     } finally {
       await client.close();
       await server.close();

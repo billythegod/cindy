@@ -2253,7 +2253,7 @@ it('routes Bot shortcuts through the scoped helper entry without exposing them t
     } : name === 'check_agent_message' ? { message_id: 'message-1' } : name === 'list_agents' || name === 'routine_list' || name === 'routine_sources' ? {}
       : name.startsWith('routine_') ? { id: 'routine-1' }
       : name === 'start_session_task' ? { instruction: 'Prepare a report' }
-      : name === 'send_to_agent' ? { target_id: 'bot-b', message: 'Please review' }
+      : name === 'send_to_agent' ? { target_id: 'd'.repeat(80) + '::' + 'b'.repeat(128), message: 'Please review' }
       : name === 'create_teammate' ? { name: 'Writer', description: 'Novelist', identity_source: 'Write stories', welcome_message: 'Hello' }
       : name === 'message_session_task' ? { task_id: 'task-1', message: 'Add a summary' }
       : { task_id: 'task-1' };
@@ -2262,6 +2262,7 @@ it('routes Bot shortcuts through the scoped helper entry without exposing them t
       expect(tool.parameters.properties.botId).toBeUndefined();
       expect(tool.parameters.properties.triggers.items.anyOf[0].properties.intervalMs.minimum).toBe(60000);
     }
+    if (name === 'send_to_agent') expect(tool.parameters.properties.target_id.maxLength).toBe(210);
     const resolved = gateway.resolveDirectHelperTool(name, args);
     expect(resolved.qualifiedName).toBe('mcp__cindy_helper__' + name);
     expect(resolved.args).toEqual(args); // Permission review retains the actual operation and arguments.

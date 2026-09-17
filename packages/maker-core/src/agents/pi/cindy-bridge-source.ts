@@ -3265,7 +3265,8 @@ class CindyMcpGateway {
         parameters: {
           type: 'object',
           properties: {
-            target_id: { type: 'string', minLength: 1, maxLength: 162 },
+            // deviceId (80) + separator (2) + existing Bot profile ID (128).
+            target_id: { type: 'string', minLength: 1, maxLength: 210 },
             message: { type: 'string', minLength: 1, maxLength: 12000 },
           },
           required: ['target_id', 'message'],

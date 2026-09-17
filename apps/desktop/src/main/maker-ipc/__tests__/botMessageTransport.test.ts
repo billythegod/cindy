@@ -24,6 +24,20 @@ describe('teammate device transport', () => {
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 
+  it.each([81, 128])('discovers and resolves a %i-character Bot ID without dropping later roster entries', async length => {
+    const deviceId = 'd'.repeat(80);
+    const botId = 'b'.repeat(length);
+    const longResource = { ...resource(), ref: { ...resource().ref, id: botId } };
+    const invoke = vi.fn(async (_device: string, channel: string) => ({ ok: true as const,
+      result: channel.endsWith(':list') ? { items: [longResource, resource()] } : longResource }));
+    const transport = createBotMessageTransport({ selfDeviceId: () => 'self', invoke,
+      listDevices: async () => ({ devices: [peer(deviceId)] }) });
+    expect(await transport.list()).toMatchObject({ agents: [
+      { id: `${deviceId}::${botId}` }, { id: `${deviceId}::bot-1` },
+    ], unavailableDevices: [] });
+    expect(await transport.resolve(`${deviceId}::${botId}`)).toEqual({ id: `${deviceId}::${botId}`, name: 'Same name' });
+  });
+
   it('resolves a fresh stable resource and rejects old hosts and paused peers', async () => {
     const invoke = vi.fn(async () => ({ ok: true as const, result: resource() }));
     const transport = createBotMessageTransport({ selfDeviceId: () => 'self', invoke,

@@ -215,6 +215,19 @@ describe('botDirectMessageService', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it('keeps the entire 128-character sender ID in the cross-device reply address', async () => {
+    const senderBotId = 'b'.repeat(128);
+    const deviceId = 'd'.repeat(80);
+    const service = createBotDirectMessageService({ dispatch, transport: {
+      selfDeviceId: () => 'local', list: async () => ({ agents: [], unavailableDevices: [] }),
+      resolve: async id => ({ id, name: 'Remote' }), verifySender: async () => true,
+      send: async () => { throw new Error('unused'); },
+    } });
+    expect(await service.receiveRemote({ controllerDeviceId: deviceId, senderBotId,
+      targetBotId: 'bot-b', messageId: 'long-id-message', message: 'Please reply' })).toMatchObject({ ok: true });
+    expect(dispatch.mock.calls[0][0].message).toContain(`target_id="${deviceId}::${senderBotId}"`);
+  });
+
   it('delivers a trusted Bot DM into the target canonical Cindy task', async () => {
     const service = createBotDirectMessageService({
       dispatch,

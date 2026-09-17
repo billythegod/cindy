@@ -389,7 +389,8 @@ function registerSendToAgentEntry(
       'Use the exact stable id from list_agents (deviceId::botId for a remote teammate) or a structured @Bot reference. Never route by name.',
     ].join('\n'),
     inputShape: {
-      target_id: z.string().min(1).max(162),
+      // deviceId (80) + separator (2) + existing Bot profile ID (128).
+      target_id: z.string().min(1).max(210),
       message: z.string().min(1).max(12_000),
     },
     handler: async ({ target_id, message }) => {

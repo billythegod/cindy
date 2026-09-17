@@ -54,12 +54,29 @@ it('rejects a previously discovered hidden companion and allows it again after r
     .resolves.toMatchObject({ effects: [], verified: true });
   expect(verifyRemoteMessage).toHaveBeenCalledWith({ controllerDeviceId: 'remote-mac', senderBotId: 'bot-1',
     targetBotId: 'target', messageId: 'delivery-1', message: 'hello' });
+  const longBotId = 'b'.repeat(128);
+  for (const actionId of ['send-message', 'verify-message', 'message-receipt']) {
+    const request = { client, collectionId: 'teammates', actionId,
+      resourceRef: { ...discovered.ref, id: longBotId },
+      input: { senderBotId: longBotId, targetBotId: longBotId, messageId: 'delivery-1', message: 'hello' } };
+    await expect(remoteResourceRegistry.invoke(context, request)).resolves.toMatchObject({ effects: [] });
+    await expect(remoteResourceRegistry.invoke(context, { ...request, resourceRef: { ...request.resourceRef, id: longBotId + 'b' } }))
+      .rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(remoteResourceRegistry.invoke(context, { ...request,
+      input: { ...request.input, senderBotId: longBotId + 'b', targetBotId: longBotId + 'b' } }))
+      .rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(remoteResourceRegistry.invoke(context, { ...request, input: { ...request.input, messageId: 'm'.repeat(81) } }))
+      .rejects.toMatchObject({ code: 'NOT_FOUND' });
+  }
+  expect(receiveRemote).toHaveBeenLastCalledWith(expect.objectContaining({ senderBotId: longBotId, targetBotId: longBotId }));
+  expect(verifyRemoteMessage).toHaveBeenLastCalledWith(expect.objectContaining({ senderBotId: longBotId, targetBotId: longBotId }));
+  expect(readRemoteReceipt).toHaveBeenLastCalledWith(expect.objectContaining({ senderBotId: longBotId, targetBotId: longBotId }));
   db.current = false;
   await expect(invoke()).rejects.toMatchObject({ code: 'NOT_FOUND' });
   db.current = true;
   source.hiddenAt = 200;
   await expect(invoke()).rejects.toMatchObject({ code: 'NOT_FOUND' });
-  expect(receiveRemote).toHaveBeenCalledOnce();
+  expect(receiveRemote).toHaveBeenCalledTimes(2);
   expect((await list()).items).toEqual([]);
   await expect(get()).rejects.toMatchObject({
     code: 'NOT_FOUND', message: 'remote resource does not exist',
