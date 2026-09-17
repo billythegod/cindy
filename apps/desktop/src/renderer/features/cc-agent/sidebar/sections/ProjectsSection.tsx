@@ -796,7 +796,7 @@ export function ProjectsSection({
   }, [filter.groupBy, projects, dialogues]);
   const dialogueSourceLabelMap = useMemo(
     () => buildSessionSourceLabelMap(flattenedSessionsForSourceLabels, allKnownProjects),
-    [flattenedSessionsForSourceLabels, allKnownProjects, t],
+    [flattenedSessionsForSourceLabels, allKnownProjects],
   );
 
   // F-PJ-10：即使 projects 因 filter 收窄到空，也要保留段头供用户切回 Filter。

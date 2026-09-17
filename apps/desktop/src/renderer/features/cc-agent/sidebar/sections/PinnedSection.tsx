@@ -211,7 +211,7 @@ export function PinnedSection({
   // 置顶视图传 visibleSessions;文字 / 列表都画,card 变体不画这个标签。
   const sourceLabelMap = useMemo(
     () => buildSessionSourceLabelMap(visibleSessions, allKnownProjects),
-    [visibleSessions, allKnownProjects, t],
+    [visibleSessions, allKnownProjects],
   );
 
   const getEntryId = useCallback((entry: PinnedSidebarEntry) => entry.id, []);
