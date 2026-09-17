@@ -1868,6 +1868,8 @@ async function executeRelaunchUnguarded(theme: 'light' | 'dark', checkForBinaryU
     return;
   }
 
+  const aurManaged = process.platform === 'linux' && await isLinuxAurInstallation(app.getPath('exe'));
+
   if (syncObservedUpdateChannel() || shouldAbortStagedPatchApply()) {
     const pendingHold = pendingChannelChangeHolds > 0;
     log.info(
@@ -1919,7 +1921,7 @@ async function executeRelaunchUnguarded(theme: 'light' | 'dark', checkForBinaryU
   // keeps both Cindy and the already-downloaded patch intact.
   if (!ensureWindowsUpdaterPrerequisites()) return;
 
-  if (process.platform === 'linux' && isLinuxAurInstallation(app.getPath('exe'))) {
+  if (aurManaged) {
     log.info('AUR-managed installation: keeping app open and update staged; use the package manager');
     isRelaunching = false;
     autoRelaunchInProgress = false;

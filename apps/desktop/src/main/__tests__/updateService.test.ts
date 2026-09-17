@@ -47,7 +47,7 @@ const checkWindowsUpdaterPrerequisites = vi.fn<
 const stageBundledWindowsUpdaterRuntime = vi.fn<
   () => 'staged' | 'fallback-safe' | 'blocked'
 >(() => 'staged');
-const isLinuxAurInstallation = vi.fn(() => false);
+const isLinuxAurInstallation = vi.fn(async () => false);
 
 const logInfo = vi.fn();
 const logWarn = vi.fn();
@@ -260,7 +260,7 @@ beforeEach(() => {
   stageBundledWindowsUpdaterRuntime.mockReset();
   stageBundledWindowsUpdaterRuntime.mockReturnValue('staged');
   isLinuxAurInstallation.mockReset();
-  isLinuxAurInstallation.mockReturnValue(false);
+  isLinuxAurInstallation.mockResolvedValue(false);
   logInfo.mockReset();
   logWarn.mockReset();
   logError.mockReset();
@@ -455,8 +455,102 @@ function linuxInstallerManifest(version = '0.0.65') {
 }
 
 describe('checkForUpdate Linux installer flow', () => {
+  describe('asynchronous AUR ownership preflight', () => {
+    beforeEach(() => {
+      readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+      download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.writeFileSync(targetPath, 'deb');
+        return { path: targetPath, size: 3 };
+      });
+    });
+
+    it('keeps IPC responsive and suppresses duplicate apply requests during the query', async () => {
+      let releaseQuery!: (aurManaged: boolean) => void;
+      isLinuxAurInstallation.mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        releaseQuery = resolve;
+      }));
+      const service = await freshUpdateService('linux', 'x64');
+      service.initUpdateService();
+      try {
+        await service.checkForUpdate(linuxInstallerManifest());
+        ipcListeners.get('update-relaunch')?.({}, 'dark');
+        ipcListeners.get('update-relaunch')?.({}, 'dark');
+        expect(isLinuxAurInstallation).toHaveBeenCalledOnce();
+        expect(ipcHandlers.get('update-get-status')?.({})).toMatchObject({ status: 'ready' });
+        expect(spawnProcess).not.toHaveBeenCalled();
+        expect(appQuit).not.toHaveBeenCalled();
+        expect(fs.existsSync(path.join(TEST_USER_DATA, 'agent-binary-update-once.json'))).toBe(false);
+        releaseQuery(true);
+        await vi.waitFor(() => expect(ipcHandlers.get('update-get-status')?.({})).toMatchObject({
+          status: 'ready', errorCode: 'linux_aur_managed',
+        }));
+        expect(spawnProcess).not.toHaveBeenCalled();
+      } finally {
+        releaseQuery(true);
+        service.stopUpdateService();
+      }
+    });
+
+    it.each([true, false])('rechecks committed channel changes after a delayed query returns %s', async (aurManaged) => {
+      let releaseQuery!: (aurManaged: boolean) => void;
+      isLinuxAurInstallation.mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        releaseQuery = resolve;
+      }));
+      const service = await freshUpdateService('linux', 'x64');
+      service.initUpdateService();
+      try {
+        await service.checkForUpdate(linuxInstallerManifest());
+        ipcListeners.get('update-relaunch')?.({}, 'dark');
+        await ipcHandlers.get('update-channel-settings-set')?.({}, { enableBeta: true });
+        readUpdateChannelSettings.mockReturnValue({ enableBeta: true, orgDefaultEnableBeta: false });
+        releaseQuery(aurManaged);
+        await vi.waitFor(() => expect(service.getUpdateStatus()).toBe('idle'));
+        expect(spawnProcess).not.toHaveBeenCalled();
+        expect(appQuit).not.toHaveBeenCalled();
+        expect(ipcHandlers.get('update-get-status')?.({})).toMatchObject({ errorCode: undefined });
+        expect(fs.existsSync(path.join(TEST_USER_DATA, 'agent-binary-update-once.json'))).toBe(false);
+      } finally {
+        releaseQuery(aurManaged);
+        service.stopUpdateService();
+      }
+    });
+
+    it('respects a channel change that is still waiting to be persisted when the query finishes', async () => {
+      let releaseQuery!: (aurManaged: boolean) => void;
+      let releaseWrite!: () => void;
+      isLinuxAurInstallation.mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        releaseQuery = resolve;
+      }));
+      writeEnableBeta.mockReturnValueOnce(new Promise<undefined>((resolve) => {
+        releaseWrite = () => resolve(undefined);
+      }));
+      const service = await freshUpdateService('linux', 'x64');
+      service.initUpdateService();
+      try {
+        await service.checkForUpdate(linuxInstallerManifest());
+        ipcListeners.get('update-relaunch')?.({}, 'dark');
+        const changing = ipcHandlers.get('update-channel-settings-set')?.({}, { enableBeta: true });
+        releaseQuery(false);
+        await vi.waitFor(() => expect(logInfo).toHaveBeenCalledWith(
+          'executeRelaunch() aborted — update channel changed during eligibility check',
+        ));
+        expect(service.getUpdateStatus()).toBe('ready');
+        expect(spawnProcess).not.toHaveBeenCalled();
+        releaseWrite();
+        await changing;
+        expect(service.getUpdateStatus()).toBe('idle');
+        expect(appQuit).not.toHaveBeenCalled();
+      } finally {
+        releaseQuery(false);
+        releaseWrite();
+        service.stopUpdateService();
+      }
+    });
+  });
+
   it('keeps AUR installs open with the downloaded patch intact on repeated apply attempts', async () => {
-    isLinuxAurInstallation.mockReturnValue(true);
+    isLinuxAurInstallation.mockResolvedValue(true);
     readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
     download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
