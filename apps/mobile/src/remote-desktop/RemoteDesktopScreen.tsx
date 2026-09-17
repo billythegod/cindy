@@ -1108,6 +1108,7 @@ export default function RemoteDesktopScreen() {
     send({
       type: "mouseButtons",
       native: Platform.OS === "ios",
+      topInset: edgePadding.paddingTop,
       bottomInset:
         keyboard && landscapeKeyboardOverlay
           ? keyboardPanelHeight + keyboardBottom
