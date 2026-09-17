@@ -8,11 +8,7 @@
 
 import { useMemo } from 'react';
 
-import {
-  addCompatibleRegionalMoney,
-  DEFAULT_USAGE_CURRENCY,
-  type RegionalMoney,
-} from '../../shared/regionalMoney';
+import { addCompatibleRegionalMoney, type RegionalMoney } from '../../shared/regionalMoney';
 import { useSessionEstimatedValue } from './useSessionEstimatedValue';
 import { useSessionSpend } from './useSessionSpend';
 
@@ -26,22 +22,18 @@ export function combineSessionUsageMoney(
   actualMoney: RegionalMoney | null,
   estimatedValueMoney: RegionalMoney | null,
 ): SessionUsageMoney {
-  // 历史 turnCostUsd 的真实来源可能是 USD，也可能是曾被误标的 Gateway CNY。
-  // 只兼容与当前会话账本同币种的值；无法确定换算关系时直接丢弃，不猜测或强转。
-  const preferredCurrency = actualMoney?.currency ?? DEFAULT_USAGE_CURRENCY;
-  const compatibleEstimatedValueMoney =
-    estimatedValueMoney?.currency === preferredCurrency
-      ? estimatedValueMoney
-      : null;
-  const values = [actualMoney, compatibleEstimatedValueMoney].filter(
-    (money): money is RegionalMoney => Boolean(money && money.amount > 0),
+  // 零费用只是占位，不能用它的区域币种过滤实际存在的订阅估值。
+  // 异币种保留各自金额供 UI 分别展示，不换算、不伪造合计。
+  const values = [actualMoney, estimatedValueMoney].filter((money): money is RegionalMoney =>
+    Boolean(money && money.amount > 0),
   );
+  const currency = values[0]?.currency;
   return {
     actualMoney,
-    estimatedValueMoney: compatibleEstimatedValueMoney,
+    estimatedValueMoney,
     totalMoney:
-      values.length > 0
-        ? addCompatibleRegionalMoney(values, preferredCurrency)
+      currency && values.every((money) => money.currency === currency)
+        ? addCompatibleRegionalMoney(values, currency)
         : null,
   };
 }
