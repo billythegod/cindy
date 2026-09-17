@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   db: null as ReturnType<typeof drizzle> | null,
   resolveDb: null as (() => ReturnType<typeof drizzle> | undefined) | null,
-  createMessage: vi.fn(async () => ({ id: 'anchor' })),
+  createMessage: vi.fn(async (..._args: Parameters<typeof import('../../localDb/ipc/messages.js').createMessage>) => ({ id: 'anchor' })),
 }));
 
 vi.mock('../../localDb/client/current.js', () => ({
@@ -150,7 +150,7 @@ describe('botDirectMessageService', () => {
   });
 
   it('does not share or clear a new owner roster flight when an old account settles', async () => {
-    let owner = 1;
+    let owner = { ownerScopeKey: 'owner-1' };
     const resolvers: Array<(value: { agents: []; unavailableDevices: [] }) => void> = [];
     const list = vi.fn(() => new Promise<{ agents: []; unavailableDevices: [] }>(resolve => resolvers.push(resolve)));
     const service = createBotDirectMessageService({ dispatch, captureOwnerScope: () => owner,
@@ -160,7 +160,7 @@ describe('botDirectMessageService', () => {
       } });
     const old = service.listAgents('a-main');
     await new Promise<void>(resolve => setImmediate(resolve));
-    owner = 2;
+    owner = { ownerScopeKey: 'owner-2' };
     const current = service.listAgents('b-main');
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(list).toHaveBeenCalledTimes(2);
@@ -177,7 +177,7 @@ describe('botDirectMessageService', () => {
     let current = true;
     const nextOwnerDb = createDatabase();
     const service = createBotDirectMessageService({ dispatch,
-      captureOwnerScope: () => 'original', isOwnerScopeCurrent: () => current,
+      captureOwnerScope: () => ({ ownerScopeKey: 'original' }), isOwnerScopeCurrent: () => current,
       transport: { selfDeviceId: () => 'local', list: async () => ({ agents: [], unavailableDevices: [] }),
         resolve: async id => ({ id, name: 'Remote' }), verifySender: async () => false,
         send: async () => {
@@ -243,7 +243,7 @@ describe('botDirectMessageService', () => {
       },
     });
     const service = createBotDirectMessageService({ dispatch, transport,
-      captureOwnerScope: () => 'original', isOwnerScopeCurrent: () => current });
+      captureOwnerScope: () => ({ ownerScopeKey: 'original' }), isOwnerScopeCurrent: () => current });
     try {
       const rejected = phase === 'before-send' || phase === 'explicit-rejection';
       expect(await service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'peer::bot-b', message: 'hello' }))
@@ -264,7 +264,7 @@ describe('botDirectMessageService', () => {
   it('keeps native receipt reconciliation from crossing an owner switch', async () => {
     let current = true;
     const service = createBotDirectMessageService({ dispatch,
-      captureOwnerScope: () => 'original', isOwnerScopeCurrent: () => current,
+      captureOwnerScope: () => ({ ownerScopeKey: 'original' }), isOwnerScopeCurrent: () => current,
       transport: { selfDeviceId: () => 'local', list: async () => ({ agents: [], unavailableDevices: [] }),
         resolve: async id => ({ id, name: 'Remote' }), verifySender: async () => false,
         send: async () => ({ ok: false, errorCode: 'DELIVERY_UNKNOWN', message: 'Lost response' }),
@@ -331,6 +331,7 @@ describe('botDirectMessageService', () => {
           }),
         }),
       }),
+      { broadcastOwnerScope: undefined },
     );
   });
 
@@ -562,7 +563,7 @@ describe('botDirectMessageService', () => {
   });
 
   it('fails closed before dispatch when the data owner changes during canonical resolution', async () => {
-    const owner = { id: 'owner-a' };
+    const owner = { ownerScopeKey: 'owner-a' };
     let current = true;
     const ensureCanonicalSession = vi.fn(async () => {
       current = false;
@@ -637,7 +638,7 @@ describe('botDirectMessageService', () => {
       .toEqual([{ sequence: 1, delivery_status: 'failed' }, { sequence: 2, delivery_status: 'delivered' }]);
     expect(h.createMessage).toHaveBeenCalledWith('a-main', expect.objectContaining({
       agentMeta: expect.objectContaining({ botDirectMessage: expect.objectContaining({ sequence: 2 }) }),
-    }));
+    }), { broadcastOwnerScope: undefined });
   });
 
   it('includes newly created teammates without a canonical session in the available roster', async () => {
@@ -948,7 +949,7 @@ describe('ordinary remote conversation reply bridge', () => {
       delivered: true, messageId: input.messageId, transport: 'remote-conversation' as const, wakeKind: 'resumed' as const,
       targetBotId: 'old::mimi', targetBotName: 'Mimi', targetSessionId: '', threadId: '', messageCount: 0, remainingMessages: 0, conversationEnded: false }));
     const dispatch = vi.fn();
-    const deps = { dispatch, captureOwnerScope: () => 'owner', isOwnerScopeCurrent: () => current,
+    const deps = { dispatch, captureOwnerScope: () => ({ ownerScopeKey: 'owner', ownerStamp: { dataOwnerId: 'owner', ownerGeneration: 1 } }), isOwnerScopeCurrent: () => current,
       transport: { selfDeviceId: () => 'new', verifySender: async () => false,
         resolve: async (id: string) => ({ id, name: 'Mimi', bridgeSessionId: 'old-chat' }),
         list: async () => ({ agents: [], unavailableDevices: [] }), send, readReply } };
@@ -999,6 +1000,32 @@ describe('ordinary remote conversation reply bridge', () => {
     h.readReply.mockImplementationOnce(async () => { h.revoke(); return { delivered: true, replies: [{ id: 'late', content: 'secret' }], truncated: false }; });
     expect(await h.service.checkMessage({ callerSessionId: 'a-main', messageId: sent.messageId })).toMatchObject({ ok: false, errorCode: 'OWNER_CHANGED' });
     expect(sqlite.prepare('SELECT count(*) AS count FROM bot_direct_messages').get()).toEqual({ count: 1 });
+  });
+  it('binds reply projection to its captured owner and stops before the next anchor after an account switch', async () => {
+    const local = harness(); local.answer();
+    const sent = await local.service.messageAgent({ callerSessionId: 'a-main', targetBotId: 'old::mimi', message: 'Question' });
+    if (!sent.ok) throw new Error('send failed');
+    h.createMessage.mockClear();
+    const nextOwnerDb = createDatabase();
+    const changed = vi.fn();
+    const resumed = createBotDirectMessageService({ ...local.deps, onChanged: changed });
+    h.createMessage.mockImplementationOnce(async (_session, body, options) => {
+      expect(body.agentMeta).toMatchObject({ botDirectMessage: { direction: 'received', preview: expect.stringContaining('Mimi ordinary reply') } });
+      // Switch after createMessage captured the old DB but before it broadcasts.
+      local.revoke(); h.db = drizzle(nextOwnerDb);
+      expect(options?.broadcastOwnerScope).toEqual({ ownerScopeKey: 'owner',
+        ownerStamp: { dataOwnerId: 'owner', ownerGeneration: 1 } });
+      return { id: 'anchor' };
+    });
+    try {
+      expect(await resumed.checkMessage({ callerSessionId: 'a-main', messageId: sent.messageId }))
+        .toMatchObject({ ok: false, errorCode: 'OWNER_CHANGED' });
+      expect(h.createMessage).toHaveBeenCalledTimes(1);
+      expect(changed).not.toHaveBeenCalled();
+      expect(nextOwnerDb.prepare('SELECT count(*) AS count FROM bot_direct_messages').get()).toEqual({ count: 0 });
+      expect(nextOwnerDb.prepare('SELECT count(*) AS count FROM messages').get()).toEqual({ count: 0 });
+      expect(local.send).toHaveBeenCalledTimes(1);
+    } finally { nextOwnerDb.close(); h.db = drizzle(sqlite); }
   });
   it('repairs a partial reply projection on re-read without duplicating a response or dispatch', async () => {
     const local = harness(); local.answer();

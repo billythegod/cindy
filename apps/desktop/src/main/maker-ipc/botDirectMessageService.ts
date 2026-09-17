@@ -6,6 +6,7 @@ import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
 
 import { getDbClient } from '../localDb/client/current.js';
 import { createMessage } from '../localDb/ipc/messages.js';
+import type { DataOwnerBroadcastScope } from '../device-link/broadcast-tap.js';
 import {
   botDirectMessages,
   botDirectMessageThreads,
@@ -112,9 +113,9 @@ export interface BotDirectMessageServiceDeps {
   ) => Promise<{ ok: true; sessionId: string } | { ok: false; errorCode: string; message: string }>;
   /** True only when the durable input queue already owns this delivery. */
   hasQueuedDelivery?: (sessionId: string, clientId: string) => Promise<boolean>;
-  captureOwnerScope?: () => unknown;
-  isOwnerScopeCurrent?: (scope: unknown) => boolean;
-  onChanged?: (payload: BotDirectMessageChangedPayload, ownerScope?: unknown) => void;
+  captureOwnerScope?: () => DataOwnerBroadcastScope;
+  isOwnerScopeCurrent?: (scope: DataOwnerBroadcastScope) => boolean;
+  onChanged?: (payload: BotDirectMessageChangedPayload, ownerScope?: DataOwnerBroadcastScope) => void;
   now?: () => number;
   createId?: () => string;
 }
@@ -220,6 +221,15 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
   const pairOf = (left: string, right: string): [string, string] =>
     left.localeCompare(right) <= 0 ? [left, right] : [right, left];
 
+  // Bind every projection (send, recovery and reply) to the operation's original
+  // owner. createMessage retains that scope across its own asynchronous DB write
+  // and drops stale broadcasts rather than stamping them as the next account.
+  const assertProjectionOwner = (owner: DataOwnerBroadcastScope | undefined) => {
+    if (owner !== undefined && deps.isOwnerScopeCurrent && !deps.isOwnerScopeCurrent(owner)) {
+      throw Object.assign(new Error('Account changed'), { code: 'OWNER_CHANGED' });
+    }
+  };
+
   const persistTimelineAnchor = async (params: {
     threadId: string;
     deliveryId: string;
@@ -231,7 +241,9 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
     direction: BotDirectMessageMeta['direction'];
     preview: string;
     createdAt: number;
+    ownerScope: DataOwnerBroadcastScope | undefined;
   }): Promise<void> => {
+    assertProjectionOwner(params.ownerScope);
     await createMessage(params.sessionId, {
       clientId: BOT_DIRECT_MESSAGE_CLIENT_ID.timelineAnchor(
         params.threadId,
@@ -254,26 +266,28 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
           preview: params.preview.slice(0, 400),
         } satisfies BotDirectMessageMeta,
       },
-    });
+    }, { broadcastOwnerScope: params.ownerScope });
+    assertProjectionOwner(params.ownerScope);
   };
 
   const persistDeliveryAnchors = async (
     row: typeof botDirectMessages.$inferSelect,
     senderName: string,
     recipientName: string,
+    ownerScope: DataOwnerBroadcastScope | undefined,
   ): Promise<void> => {
     const anchors = await Promise.allSettled([
       ...(row.senderSessionId ? [persistTimelineAnchor({
         threadId: row.threadId, deliveryId: row.id, sequence: row.sequence,
         sessionId: row.senderSessionId, viewerBotId: row.senderBotId,
         peerBotId: row.recipientBotId, peerBotName: recipientName,
-        direction: 'sent', preview: row.content, createdAt: row.createdAt,
+        direction: 'sent', preview: row.content, createdAt: row.createdAt, ownerScope,
       })] : []),
       ...(row.recipientSessionId ? [persistTimelineAnchor({
         threadId: row.threadId, deliveryId: row.id, sequence: row.sequence,
         sessionId: row.recipientSessionId, viewerBotId: row.recipientBotId,
         peerBotId: row.senderBotId, peerBotName: senderName,
-        direction: 'received', preview: row.content, createdAt: row.createdAt,
+        direction: 'received', preview: row.content, createdAt: row.createdAt, ownerScope,
       })] : []),
     ]);
     // Settle both writes before rollback so a late write cannot recreate an orphan.
@@ -317,7 +331,7 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
           assertOwner();
           await persistDeliveryAnchors(row,
             names.find((item) => item.id === row.senderBotId)?.name ?? row.senderName ?? row.senderBotId,
-            names.find((item) => item.id === row.recipientBotId)?.name ?? row.recipientName ?? row.recipientBotId);
+            names.find((item) => item.id === row.recipientBotId)?.name ?? row.recipientName ?? row.recipientBotId, owner);
         } else {
           // Reservation alone is not proof of acceptance. Preserve the failed audit
           // row, remove partial projections, and return its budget to the pair.
@@ -746,7 +760,7 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
           senderSessionId: remoteSender ? null : input.callerSessionId, recipientSessionId: targetSessionId,
           senderName: caller.botName, recipientName: targetProfile.name, bridgeSessionId: bridgeSessionId ?? null,
           content: message, deliveryStatus: 'pending', createdAt: sentAt,
-        }, caller.botName, targetProfile.name);
+        }, caller.botName, targetProfile.name, ownerScope);
         await db.update(botDirectMessages).set({ deliveryStatus: 'delivered' })
           .where(eq(botDirectMessages.id, deliveryId));
         accepted = true;
@@ -839,7 +853,7 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
   };
   // One in-flight discovery per current owner, shared by all local teammate sessions.
   // Never cache settled rosters, or let an old account's flight serve a new owner.
-  let rosterFlight: { scope: unknown; promise: ReturnType<BotMessageTransport['list']> } | undefined;
+  let rosterFlight: { scope: DataOwnerBroadcastScope | undefined; promise: ReturnType<BotMessageTransport['list']> } | undefined;
   const listAgents = async (callerSessionId: string) => {
     const scope = deps.captureOwnerScope?.();
     const caller = await loadCaller(callerSessionId);
@@ -945,7 +959,7 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
             const [row] = await db.select().from(botDirectMessages).where(eq(botDirectMessages.id, sent.id)).limit(1);
             assertCurrent();
             if (!row || row.deliveryStatus !== 'pending') return;
-            await persistDeliveryAnchors(row, caller.botName, row.recipientName ?? row.recipientBotId);
+            await persistDeliveryAnchors(row, caller.botName, row.recipientName ?? row.recipientBotId, owner);
             assertCurrent();
             await db.update(botDirectMessages).set({ deliveryStatus: 'delivered' }).where(eq(botDirectMessages.id, row.id));
             assertCurrent();
@@ -989,6 +1003,7 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
           assertCurrent();
           const rows = await db.select().from(botDirectMessages).where(eq(botDirectMessages.threadId, sent.threadId));
           const count = rows.filter(item => item.deliveryStatus !== 'failed').length;
+          assertCurrent();
           if (!existing && count >= MAX_MESSAGES_PER_THREAD) return;
           const row = existing ? { ...existing, content } : {
             id: replyId, threadId: sent.threadId,
@@ -1001,14 +1016,16 @@ export function createBotDirectMessageService(deps: BotDirectMessageServiceDeps)
           if (existing) await db.update(botDirectMessages).set({ content }).where(eq(botDirectMessages.id, replyId));
           else await db.insert(botDirectMessages).values(row);
           // Retry repairs projections after an interrupted write, without re-sending or double counting.
-          await persistDeliveryAnchors(row, sent.recipientName ?? sent.recipientBotId, caller.botName);
-          await persistDeliveryAnchors(sent, caller.botName, sent.recipientName ?? sent.recipientBotId);
+          await persistDeliveryAnchors(row, sent.recipientName ?? sent.recipientBotId, caller.botName, owner);
+          await persistDeliveryAnchors(sent, caller.botName, sent.recipientName ?? sent.recipientBotId, owner);
           const nextCount = count + (existing ? 0 : 1);
           const [thread] = await db.select().from(botDirectMessageThreads).where(eq(botDirectMessageThreads.id, sent.threadId)).limit(1);
+          assertCurrent();
           await db.update(botDirectMessageThreads).set({ messageCount: nextCount,
             ...(nextCount >= MAX_MESSAGES_PER_THREAD && thread?.closeReason !== 'message-limit' ? { status: 'closed' as const, closeReason: 'message-limit' as const,
               blockedUntil: now() + LIMIT_COOLDOWN_MS, closedAt: now() } : {}),
           }).where(eq(botDirectMessageThreads.id, sent.threadId));
+          assertCurrent();
           await db.update(botDirectMessages).set({ deliveryStatus: 'delivered' }).where(eq(botDirectMessages.id, sent.id));
           assertCurrent();
           deps.onChanged?.(
