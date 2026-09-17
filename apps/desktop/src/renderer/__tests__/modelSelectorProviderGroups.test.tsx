@@ -32,6 +32,7 @@ vi.mock('react-i18next', async (importOriginal) => ({
         'newChat.modelSelector.source.disconnected': '已断开',
         'newChat.modelSelector.trigger.agent.claudeCode': 'Claude Code',
         'newChat.modelSelector.trigger.agent.codex': 'Codex',
+        'newChat.modelSelector.trigger.currentAndNext': `${options?.current} → ${options?.next}`,
         'effortLevels.high': '最高',
       };
       return translations[key] ?? options?.defaultValue ?? key;
@@ -306,6 +307,97 @@ async function openDropdown(): Promise<void> {
     fireEvent.click(screen.getByRole('button', { name: /Select model/ }));
   });
 }
+
+describe('model selector display identity during switches', () => {
+  const props = {
+    unifiedPanel: false,
+    modelId: 'chatgpt/gpt-6',
+    effort: 'high',
+    vendorKey: 'codex' as const,
+    currentProviderId: 'openai',
+    actualRoute: true,
+    onModelChange: vi.fn(),
+    onEffortChange: vi.fn(),
+  };
+  const provider = {
+    id: 'openai', name: 'OpenAI', source: 'builtin', agents: ['codex'],
+    auth: { method: 'oauth' }, routing: { codex: {} }, connected: true,
+    models: { codex: [{ id: 'gpt-6', name: 'GPT-6', efforts: ['high'] }] },
+  };
+  const trigger = () => screen.getByRole('button');
+
+  it('resolves a wire alias immediately, including while the switch is in flight', () => {
+    providersRef.providers = [provider];
+    const { rerender } = render(<ModelSelector {...props} switching />);
+    expect(trigger().textContent).toContain('GPT-6');
+    expect(trigger().getAttribute('aria-label')).not.toContain(props.modelId);
+    rerender(<ModelSelector {...props} switching={false} />);
+    expect(trigger().textContent).toContain('GPT-6');
+  });
+
+  it('retains the selected name when discovery loses the catalog, then accepts updated names', () => {
+    providersRef.providers = [provider];
+    const { rerender } = render(<ModelSelector {...props} switching />);
+    providersRef.providers = [];
+    rerender(<ModelSelector {...props} switching sourceDisconnected />);
+    expect(trigger().textContent).toContain('GPT-6');
+    expect(trigger().textContent).not.toContain(props.modelId);
+    // A failed switch/refresh must not leave the wire ID behind once in-flight ends.
+    rerender(<ModelSelector {...props} sourceDisconnected />);
+    expect(trigger().textContent).toContain('GPT-6');
+    expect(trigger().textContent).toContain('已断开');
+    providersRef.providers = [{ ...provider, models: { codex: [{ id: 'gpt-6', name: 'Custom GPT label' }] } }];
+    rerender(<ModelSelector {...props} />);
+    expect(trigger().textContent).toContain('Custom GPT label');
+  });
+
+  it.each([
+    { modelId: 'chatgpt/unknown-model' },
+    { currentProviderId: 'another-account' },
+    { vendorKey: 'pi' as const },
+    { deviceId: 'another-device' },
+  ])('does not reuse the previous name across a selection boundary: %j', (change) => {
+    providersRef.providers = [provider];
+    const { rerender } = render(<ModelSelector {...props} />);
+    expect(trigger().textContent).toContain('GPT-6');
+    providersRef.providers = [];
+    rerender(<ModelSelector {...props} {...change} />);
+    expect(trigger().textContent).not.toContain('GPT-6');
+    expect(trigger().textContent).not.toContain(change.modelId ?? props.modelId);
+  });
+
+  it.each([false, true])('uses the placeholder for an unknown saved model (disconnected=%s)', (sourceDisconnected) => {
+    providersRef.providers = [];
+    render(<ModelSelector {...props} sourceDisconnected={sourceDisconnected} />);
+    expect(trigger().textContent).toContain('选择模型');
+    expect(trigger().textContent).not.toContain(props.modelId);
+    expect(trigger().getAttribute('title')).not.toContain(props.modelId);
+    expect(trigger().getAttribute('aria-label')).not.toContain(props.modelId);
+  });
+
+  it('preserves an explicitly supplied diagnostic label', () => {
+    providersRef.providers = [];
+    render(<ModelSelector {...props} unknownModelLabel={() => 'Unavailable saved model'} sourceDisconnected />);
+    expect(trigger().textContent).toContain('Unavailable saved model');
+  });
+
+  it('uses display names in the pending selection tooltip and accessibility label', () => {
+    providersRef.providers = [provider];
+    const pendingProps = {
+      ...props,
+      agentIdentity: { vendorKey: 'codex' as const, state: 'pending' as const },
+      currentSelection: { agentKind: 'codex' as const, model: 'chatgpt/missing', providerId: 'openai', effort: 'high', fastMode: false },
+    };
+    const { rerender } = render(<ModelSelector {...pendingProps} />);
+    providersRef.providers = [];
+    rerender(<ModelSelector {...pendingProps} />);
+    for (const attribute of ['title', 'aria-label']) {
+      expect(trigger().getAttribute(attribute)).toContain('GPT-6');
+      expect(trigger().getAttribute(attribute)).toContain('选择模型');
+      expect(trigger().getAttribute(attribute)).not.toContain('chatgpt/');
+    }
+  });
+});
 
 type FloatingOptions = {
   strategy: string;
