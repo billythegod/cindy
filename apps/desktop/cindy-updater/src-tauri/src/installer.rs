@@ -749,6 +749,41 @@ pub(crate) fn acl_control_pins_install_writable(
     !matches!(write_dac, Some(false)) || !matches!(write_owner, Some(false))
 }
 
+/// FILE_DELETE_CHILD / FILE_ADD_FILE or ACL-control on a higher ancestor lets a
+/// medium process swap a package directory to a junction after classification.
+pub(crate) fn ancestor_control_pins_install_writable(
+    delete_child: Option<bool>,
+    add_file: Option<bool>,
+    write_dac: Option<bool>,
+    write_owner: Option<bool>,
+) -> bool {
+    matches!(delete_child, Some(true))
+        || matches!(add_file, Some(true))
+        || acl_control_pins_install_writable(write_dac, write_owner)
+}
+
+/// Directories between a loadable input and `app_dir`, excluding `app_dir`.
+/// Immediate parent is not enough: `node_modules/node-pty` can be replaced
+/// while `lib/` still denies delete.
+pub(crate) fn runtime_path_ancestors(path: &Path, app_dir: &Path) -> Vec<PathBuf> {
+    let mut ancestors = Vec::new();
+    let mut current = match path.parent() {
+        Some(parent) => parent,
+        None => return ancestors,
+    };
+    loop {
+        if current == app_dir {
+            break;
+        }
+        ancestors.push(current.to_path_buf());
+        match current.parent() {
+            Some(parent) if parent != current => current = parent,
+            _ => break,
+        }
+    }
+    ancestors
+}
+
 pub(crate) fn collect_medium_writable_unpacked_files(
     dir: &Path,
     out: &mut Vec<PathBuf>,
@@ -2311,7 +2346,7 @@ fn existing_install_files_medium_writable_windows(app_dir: &Path, exe_name: &str
                 return Some(true);
             }
             saw_existing = true;
-            match file_is_medium_replaceable(&path) {
+            match file_is_medium_replaceable(&path, app_dir) {
                 Some(true) => return Some(true),
                 Some(false) | None => {}
             }
@@ -2326,13 +2361,14 @@ fn existing_install_files_medium_writable_windows(app_dir: &Path, exe_name: &str
 }
 
 #[cfg(windows)]
-fn file_is_medium_replaceable(path: &Path) -> Option<bool> {
+fn file_is_medium_replaceable(path: &Path, app_dir: &Path) -> Option<bool> {
     use windows_sys::Win32::Storage::FileSystem::{
         DELETE, FILE_ADD_FILE, FILE_ATTRIBUTE_NORMAL, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS,
         WRITE_DAC, WRITE_OWNER,
     };
 
-    let parent = path.parent();
+    let ancestors = runtime_path_ancestors(path, app_dir);
+    let parent = ancestors.first().map(|dir| dir.as_path());
     let replaceable = file_is_medium_replaceable_from_access(
         file_grants_generic_write(path),
         path_grants_access(path, DELETE, FILE_ATTRIBUTE_NORMAL),
@@ -2347,13 +2383,21 @@ fn file_is_medium_replaceable(path: &Path) -> Option<bool> {
     if acl_control_pins_install_writable(
         path_grants_access(path, WRITE_DAC, FILE_ATTRIBUTE_NORMAL),
         path_grants_access(path, WRITE_OWNER, FILE_ATTRIBUTE_NORMAL),
-    ) || parent.is_some_and(|dir| {
-        acl_control_pins_install_writable(
+    ) {
+        return Some(true);
+    }
+    for dir in &ancestors {
+        if loadable_input_is_reparse(dir) {
+            return Some(true);
+        }
+        if ancestor_control_pins_install_writable(
+            path_grants_access(dir, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS),
+            path_grants_access(dir, FILE_ADD_FILE, FILE_FLAG_BACKUP_SEMANTICS),
             path_grants_access(dir, WRITE_DAC, FILE_FLAG_BACKUP_SEMANTICS),
             path_grants_access(dir, WRITE_OWNER, FILE_FLAG_BACKUP_SEMANTICS),
-        )
-    }) {
-        return Some(true);
+        ) {
+            return Some(true);
+        }
     }
     replaceable
 }
@@ -4188,6 +4232,61 @@ mod tests {
             "denied WRITE_DAC and WRITE_OWNER do not by themselves pin writable"
         );
         assert!(
+            super::ancestor_control_pins_install_writable(
+                Some(true),
+                Some(false),
+                Some(false),
+                Some(false),
+            ),
+            "FILE_DELETE_CHILD on a non-immediate unpacked ancestor can swap a package to a junction"
+        );
+        assert!(
+            super::ancestor_control_pins_install_writable(
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+            ),
+            "WRITE_DAC on a higher ancestor still replaces unpacked code after UAC"
+        );
+        assert!(
+            !super::ancestor_control_pins_install_writable(
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+            ),
+            "denied ancestor replace and ACL-control rights do not pin writable"
+        );
+        {
+            let nested = app
+                .join("resources")
+                .join("app.asar.unpacked")
+                .join("node_modules")
+                .join("node-pty")
+                .join("lib")
+                .join("index.js");
+            let ancestors = super::runtime_path_ancestors(&nested, &app);
+            assert!(
+                ancestors.iter().any(|path| path.ends_with("node-pty")),
+                "must check the package directory, not only lib/: {ancestors:?}"
+            );
+            assert!(
+                ancestors.iter().any(|path| path.ends_with("node_modules")),
+                "must check node_modules, not only the immediate parent: {ancestors:?}"
+            );
+            assert!(
+                ancestors
+                    .iter()
+                    .any(|path| path.ends_with("app.asar.unpacked")),
+                "must check the unpacked tree root: {ancestors:?}"
+            );
+            assert!(
+                !ancestors.iter().any(|path| path == &app),
+                "app_dir is classified separately: {ancestors:?}"
+            );
+        }
+        assert!(
             super::unpacked_walk_pins_install_writable(super::UnpackedWalk::Unreadable),
             "an unreadable app.asar.unpacked tree must de-elevate, not look protected"
         );
@@ -4324,6 +4423,10 @@ mod tests {
         assert!(
             body.contains("WRITE_DAC") && body.contains("WRITE_OWNER"),
             "ACL-control rights must pin writable before Close relaunch:\n{body}"
+        );
+        assert!(
+            body.contains("runtime_path_ancestors"),
+            "a non-immediate unpacked ancestor must be checked, not only path.parent():\n{body}"
         );
         let start = source
             .find("fn directory_medium_token_can_modify_windows")
