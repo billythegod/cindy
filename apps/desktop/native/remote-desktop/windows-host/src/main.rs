@@ -39,7 +39,12 @@ fn run() -> Result<()> {
             let (_approval, _main) = approval::Approval::for_client(pid)?;
             service::elevate(&format!("--install {pid}"))
         }
-        Some("--elevate-uninstall") => service::elevate("--uninstall"),
+        Some("--elevate-uninstall") => {
+            // Original-user vault cleanup must happen before UAC. The elevated
+            // `--uninstall` process enumerates the approving administrator.
+            let _ = legacy_cleanup::remove_saved_credentials();
+            service::elevate("--uninstall")
+        }
         Some("--status") => {
             println!(
                 "{}",

@@ -228,35 +228,13 @@ pub fn install(pid: u32) -> Result<()> {
     } else {
         None
     };
-    let _application = if let Some((_, main, hash, captured)) = &mut snapshot {
-        captured.harden()?;
-        if !security::process_still_running(client.0) {
-            return denied();
-        }
-        security::confirm_application_code(
-            main,
-            &approval.application.join(&approval.executable),
-            hash,
-        )?;
-        security::protect_application(&approval.application)?
-    } else {
-        Vec::new()
-    };
     let base = installation::program_files()?.join("CindyRemoteDesktop");
     security::create_protected_directory(&base)?;
     security::create_protected_directory(&target.directory)?;
     let _target = security::pin_ancestors(&target.directory)?;
-    // This removes/replaces the legacy SCM registration under the same name.
-    // Stop must finish before any privileged binary is replaced.
-    crate::service::uninstall()?;
-    for name in [installation::HOST, installation::INPUT] {
-        let destination = target.directory.join(name);
-        if destination.exists() {
-            security::check_paths(vec![destination.clone()])?;
-        }
-        security::copy_protected_payload(&source.with_file_name(name), &destination)?;
-        security::secure_code(&destination)?;
-    }
+    // Persist the first-install restore snapshot before any application ACL
+    // change. A crash during harden() otherwise leaves the tree admin-only
+    // with no record, and a retry skips already-protected paths.
     if let Some((_, main, hash, captured)) = &snapshot {
         if !security::process_still_running(client.0) {
             return denied();
@@ -279,6 +257,41 @@ pub fn install(pid: u32) -> Result<()> {
             }
         }
     }
+    let _application = if let Some((_, main, hash, captured)) = &mut snapshot {
+        captured.harden()?;
+        if !security::process_still_running(client.0) {
+            return denied();
+        }
+        security::confirm_application_code(
+            main,
+            &approval.application.join(&approval.executable),
+            hash,
+        )?;
+        security::protect_application(&approval.application)?
+    } else {
+        Vec::new()
+    };
+    // This removes/replaces the legacy SCM registration under the same name.
+    // Stop must finish before any privileged binary is replaced.
+    crate::service::uninstall()?;
+    for name in [installation::HOST, installation::INPUT] {
+        let destination = target.directory.join(name);
+        if destination.exists() {
+            security::check_paths(vec![destination.clone()])?;
+        }
+        security::copy_protected_payload(&source.with_file_name(name), &destination)?;
+        security::secure_code(&destination)?;
+    }
+    if let Some((_, main, hash, _)) = &snapshot {
+        if !security::process_still_running(client.0) {
+            return denied();
+        }
+        security::confirm_application_code(
+            main,
+            &approval.application.join(&approval.executable),
+            hash,
+        )?;
+    }
     write_protected_record(
         &target.directory,
         installation::APPROVAL,
@@ -297,10 +310,12 @@ pub fn install(pid: u32) -> Result<()> {
 
 pub fn remove() -> Result<()> {
     let installation = Installation::current()?;
-    crate::service::uninstall()?;
-    // Unelevated NSIS can still delete this user's leftover GENERIC vault
-    // entries. Provider HKLM keys wait for the elevated path below.
+    // Delete this user's leftover GENERIC vault entries before SCM uninstall.
+    // Unelevated `--uninstall` and the unelevated half of `--elevate-uninstall`
+    // both reach here in the original user; waiting until after uninstall()
+    // would skip cleanup when a standard user cannot stop the service.
     let _ = legacy_cleanup::remove_saved_credentials();
+    crate::service::uninstall()?;
     if !installation.directory.exists() {
         let _ = legacy_cleanup::remove_provider_registration(&installation.name);
         return Ok(());
@@ -411,5 +426,38 @@ mod tests {
         assert_eq!(std::fs::read(&record).unwrap(), b"next-restore");
         assert!(!temporary.exists());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn first_install_restore_record_is_written_before_hardening() {
+        let install = include_str!("approval.rs")
+            .split("pub fn install(")
+            .nth(1)
+            .unwrap()
+            .split("pub fn remove()")
+            .next()
+            .unwrap();
+        assert!(
+            install.find("installation::ACL_RESTORE").unwrap()
+                < install.find("captured.harden()").unwrap()
+        );
+    }
+    #[test]
+    fn leftover_credentials_are_removed_before_service_uninstall() {
+        let remove = include_str!("approval.rs")
+            .split("pub fn remove()")
+            .nth(1)
+            .unwrap();
+        assert!(
+            remove.find("remove_saved_credentials").unwrap()
+                < remove.find("service::uninstall").unwrap()
+        );
+        let elevate = include_str!("main.rs")
+            .split("Some(\"--elevate-uninstall\")")
+            .nth(1)
+            .unwrap();
+        assert!(
+            elevate.find("remove_saved_credentials").unwrap()
+                < elevate.find("service::elevate").unwrap()
+        );
     }
 }

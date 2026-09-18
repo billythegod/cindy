@@ -529,8 +529,9 @@ sharing before changing ACLs, then applies nested objects first so a parent
 cannot be swapped for a junction between path checks and the descriptor write. Packaged Authenticode matching
 reads the signer from the PKCS#7 message; CryptQueryObject leaves ppvContext
 null for embedded signatures.
-Reinstall keeps the first-install restore record: already-protected paths are not
-recaptured as an empty snapshot.
+The first-install restore record is written before ACL hardening, so a crash
+cannot leave the application admin-only without a snapshot. Reinstall keeps that
+record: already-protected paths are not recaptured as an empty snapshot.
 The opt-in text discloses both service installation and program-file protection.
 Cancelling UAC runs neither step and does not disable ordinary remote desktop.
 
