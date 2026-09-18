@@ -33,6 +33,7 @@ const mocks = {
   worktreeGetForSession: vi.fn(),
   worktreeDetectCwd: vi.fn(),
   findLinkedWorktree: vi.fn(),
+  recentGitDir: vi.fn(),
   listeners: new Set<(payload: { sessionId: string }) => void>(),
   sessionCreatedListeners: new Set<
     (payload: { sessionId: string }, ownerStamp?: unknown) => void
@@ -107,6 +108,7 @@ beforeEach(() => {
   mocks.worktreeGetForSession.mockReset();
   mocks.worktreeDetectCwd.mockReset();
   mocks.findLinkedWorktree.mockReset().mockResolvedValue(null);
+  mocks.recentGitDir.mockReset().mockResolvedValue({ source: null, workdir: null, head: null });
   mocks.getSession.mockReset().mockImplementation(async (id: string) => ({ id }));
   mocks.worktreeDetectCwd.mockResolvedValue({
     isInsideWorktree: true,
@@ -122,7 +124,10 @@ beforeEach(() => {
       worktreeListAll: mocks.worktreeListAll,
       worktreeGetForSession: mocks.worktreeGetForSession,
       worktreeDetectCwd: mocks.worktreeDetectCwd,
-      gitContext: { findLinkedWorktree: mocks.findLinkedWorktree },
+      gitContext: {
+        findLinkedWorktree: mocks.findLinkedWorktree,
+        getForSession: mocks.recentGitDir,
+      },
       onWorktreeChanged: (cb: (payload: { sessionId: string }) => void) => {
         mocks.listeners.add(cb);
         return () => mocks.listeners.delete(cb);
@@ -173,9 +178,10 @@ describe('WorktreeContext recycle refresh', () => {
     await act(async () => emitToolMessage('open', 'tool_use'));
     expect(view.getByTestId('sidebar-open').querySelector('svg')).toBeNull();
 
-    mocks.findLinkedWorktree.mockResolvedValue({
+    mocks.recentGitDir.mockResolvedValue({
+      source: 'telemetry',
       workdir: '/tmp/observed/open',
-      branch: 'feature',
+      head: { branch: 'feature' },
     });
     await act(async () => emitToolMessage());
     expect(view.getByTestId('sidebar-open').querySelector('svg.lucide-folders')).not.toBeNull();
@@ -297,7 +303,7 @@ describe('WorktreeContext recycle refresh', () => {
     });
     expect(mocks.findLinkedWorktree).toHaveBeenCalledTimes(2);
     expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/newest');
-    mocks.findLinkedWorktree.mockRejectedValue(new Error('IPC unavailable'));
+    mocks.recentGitDir.mockRejectedValue(new Error('IPC unavailable'));
     await act(async () => emitToolMessage());
     expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/newest');
   });
@@ -312,13 +318,119 @@ describe('WorktreeContext recycle refresh', () => {
     await act(async () => emitToolMessage());
     view.rerender(content(true));
     expect(view.getByTestId('sidebar-open').querySelector('svg')).toBeNull();
-    mocks.findLinkedWorktree.mockResolvedValue({ workdir: '/tmp/new-path', branch: null });
+    mocks.recentGitDir.mockResolvedValue({
+      source: 'telemetry',
+      workdir: '/tmp/new-path',
+      head: null,
+    });
     await act(async () => emitToolMessage());
     view.rerender(content(true, true));
     expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/new-path');
     expect(view.getByTestId('sidebar-open').querySelector('svg.lucide-folders')).not.toBeNull();
-    expect(mocks.findLinkedWorktree).toHaveBeenCalledTimes(2);
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledOnce();
+    expect(mocks.recentGitDir).toHaveBeenCalledOnce();
     expect(mocks.messageListeners.size).toBe(1);
+  });
+
+  it('bounds sequential tool refreshes for empty and observed tasks, follows new roots, and backfills only after invalidation', async () => {
+    mocks.worktreeListAll.mockResolvedValue([]);
+    const view = render(
+      <WorktreeProvider>
+        <SidebarProbe />
+      </WorktreeProvider>,
+    );
+    for (let i = 0; i < 40; i++) await act(async () => emitToolMessage());
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledOnce();
+    expect(mocks.worktreeDetectCwd).not.toHaveBeenCalled();
+
+    // A fallback workingDir is never telemetry evidence.
+    mocks.recentGitDir.mockResolvedValue({ source: 'workingDir', workdir: '/repo', head: null });
+    await act(async () => emitToolMessage());
+    expect(mocks.worktreeDetectCwd).not.toHaveBeenCalled();
+    mocks.recentGitDir.mockResolvedValue({
+      source: 'telemetry',
+      workdir: '/tmp/new/src',
+      head: null,
+    });
+    mocks.worktreeDetectCwd.mockResolvedValue({
+      isInsideWorktree: true,
+      repoRoot: '/tmp/new',
+      currentBranch: 'new',
+    });
+    for (let i = 0; i < 40; i++) await act(async () => emitToolMessage());
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/new');
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledOnce();
+    expect(mocks.worktreeDetectCwd).toHaveBeenCalledTimes(40);
+
+    // Returning to main does not forget an earlier live observed worktree.
+    mocks.recentGitDir.mockResolvedValue({ source: 'telemetry', workdir: '/repo', head: null });
+    mocks.worktreeDetectCwd.mockImplementation(async ({ cwd }) => ({
+      isInsideWorktree: cwd === '/tmp/new',
+    }));
+    await act(async () => emitToolMessage());
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/new');
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledOnce();
+    mocks.worktreeDetectCwd.mockResolvedValue({ isInsideWorktree: false });
+    mocks.findLinkedWorktree.mockResolvedValue({ workdir: '/tmp/older', branch: null });
+    await act(async () => emitToolMessage());
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/older');
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a full-history invalidation queued behind a recent query and rejects probes after unmount', async () => {
+    mocks.worktreeListAll.mockResolvedValue([]);
+    mocks.findLinkedWorktree.mockResolvedValue({ workdir: '/tmp/old', branch: null });
+    const view = render(
+      <WorktreeProvider>
+        <SidebarProbe />
+      </WorktreeProvider>,
+    );
+    await act(async () => emitToolMessage());
+    let finish!: (value: unknown) => void;
+    mocks.recentGitDir.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await act(async () => emitToolMessage());
+    mocks.findLinkedWorktree.mockResolvedValue({ workdir: '/tmp/older', branch: null });
+    await act(async () => {
+      emitWorktreeChanged('open');
+      finish({ source: 'telemetry', workdir: '/tmp/recent', head: null });
+    });
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/older');
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledTimes(2);
+    mocks.recentGitDir.mockResolvedValue({
+      source: 'telemetry',
+      workdir: '/tmp/pending',
+      head: null,
+    });
+    mocks.worktreeDetectCwd.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await act(async () => emitToolMessage());
+    view.unmount();
+    await act(async () => finish({ isInsideWorktree: false }));
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledTimes(2);
+  });
+
+  it('starts a new history backfill for a different owner even after an empty snapshot', async () => {
+    mocks.worktreeListAll.mockResolvedValue([]);
+    const view = render(
+      <WorktreeProvider>
+        <SidebarProbe />
+      </WorktreeProvider>,
+    );
+    await act(async () => emitToolMessage());
+    setDataOwnerGeneration('next-owner');
+    mocks.findLinkedWorktree.mockResolvedValue({ workdir: '/tmp/next-owner', branch: null });
+    await act(async () => emitToolMessage());
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/next-owner');
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledTimes(2);
   });
 
   it('retains accepted snapshots across same-owner recommits but rejects old-generation pending results', async () => {
@@ -333,7 +445,7 @@ describe('WorktreeContext recycle refresh', () => {
     const view = render(content());
     await act(async () => emitToolMessage());
     let finish!: (value: unknown) => void;
-    mocks.findLinkedWorktree.mockImplementationOnce(
+    mocks.recentGitDir.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finish = resolve;
@@ -343,7 +455,7 @@ describe('WorktreeContext recycle refresh', () => {
     setDataOwnerGeneration('owner', 2);
     view.rerender(content());
     expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/accepted');
-    await act(async () => finish({ workdir: '/tmp/stale', branch: null }));
+    await act(async () => finish({ source: 'telemetry', workdir: '/tmp/stale', head: null }));
     expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/accepted');
     mocks.findLinkedWorktree.mockResolvedValue(null);
     await act(async () => emitWorktreeChanged('open'));
@@ -412,7 +524,7 @@ describe('WorktreeContext recycle refresh', () => {
     await act(async () => emitToolMessage());
     expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/owner-a');
     let finishOld!: (value: unknown) => void;
-    mocks.findLinkedWorktree.mockImplementationOnce(
+    mocks.recentGitDir.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finishOld = resolve;
@@ -425,7 +537,9 @@ describe('WorktreeContext recycle refresh', () => {
     mocks.findLinkedWorktree.mockResolvedValue({ workdir: '/tmp/owner-b', branch: null });
     await act(async () => emitToolMessage());
     expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/owner-b');
-    await act(async () => finishOld({ workdir: '/tmp/old-owner-late', branch: null }));
+    await act(async () =>
+      finishOld({ source: 'telemetry', workdir: '/tmp/old-owner-late', head: null }),
+    );
     expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/owner-b');
   });
 

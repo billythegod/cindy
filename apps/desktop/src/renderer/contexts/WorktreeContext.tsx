@@ -38,7 +38,7 @@ import {
 
 interface ObservedWorktree {
   owner: DataOwnerGeneration;
-  info: { workdir: string; branch: string | null };
+  info: { workdir: string; branch: string | null } | null;
 }
 
 // Like PrRefsContext, keep a stable store in Context; an observed update must
@@ -47,24 +47,26 @@ function createObservedStore() {
   const entries = new Map<string, ObservedWorktree>();
   const listeners = new Map<string, Set<() => void>>();
   return {
+    has(sessionId: string) {
+      const entry = entries.get(sessionId);
+      return Boolean(entry && isDataOwnerIdCurrent(entry.owner));
+    },
     get(sessionId: string) {
       const entry = entries.get(sessionId);
       return entry && isDataOwnerIdCurrent(entry.owner) ? entry.info : null;
     },
     set(sessionId: string, owner: DataOwnerGeneration, info: ObservedWorktree['info'] | null) {
       const previous = entries.get(sessionId);
-      if (!info) {
-        if (!entries.delete(sessionId)) return;
-      } else {
-        if (
-          previous &&
-          isDataOwnerIdCurrent(previous.owner) &&
-          previous.info.workdir === info.workdir &&
-          previous.info.branch === info.branch
-        )
-          return;
-        entries.set(sessionId, { owner, info });
-      }
+      if (
+        previous &&
+        isDataOwnerIdCurrent(previous.owner) &&
+        previous.info?.workdir === info?.workdir &&
+        previous.info?.branch === info?.branch
+      )
+        return;
+      // A completed empty backfill is also a snapshot. Tool traffic must not
+      // rescan all history just because this task has never used a worktree.
+      entries.set(sessionId, { owner, info });
       listeners.get(sessionId)?.forEach((listener) => listener());
     },
     subscribe(sessionId: string, listener: () => void) {
@@ -87,7 +89,7 @@ interface WorktreeContextValue {
   rawMetas: Record<string, WorktreeMeta>;
   reportLiveness: (meta: WorktreeMeta, live: boolean) => void;
   observed: ReturnType<typeof createObservedStore>;
-  refreshObserved: (sessionId: string) => Promise<void>;
+  refreshObserved: (sessionId: string, mode?: 'recent' | 'history') => Promise<void>;
   /** 从 main 查询并更新单个 session 的 worktree 缓存。 */
   refreshSession: (sessionId: string) => Promise<void>;
 }
@@ -99,17 +101,26 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
   // Sidebar and composer share one in-flight query per session. A tool result arriving
   // during discovery requires one more pass over the newly committed messages.
   const observedRequests = useRef(
-    new Map<string, { owner: DataOwnerGeneration; queued: boolean; promise: Promise<void> }>(),
+    new Map<
+      string,
+      { owner: DataOwnerGeneration; queued: boolean; history: boolean; promise: Promise<void> }
+    >(),
   );
   const refreshObserved = useCallback(
-    (sessionId: string): Promise<void> => {
+    (sessionId: string, mode: 'recent' | 'history' = 'history'): Promise<void> => {
       const pending = observedRequests.current.get(sessionId);
       if (pending && isDataOwnerGenerationCurrent(pending.owner)) {
         pending.queued = true;
+        pending.history ||= mode === 'history';
         return pending.promise;
       }
       const owner = getDataOwnerGeneration();
-      const request = { owner, queued: false, promise: Promise.resolve() };
+      const request = {
+        owner,
+        queued: false,
+        history: mode === 'history',
+        promise: Promise.resolve(),
+      };
       const isCurrent = () =>
         observedRequests.current.get(sessionId) === request && isDataOwnerGenerationCurrent(owner);
       observedRequests.current.set(sessionId, request);
@@ -120,7 +131,40 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
             const session = await window.electronAPI.localDb.sessions.get(sessionId);
             if (!isCurrent()) return;
             if (!session || session.remoteHostId || session.deviceLinkDeviceId) return;
-            const found = await window.electronAPI.gitContext.findLinkedWorktree({ sessionId });
+            let found: ObservedWorktree['info'] = null;
+            if (request.history || !observed.has(sessionId)) {
+              found = await window.electronAPI.gitContext.findLinkedWorktree({ sessionId });
+            } else {
+              // The existing resolver reads only the latest bounded telemetry
+              // window and probes one candidate, rather than walking 2000 rows.
+              const recent = await window.electronAPI.gitContext.getForSession({
+                sessionId,
+                workingDir: null,
+                worktreePath: null,
+              });
+              if (!isCurrent()) return;
+              const previous = observed.get(sessionId);
+              const candidate = recent.source === 'telemetry' ? recent.workdir : null;
+              const paths = new Set(
+                [candidate, previous?.workdir].filter((p): p is string => Boolean(p)),
+              );
+              for (const cwd of paths) {
+                const detected = await window.electronAPI.worktreeDetectCwd({ cwd });
+                if (!isCurrent()) return;
+                if (detected.isInsideWorktree) {
+                  found = {
+                    workdir: detected.repoRoot ?? cwd,
+                    branch: detected.currentBranch ?? null,
+                  };
+                  break;
+                }
+              }
+              // A known worktree disappeared: recover an older surviving one.
+              // Empty tasks do not repeat this full backfill on each tool call.
+              if (!found && previous) {
+                found = await window.electronAPI.gitContext.findLinkedWorktree({ sessionId });
+              }
+            }
             if (!isCurrent()) return;
             if (request.queued) continue;
             observed.set(sessionId, owner, found?.workdir ? found : null);
@@ -154,7 +198,7 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
         if (!sessionId || !isDataOwnerPushCurrent(ownerStamp)) return;
         if (message.role !== 'tool_use' && message.role !== 'tool_result') return;
         if (snapshot.metas[sessionId] && !snapshot.invalid.has(sessionId)) return;
-        void refreshObserved(sessionId);
+        void refreshObserved(sessionId, 'recent');
       },
     );
   }, [snapshot, refreshObserved]);
