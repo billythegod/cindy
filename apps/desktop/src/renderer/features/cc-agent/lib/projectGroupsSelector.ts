@@ -2,11 +2,12 @@ import type { Session } from '@/lib/ccAgent.types';
 import {
   groupSessions,
   type GroupSessionsOptions,
+  type PersistentLocalProject,
   type ProjectGroupsResult,
 } from './projectGrouping';
 
-// Only known row-only changes can reuse a grouping. New/unknown fields take
-// the canonical path, so adding a grouping input cannot silently stale it.
+// These fields are displayed by rows, but do not determine membership, names,
+// or ordering. Unknown/new fields deliberately fall back to full grouping.
 const ROW_ONLY_FIELDS = new Set([
   'title',
   'preview',
@@ -22,10 +23,10 @@ const ROW_ONLY_FIELDS = new Set([
 
 function sameGroupingInput(a: Session, b: Session): boolean {
   if ((a.userSendAt ?? a.updatedAt) !== (b.userSendAt ?? b.updatedAt)) return false;
-  // Message count only affects whether a task is a draft. A new reply must not
-  // regroup every project, but the first message still must move the task.
+  // Only crossing the draft boundary changes grouping.
   if (((a._count?.messages ?? 0) === 0) !== ((b._count?.messages ?? 0) === 0)) return false;
-  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
     if (!ROW_ONLY_FIELDS.has(key) && a[key as keyof Session] !== b[key as keyof Session]) {
       return false;
     }
@@ -33,34 +34,42 @@ function sameGroupingInput(a: Session, b: Session): boolean {
   return true;
 }
 
+function samePersistentProjects(
+  a: readonly PersistentLocalProject[] | undefined,
+  b: readonly PersistentLocalProject[] | undefined,
+): boolean {
+  return (
+    a === b ||
+    (!!a &&
+      !!b &&
+      a.length === b.length &&
+      a.every((p, i) => {
+        const next = b[i];
+        return (
+          p.workingDir === next.workingDir &&
+          p.lastUsedAt === next.lastUsedAt &&
+          p.knownAgentKinds.length === next.knownAgentKinds.length &&
+          p.knownAgentKinds.every((kind, j) => kind === next.knownAgentKinds[j])
+        );
+      }))
+  );
+}
+
 function sameOptions(a: GroupSessionsOptions, b: GroupSessionsOptions): boolean {
-  const ap = a.persistentLocalProjects;
-  const bp = b.persistentLocalProjects;
   return (
     a.projectAliases === b.projectAliases &&
     a.includePinnedInProjects === b.includePinnedInProjects &&
     a.includeDraftsInProjects === b.includeDraftsInProjects &&
     a.localPlatform === b.localPlatform &&
     a.botOwnerBySessionId === b.botOwnerBySessionId &&
-    (ap === bp ||
-      (!!ap &&
-        !!bp &&
-        ap.length === bp.length &&
-        ap.every((p, i) => {
-          const next = bp[i];
-          return (
-            p.workingDir === next.workingDir &&
-            p.lastUsedAt === next.lastUsedAt &&
-            p.knownAgentKinds.length === next.knownAgentKinds.length &&
-            p.knownAgentKinds.every((kind, j) => kind === next.knownAgentKinds[j])
-          );
-        })))
+    samePersistentProjects(a.persistentLocalProjects, b.persistentLocalProjects)
   );
 }
 
-/** One previous projection per consumer; immutable inputs, no retained history.
- * Keep unchanged groups/rows referentially stable while publishing fresh row
- * values. Membership, order, identity or option changes use groupSessions.
+/** One previous projection per hook; no global cache or retained session history.
+ * Timestamp/preview/spend updates replace the affected row in its existing group.
+ * All other changes use the canonical algorithm, including draft time fallback,
+ * identity, pinning, aliases, bot ownership and remote connection state.
  */
 export function createProjectGroupsSelector() {
   let previous:
@@ -70,6 +79,7 @@ export function createProjectGroupsSelector() {
         result: ProjectGroupsResult;
       }
     | undefined;
+
   return (
     sessions: readonly Session[],
     options: GroupSessionsOptions = {},

@@ -665,6 +665,7 @@ function generatedFilesCardPropsEqual(
     turnEndMs: number | null;
     turnSealed?: boolean;
     botArtifacts?: boolean;
+    onVisibilityChange?: (checkKey: string, visible: boolean) => void;
   },
   next: {
     renderItemKey?: string;
@@ -673,11 +674,13 @@ function generatedFilesCardPropsEqual(
     turnEndMs: number | null;
     turnSealed?: boolean;
     botArtifacts?: boolean;
+    onVisibilityChange?: (checkKey: string, visible: boolean) => void;
   },
 ): boolean {
   return (
     prev.renderItemKey === next.renderItemKey &&
     prev.botArtifacts === next.botArtifacts &&
+    prev.onVisibilityChange === next.onVisibilityChange &&
     generatedFilesCheckKey(prev.files, prev.turnStartMs, prev.turnEndMs, prev.turnSealed) ===
       generatedFilesCheckKey(next.files, next.turnStartMs, next.turnEndMs, next.turnSealed)
   );
@@ -690,6 +693,7 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
   turnEndMs,
   turnSealed = false,
   botArtifacts = false,
+  onVisibilityChange,
 }: {
   renderItemKey?: string;
   files: readonly GeneratedFileRef[];
@@ -698,6 +702,8 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
   turnSealed?: boolean;
   /** 伙伴会话专属：成果优先、辅助文件默认收起。 */
   botArtifacts?: boolean;
+  /** Report the same checked visibility used by the card, never candidate paths. */
+  onVisibilityChange?: (checkKey: string, visible: boolean) => void;
 }) {
   const { t } = useTranslation();
   const fileCtx = useChatSessionFile();
@@ -756,6 +762,9 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
       turnSealed,
     });
     visibleRef.current = plan.visible;
+    // A remounted viewport starts with unknown visibility. Keep the parent's
+    // last confirmation until this check settles instead of reviving prose.
+    if (plan.visible !== null) onVisibilityChange?.(checkKey, plan.visible.length > 0);
     if (plan.visible === null) {
       setExisting(null);
     } else {
@@ -811,6 +820,7 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
         turnWindowChanged,
       });
       visibleRef.current = merged;
+      onVisibilityChange?.(checkKey, merged.length > 0);
       setExisting((prev) => reuseGeneratedFilesIfUnchanged(prev, merged));
     })();
 
@@ -825,6 +835,7 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
     turnSealed,
     fileCtx.workingDir,
     remoteVerdictGen,
+    onVisibilityChange,
   ]);
 
   if (!existing || existing.length === 0) return null;

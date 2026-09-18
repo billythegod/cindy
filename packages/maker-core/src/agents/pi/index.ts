@@ -91,6 +91,9 @@ import {
 } from '../base-agent.js';
 import {
   CINDY_BRIDGE_EXTENSION_FILENAME,
+  CINDY_PI_TEXT_ONLY_INPUT_PREFIX,
+  CINDY_PI_TEXT_ONLY_READY_PREFIX,
+  CINDY_PI_TEXT_ONLY_CLOSED_PREFIX,
   CINDY_BRIDGE_EXTENSION_SOURCE } from './cindy-bridge-source.js';
 import { nativeProviderAdapterAliases } from './native-provider-adapter-source.js';
 import {
@@ -132,6 +135,9 @@ import {
   createAutoReviewUnavailableNotice,
   extractAutoReviewUserIntent,
   appendAutoReviewUserIntent,
+  normalizeAutoReviewUserIntent,
+  createAutoReviewActionContext,
+  type AutoReviewUserIntent,
   composeAutoReviewIntentWithClarification,
   isSystemPermissionDenialReason,
   formatPermissionDenial,
@@ -3213,6 +3219,13 @@ export class PiAgent extends BaseAgent {
       runtimeDir,
       `perm-${sid ?? `anon-${process.pid}-${Date.now()}`}-${runtimeInstanceId}${remote ? `-${permissionSnapshotHash}` : ''}.json`,
     );
+    let activeToolsDisabled = false;
+    let textOnlyPolicyReady = false;
+    const textOnlyInput = (text: string): string => {
+      if (!activeToolsDisabled) return text;
+      if (!textOnlyPolicyReady) throw new Error('Pi text-only input policy is unavailable.');
+      return `${CINDY_PI_TEXT_ONLY_INPUT_PREFIX}${runtimeInstanceId}\n${text}`;
+    };
     // 子代理运行期快照(model + provider)。与权限档同机制:文件而非 env —— env 在 spawn
     // 时定型,会话中途 setModel 后子代理会继续用启动时的旧模型(greptile P1),而 BYOM /
     // 本地 provider 不一起传还会让同名模型落到错误 endpoint(codex P2,pi-harness §3 要求
@@ -3775,7 +3788,8 @@ export class PiAgent extends BaseAgent {
     let mutableProviderId: string | null | undefined = opts.providerId ?? authProviderId;
     let activeEffortSnapshot = initialEffortSnapshot;
     let mutableEffort: Effort | null = startupEffort ?? null;
-    let currentAutoReviewIntent = '';
+    let currentAutoReviewIntent: AutoReviewUserIntent = '';
+    const autoReviewActionContext = createAutoReviewActionContext();
     const autoReviewContext = () => activeTurnPermissionPolicy?.autoReviewContext
       ?? (activeTurnPermissionPolicy?.origin.kind === 'im'
         ? { requesterAuthority: 'unknown' as const, source: 'direct' as const }
@@ -3784,8 +3798,9 @@ export class PiAgent extends BaseAgent {
     let currentAutoReviewAuthority: ReturnType<typeof autoReviewContext> | null;
     const priorAutoReviewIntent = () => JSON.stringify(currentAutoReviewAuthority ?? null) === JSON.stringify(autoReviewContext() ?? null) ? currentAutoReviewIntent : '';
     const autoReviewDecisionCache = new Map<string, Promise<AutoReviewDecision>>();
-    const setAutoReviewIntent = (content: UserMessage['content'], source = { authority: currentAutoReviewAuthority }): void => {
-      currentAutoReviewIntent = extractAutoReviewUserIntent(content);
+    const setAutoReviewIntent = (content: AutoReviewUserIntent, source = { authority: currentAutoReviewAuthority }): void => {
+      autoReviewActionContext.advance(typeof content !== 'string' && JSON.stringify(currentAutoReviewAuthority ?? null) === JSON.stringify(source.authority ?? null));
+      currentAutoReviewIntent = normalizeAutoReviewUserIntent(content);
       currentAutoReviewAuthority = source.authority && { ...source.authority };
       autoReviewDecisionCache.clear();
       // 每条新用户消息 = 新一轮,提示重新武装。ErrorBanner 那份只活到下一条非 error 事件
@@ -3903,6 +3918,7 @@ export class PiAgent extends BaseAgent {
         providerId: mutableProviderId,
         model: mutableModel,
         userIntent: currentAutoReviewIntent,
+        precedingBlockedActions: autoReviewActionContext.precedingBlockedActions,
         ...(currentAutoReviewAuthority ? { authorizationContext: currentAutoReviewAuthority } : {}),
         action,
         workspaceRoots: [opts.workingDir, ...mutableExtraDirs, ...mutableWritableDirs],
@@ -3915,7 +3931,7 @@ export class PiAgent extends BaseAgent {
         pending = resolveAutoReviewDecision(request, this.deps.reviewAutoPermissionAction);
         autoReviewDecisionCache.set(cacheKey, pending);
       }
-      return pending.then((decision) => (
+      return pending.then<AutoReviewDecision>((decision) => (
         autoReviewDecisionCache.get(cacheKey) !== pending
           ? { verdict: 'block', reason: 'User instructions changed; retry against the latest authorization.' }
           : directoryGeneration === autoReviewDirectoryGeneration
@@ -3925,7 +3941,12 @@ export class PiAgent extends BaseAgent {
               verdict: 'block',
               reason: 'Directory permissions changed; retry with the current scope.',
             }
-      ));
+      )).then((decision) => {
+        if (autoReviewDecisionCache.get(cacheKey) === pending && directoryGeneration === autoReviewDirectoryGeneration) {
+          autoReviewActionContext.record(action, decision);
+        }
+        return decision;
+      });
     };
     let closed = false;
     /**
@@ -5080,6 +5101,7 @@ export class PiAgent extends BaseAgent {
         PI_CODING_AGENT_DIR: configHome,
         [PI_BASH_PACKAGE_HOME_ENV]: bashPackageHome,
         CINDY_PI_PERMISSION_FILE: permissionFile,
+        CINDY_PI_TURN_TOOL_POLICY: remote ? '' : runtimeInstanceId,
         ...(allowPiPackageManagement ? { [PI_PACKAGE_MANAGEMENT_ENV]: piPackageManagementToken } : {}),
         // 轮 40-w4-t12 HIGH-1:review-only 启动标记 —— 独立于权限文件(文件损坏/
         // 缺失时 bridge 仍保留 reviewOnly 语义, 不降级成普通 ask;见
@@ -5159,6 +5181,16 @@ export class PiAgent extends BaseAgent {
         onEvent: (event: PiRpcEvent) => {
           if (event.type === 'agent_start' || event.type === 'agent_settled') {
             piAgentLifecycleSequence += 1;
+          }
+          if (!remote && event.type === 'extension_ui_request' && event.method === 'notify') {
+            if (event.message === `${CINDY_PI_TEXT_ONLY_READY_PREFIX}${runtimeInstanceId}`) {
+              textOnlyPolicyReady = true;
+              return;
+            }
+            if (event.message === `${CINDY_PI_TEXT_ONLY_CLOSED_PREFIX}${runtimeInstanceId}`) {
+              textOnlyPolicyReady = false;
+              return;
+            }
           }
           if (event.type === 'extension_ui_request') {
             this.handleExtensionUiRequest(event, proc, () => ({
@@ -6532,6 +6564,12 @@ export class PiAgent extends BaseAgent {
       // Full Access 下 fail-closed 拒绝带策略的 send(与 capability
       // turnPermissionPolicy.unsupportedPermissionModes 一致,也与 CC/Codex 同口径)。
       validateSendOptions(sendOpts: SendOptions) {
+        if (sendOpts.toolsDisabled && remote) {
+          throw new Error('Host text-only Pi turns require a local runtime, not a shared remote daemon.');
+        }
+        if (sendOpts.toolsDisabled && !textOnlyPolicyReady) {
+          throw new Error('Pi text-only input policy is unavailable.');
+        }
         if (sendOpts.turnPermissionPolicy && permissionMode === 'bypassPermissions') {
           throw new TurnPermissionPolicyUnsupportedError('pi', permissionMode);
         }
@@ -6551,6 +6589,12 @@ export class PiAgent extends BaseAgent {
         let promptRequestStarted = false;
         let reviewIntentUpdated = false;
         try {
+          const nextToolsDisabled = sendOpts?.toolsDisabled === true;
+          if ((ctx.isStreaming || ctx.pendingHostTurnStartToken) && activeToolsDisabled !== nextToolsDisabled) {
+            throw new Error('Cannot change the tool policy while a Pi turn is active.');
+          }
+          activeToolsDisabled = nextToolsDisabled;
+          rejectIfCancelled(sendOpts, 'send');
           if (reviewMode) {
             await assertReviewMessageContentPaths(message.content, opts.workingDir, reviewReadGrants);
           }
@@ -6592,7 +6636,7 @@ export class PiAgent extends BaseAgent {
           }
           const command: Record<string, unknown> = {
             type: 'prompt',
-            message: escapeLeadingSlashCommand(promptText, runtimeCapabilityManifest),
+            message: textOnlyInput(escapeLeadingSlashCommand(promptText, runtimeCapabilityManifest)),
           };
           if (images.length > 0) command.images = images;
           // send 语义 = 排队开新 turn;pi streaming 中裸 prompt 会被拒,补 followUp。

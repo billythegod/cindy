@@ -25,7 +25,9 @@ const GENERATED_OVERRIDES = {
   "surface-hover-hsl": "0 0% 11.4%", // hover -> HSL
   "surface-on-card": "#181818", // 直映: 页底(纯中性)
   "switch-track-off": "#787878", // 关闭态轨道:值与依据见决策表(用户调参 2026-08-05)
-  "switch-track-on": "#EEEEEE", // 开启态轨道:值与依据见决策表(用户调参 2026-08-05)
+  "switch-track-on": "#417CDD", // 开启态轨道:蓝色 #417CDD(用户裁决 2026-09-15)
+  "switch-thumb-on": "#FCFCFC", // Switch 滑块:用户批准 HTML 效果 2026-09-16;暗色近白,浅色沿用原有别名
+  "switch-thumb-off": "#FCFCFC", // Switch 滑块:用户批准 HTML 效果 2026-09-16;暗色近白,浅色沿用原有别名
   "status-badge-fg": "#121212", // 反相深字: 平移
   "border-default": "#313131", // 边框
   "border-default-hsl": "0 0% 19.2%", // 边框 -> HSL
@@ -98,7 +100,7 @@ const GENERATED_OVERRIDES = {
   "secondary": "0 0% 11.4%", // hover -> HSL
   "settings-btn-primary-text": "#151515", // 反相深字(浅钮上)
   "settings-btn-secondary-hover-bg": "#1D1D1D", // hover/chip
-  "text-placeholder": "#525252", // 独立占位文字色，与正文/三级信息区分（用户修正，2026-09-16）
+  "text-placeholder": "#C1C1C1", // 三级转中性(等亮度,2026-08-13)
   "settings-integration-avatar-bg": "#1D1D1D", // hover/chip
   "settings-logout-bg": "#1F1F1F", // 卡片/输入框
   "settings-menu-bg-hover": "#282828", // 菜单 hover/提问卡纸片档
@@ -178,6 +180,9 @@ const GENERATED_OVERRIDES = {
   "sidebar-user-card-bg-hover": "rgba(255, 255, 255, 0.10)",
   "sidebar-user-card-border": "rgba(255, 255, 255, 0.13)",
   "sidebar-user-card-text": "#D4D4D4",
+  "slider-track": "#626262", // Slider 用户定稿 2026-09-17;与 Switch 独立
+  "slider-fill": "#EEEEEE", // Slider 用户定稿 2026-09-17;与 Switch 独立
+  "slider-thumb": "#FCFCFC", // Slider 用户定稿 2026-09-17;与 Switch 独立
 } as const;
 // END GENERATED DS-8: theme
 

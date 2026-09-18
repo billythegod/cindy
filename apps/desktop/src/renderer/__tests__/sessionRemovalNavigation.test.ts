@@ -34,27 +34,28 @@ describe('pickSessionIdAfterRemoval', () => {
 });
 
 describe('getVisibleSidebarSessionIds', () => {
-  it('shares ancestor style reads within a snapshot but observes later visibility changes', () => {
+  it('checks shared ancestors once per scan and observes later visibility changes', () => {
     const root = document.createElement('div');
-    const parent = document.createElement('div');
-    root.append(parent);
-    document.body.append(root);
-    for (const id of ['a', 'b', 'c']) {
+    const group = document.createElement('section');
+    root.append(group);
+    for (let i = 0; i < 1000; i++) {
       const row = document.createElement('div');
       row.dataset.sidebarSessionRow = 'true';
-      row.dataset.sessionId = id;
-      parent.append(row);
+      row.dataset.sessionId = String(i);
+      group.append(row);
     }
-    const styles = vi.spyOn(window, 'getComputedStyle');
+    document.body.append(root);
+    const spy = vi.spyOn(window, 'getComputedStyle');
     try {
-      expect(getVisibleSidebarSessionIds(root)).toEqual(['a', 'b', 'c']);
-      expect(styles.mock.calls.filter(([node]) => node === parent)).toHaveLength(1);
-      parent.style.opacity = '0';
+      expect(getVisibleSidebarSessionIds(root)).toHaveLength(1000);
+      expect(spy.mock.calls.filter(([node]) => node === group)).toHaveLength(1);
+      expect(spy.mock.calls.filter(([node]) => node === root)).toHaveLength(1);
+      group.style.opacity = '0';
       expect(getVisibleSidebarSessionIds(root)).toEqual([]);
-      parent.style.opacity = '1';
-      expect(getVisibleSidebarSessionIds(root)).toEqual(['a', 'b', 'c']);
+      group.style.opacity = '1';
+      expect(getVisibleSidebarSessionIds(root)).toHaveLength(1000);
     } finally {
-      styles.mockRestore();
+      spy.mockRestore();
       root.remove();
     }
   });
