@@ -70,7 +70,9 @@ export async function readWindowsDesktopSupport(): Promise<WindowsDesktopSupport
         const connection = await openWindowsDesktopConnection({ mode: 'probe' });
         connection.close();
       } catch {
-        return 'missing';
+        // The SCM service is installed. A failed probe must not look like a
+        // missing grant, or Settings only offers Enable and cannot uninstall.
+        return 'unavailable';
       }
       // A previous checkout-bound helper can still talk to the installed
       // service. Do not report ready: settings must offer Update, while

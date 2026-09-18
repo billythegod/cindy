@@ -81,7 +81,7 @@ describe('Windows lock screen service setup', () => {
 
   it('does not treat a running service as authorization for another caller', async () => {
     runtime.open.mockRejectedValue(new Error('caller rejected'));
-    expect(await readWindowsDesktopSupport()).toBe('missing');
+    expect(await readWindowsDesktopSupport()).toBe('unavailable');
     await expect(configureWindowsDesktopSupport(true)).rejects.toThrow(
       'DESKTOP_SYSTEM_SERVICE_UNAVAILABLE',
     );
@@ -91,7 +91,7 @@ describe('Windows lock screen service setup', () => {
     expect(await readWindowsDesktopSupport()).toBe('updateRequired');
     expect(runtime.open).toHaveBeenCalledOnce();
     runtime.open.mockRejectedValue(new Error('caller rejected'));
-    expect(await readWindowsDesktopSupport()).toBe('missing');
+    expect(await readWindowsDesktopSupport()).toBe('unavailable');
   });
 
   it('removes the service through the existing administrator action', async () => {

@@ -229,11 +229,46 @@ it('does not permanently disable setup after a transient status probe failure', 
   Object.assign(window, { electronAPI: { remoteDesktop: { state, windowsSupport } } });
   render(<RemoteDesktopSetting />);
   await act(async () => {});
+  expect(screen.getByRole('button', { name: 'remoteDesktop.windowsDisable' })).toBeTruthy();
   const retry = screen.getByRole('button', { name: 'remoteDesktop.windowsRetry' });
   expect(retry.hasAttribute('disabled')).toBe(false);
   fireEvent.click(retry);
   await act(async () => {});
   expect(windowsSupport).toHaveBeenCalledExactlyOnceWith(true);
+});
+
+it('keeps an independent remove action after post-install verification fails', async () => {
+  let support = 'unavailable';
+  let setup: {
+    revision: number;
+    phase: null;
+    error: 'setup' | null;
+    startedAt: number | null;
+  } = {
+    revision: 1,
+    phase: null,
+    error: 'setup',
+    startedAt: 1,
+  };
+  const state = vi.fn(async () => ({
+    enabled: true,
+    active: null,
+    windowsSupport: support,
+    windowsSetup: setup,
+  }));
+  const windowsSupport = vi.fn(async (enabled: boolean) => {
+    support = enabled ? 'ready' : 'missing';
+    setup = { revision: setup.revision + 1, phase: null, error: null, startedAt: null };
+  });
+  Object.assign(window, { electronAPI: { remoteDesktop: { state, windowsSupport } } });
+  render(<RemoteDesktopSetting />);
+  await act(async () => {});
+  expect(screen.getByRole('button', { name: 'remoteDesktop.windowsRetry' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'remoteDesktop.windowsDisable' }));
+  await act(async () => {});
+  expect(windowsSupport).toHaveBeenCalledExactlyOnceWith(false);
+  expect(screen.getByRole('button', { name: 'remoteDesktop.windowsEnable' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'remoteDesktop.windowsDisable' })).toBeNull();
 });
 
 it('keeps an independent remove action while the authorized service needs an update', async () => {

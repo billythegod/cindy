@@ -175,15 +175,16 @@ export function RemoteDesktopSetting() {
             )}
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-2">
-            {windowsSupport === 'updateRequired' && !setupBusy && (
-              <Button
-                variant="secondary"
-                disabled={actionDisabled}
-                onClick={() => configureSupport(false)}
-              >
-                {t('remoteDesktop.windowsDisable')}
-              </Button>
-            )}
+            {(windowsSupport === 'updateRequired' || windowsSupport === 'unavailable') &&
+              !setupBusy && (
+                <Button
+                  variant="secondary"
+                  disabled={actionDisabled}
+                  onClick={() => configureSupport(false)}
+                >
+                  {t('remoteDesktop.windowsDisable')}
+                </Button>
+              )}
             <Button
               disabled={actionDisabled}
               onClick={() => configureSupport(windowsSupport !== 'ready')}
