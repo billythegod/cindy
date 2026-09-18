@@ -1849,6 +1849,9 @@ mod tests {
             "--open-folder=relative",
             "--cindy-version-profile=relative",
             "--cindy-version-helper=00000000-0000-0000-0000-000000000001",
+            "--isolated",
+            "--isolated=dev",
+            "--passive",
         ] {
             assert!(!is_main_command_line(&["Cindy.exe".into(), arg.into()]));
         }

@@ -126,6 +126,23 @@ fn process_directory(pid: u32) -> Result<PathBuf> {
     Ok(PathBuf::from(String::from_utf16_lossy(&value)))
 }
 
+fn isolation_name(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+/// Human-direct Dev flags that electron-forge forwards into the kernel command
+/// line (`pnpm dev:desktop -- --isolated`, `--isolated=<name>`, `--passive`).
+/// Keep this list exact so Node/Electron injection switches stay denied.
+fn is_supported_dev_argument(arg: &str) -> bool {
+    matches!(arg, "--isolated" | "--passive" | "--endpoints-cdn")
+        || arg
+            .strip_prefix("--isolated=")
+            .is_some_and(|name| name == "@worktree" || isolation_name(name))
+}
+
 pub fn check_client(
     pid: u32,
     image: &Path,
@@ -135,16 +152,32 @@ pub fn check_client(
     let (expected_app, executable) = installation::development_identity().ok_or_else(error)?;
     if !security::same_file(image, &executable)
         || !security::same_file(application, &expected_app)
-        || arguments.len() < 2
+        || arguments.is_empty()
     {
         return denied();
     }
-    let mut main_arguments = vec![arguments[0].clone()];
-    main_arguments.extend_from_slice(&arguments[2..]);
-    if !security::is_main_command_line(&main_arguments) || arguments[1].starts_with('-') {
+    let mut remaining = vec![arguments[0].clone()];
+    let mut application_argument = None;
+    for arg in arguments.iter().skip(1) {
+        if is_supported_dev_argument(arg) {
+            continue;
+        }
+        if application_argument.is_none() {
+            if arg.starts_with('-') {
+                return denied();
+            }
+            application_argument = Some(arg.clone());
+            continue;
+        }
+        remaining.push(arg.clone());
+    }
+    let Some(application_argument) = application_argument else {
+        return denied();
+    };
+    if !security::is_main_command_line(&remaining) {
         return denied();
     }
-    let target = Path::new(&arguments[1]);
+    let target = Path::new(&application_argument);
     let target = if target.is_absolute() {
         target.to_owned()
     } else {
@@ -199,6 +232,76 @@ mod tests {
             &[
                 "electron.exe".into(),
                 std::env::temp_dir().to_string_lossy().into_owned()
+            ]
+        )
+        .is_err());
+    }
+    #[test]
+    fn supported_dev_launch_arguments_are_accepted_without_opening_injection_switches() {
+        let (app, executable) = installation::development_identity().unwrap();
+        let pid = std::process::id();
+        let path = app.to_string_lossy().into_owned();
+        for extra in [
+            vec!["--isolated"],
+            vec!["--isolated=dev"],
+            vec!["--isolated=@worktree"],
+            vec!["--passive"],
+            vec!["--endpoints-cdn"],
+            vec!["--isolated=feature-a", "--passive"],
+        ] {
+            let mut after = vec!["electron.exe".into(), path.clone()];
+            after.extend(extra.iter().map(|arg| (*arg).to_string()));
+            assert!(
+                check_client(pid, &executable, &app, &after).is_ok(),
+                "{after:?}"
+            );
+            let mut before = vec!["electron.exe".into()];
+            before.extend(extra.iter().map(|arg| (*arg).to_string()));
+            before.push(path.clone());
+            assert!(
+                check_client(pid, &executable, &app, &before).is_ok(),
+                "{before:?}"
+            );
+        }
+        assert!(check_client(
+            pid,
+            &executable,
+            &app,
+            &["electron.exe".into(), "--isolated".into()]
+        )
+        .is_err());
+        assert!(check_client(
+            pid,
+            &executable,
+            &app,
+            &[
+                "electron.exe".into(),
+                path.clone(),
+                "--isolated=我的沙箱".into()
+            ]
+        )
+        .is_err());
+        assert!(check_client(
+            pid,
+            &executable,
+            &app,
+            &[
+                "electron.exe".into(),
+                path.clone(),
+                "--isolated".into(),
+                "--inspect".into()
+            ]
+        )
+        .is_err());
+        assert!(check_client(
+            pid,
+            &executable,
+            &app,
+            &[
+                "electron.exe".into(),
+                "--isolated".into(),
+                "--type=utility".into(),
+                path
             ]
         )
         .is_err());
