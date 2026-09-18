@@ -72,6 +72,37 @@ describe('native input lifecycle', () => {
     await flush();
   });
 
+  it('releases held ordinary Windows input on lock without starting the SYSTEM service', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.mocked(readWindowsDesktopSupport).mockResolvedValueOnce('missing');
+    const c = childProcess();
+    const spawn = vi.fn(() => {
+      queueMicrotask(() => c.child.stdout.emit('data', Buffer.from('ready\n')));
+      return c.typed;
+    });
+    const host = new DesktopInputHost(vi.fn(), {
+      resolveBinary: async () => '/test/helper',
+      spawn,
+    });
+    await host.start('1');
+    host.input([{ kind: 'key', code: 'ControlLeft', down: true }]);
+    await flush();
+    c.child.stdout.emit('data', Buffer.from('ok\n'));
+    await flush();
+    host.rebindForDesktopChange();
+    await flush();
+    expect(c.child.stdin.write).toHaveBeenLastCalledWith(
+      '[{"kind":"release"}]\n',
+      expect.any(Function),
+    );
+    expect(openWindowsDesktopConnection).not.toHaveBeenCalled();
+    expect(c.child.stdin.end).not.toHaveBeenCalled();
+    host.stop();
+    c.exit();
+    await flush();
+  });
+
   it('rebinds on a native desktop transition without replaying old input or dropping control', async () => {
     vi.useFakeTimers();
     Object.defineProperty(process, 'platform', { value: 'win32' });

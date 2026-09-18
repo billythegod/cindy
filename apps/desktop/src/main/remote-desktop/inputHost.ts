@@ -302,7 +302,11 @@ export class DesktopInputHost {
   /** A desktop switch retires only native input, not the viewer's control grant.
    * This path never reads a saved password or invokes automatic unlock. */
   rebindForDesktopChange(): void {
-    if (!this.windows || this.recovering !== null) return;
+    if (this.recovering !== null) return;
+    if (!this.windows) {
+      if (this.child) this.write([{ kind: 'release' }]);
+      return;
+    }
     if (this.onDesktopChange && !this.onDesktopChange()) return;
     const displayId = this.displayId;
     this.stop();
