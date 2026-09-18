@@ -24,6 +24,7 @@ export function createWorkingDirectoryRecovery(io: {
   stat(dir: string): Promise<{ isDirectory(): boolean; dev?: number }>;
   mkdir(dir: string, opts: { recursive: true }): Promise<unknown>;
   realpath?(dir: string): Promise<string>;
+  requiredRoot?(dir: string): string | undefined;
 } = fsp, allocateFallback?: (sessionId: string, workingDir: string, mode: 'ordinary' | 'unrestored-worktree') => Promise<string>, log?: WorkdirDiagnosticLogger) {
   const pending = new Map<string, { workingDir: string; note: string | null; device?: number; fallback?: string }>();
   function entryFor(sessionId: string, dir: string) {
@@ -35,6 +36,21 @@ export function createWorkingDirectoryRecovery(io: {
     return entry;
   }
   async function mountUnavailable(dir: string, entry: { device?: number }, report: (details: Record<string, unknown>) => void) {
+    const requiredRoot = io.requiredRoot?.(dir);
+    if (requiredRoot) {
+      try {
+        if (!(await io.stat(requiredRoot)).isDirectory()) {
+          report({ reason: 'required-root-not-directory', probedDirectoryRef: workdirDiagnosticId(requiredRoot) });
+          return true;
+        }
+      } catch (error) {
+        if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '') || isUnavailableFilesystemError(error)) {
+          report({ reason: 'required-root-unavailable', code: workdirDiagnosticErrorCode(error), probedDirectoryRef: workdirDiagnosticId(requiredRoot) });
+          return true;
+        }
+        throw error;
+      }
+    }
     const canonical = path.resolve(dir);
     if (process.platform === 'darwin' && canonical.startsWith('/Volumes/')) {
       const volume = canonical.split('/').slice(0, 3).join('/');

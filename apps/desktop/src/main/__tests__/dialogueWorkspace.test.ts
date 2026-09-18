@@ -202,4 +202,37 @@ describe('dialogue workspace directory', () => {
     await expect(writeDialogueWorkspaceDirectory(path.join(userDataDir, 'custom'))).rejects.toThrow();
     expect(fs.readFileSync(file, 'utf8')).toBe('{broken');
   });
+
+  it.each([false, true])('does not recreate a disconnected custom root after restart (historical: %s)', async (historical) => {
+    const { writeDialogueWorkspaceDirectory } = await import('../dialogue-workspace-settings');
+    const mount = path.join(userDataDir, 'volume');
+    const custom = path.join(mount, 'dialogues', 'owner-a');
+    const original = path.join(custom, '2026-09-18', 'old-task');
+    fs.mkdirSync(original, { recursive: true });
+    fs.writeFileSync(path.join(original, 'keep.txt'), 'keep');
+    await writeDialogueWorkspaceDirectory(custom);
+    if (historical) await writeDialogueWorkspaceDirectory(null);
+    fs.renameSync(mount, path.join(userDataDir, 'detached'));
+    fs.mkdirSync(mount);
+    vi.resetModules();
+    const { allocateDialogueRecoveryWorkspace, requiredDialogueRecoveryRoot } = await import('../maker-ipc/dialogueRecoveryWorkspace');
+    const { createWorkingDirectoryRecovery } = await import('../maker-ipc/workingDirectoryRecovery');
+    const recovery = createWorkingDirectoryRecovery({ ...fs.promises, requiredRoot: requiredDialogueRecoveryRoot }, allocateDialogueRecoveryWorkspace);
+    // A fresh recovery instance has never observed the old filesystem's device ID.
+    expect(requiredDialogueRecoveryRoot(original)).toBe(custom);
+    expect(await recovery.recover('old-task', original)).toBe(true);
+    expect(fs.readdirSync(mount)).toEqual([]);
+    const fallback = recovery.resolve('old-task', original);
+    expect(fallback.startsWith(path.join(userDataDir, 'dialogues') + path.sep)).toBe(true);
+    expect(fs.statSync(fallback).isDirectory()).toBe(true);
+    expect(fs.readFileSync(path.join(userDataDir, 'detached', 'dialogues', 'owner-a', '2026-09-18', 'old-task', 'keep.txt'), 'utf8')).toBe('keep');
+    expect(requiredDialogueRecoveryRoot(path.join(userDataDir, 'dialogues', '2026-09-18', 'default'))).toBeUndefined();
+    expect(requiredDialogueRecoveryRoot(custom + '-project')).toBeUndefined();
+    fs.rmdirSync(mount);
+    fs.renameSync(path.join(userDataDir, 'detached'), mount);
+    const missingTask = path.join(custom, '2026-09-18', 'missing-task');
+    expect(await recovery.recover('missing-task', missingTask)).toBe(true);
+    expect(recovery.resolve('missing-task', missingTask)).toBe(missingTask);
+    expect(fs.statSync(missingTask).isDirectory()).toBe(true);
+  });
 });
