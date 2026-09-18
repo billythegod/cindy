@@ -84,6 +84,30 @@ describe('task labels transactions', () => {
     expect(remaining.sessions.every((s) => s.tags.length === 1)).toBe(true);
     expect(db.prepare('SELECT count(*) AS n FROM sessions').get()).toEqual({ n: 2 });
   });
+  it('excludes deleted tasks from previews while retaining archives and cleaning all associations', () => {
+    db.exec("INSERT INTO sessions(id,status) VALUES('c','archived')");
+    run({ action: 'attach', sessionIds: ['a', 'b', 'c'], tagIds: ['default:red'] });
+    const stale = run({ action: 'previewDelete', tagId: 'default:red' }).deletion!;
+    db.exec("UPDATE sessions SET status='deleted' WHERE id='b'");
+    expect(() =>
+      run({
+        action: 'delete',
+        tagId: stale.tagId,
+        revision: stale.revision,
+        expectedCount: stale.count,
+      }),
+    ).toThrow('CONFLICT');
+    const preview = run({ action: 'previewDelete', tagId: 'default:red' }).deletion!;
+    expect(preview.count).toBe(2);
+    run({
+      action: 'delete',
+      tagId: preview.tagId,
+      revision: preview.revision,
+      expectedCount: preview.count,
+    });
+    expect(db.prepare('SELECT count(*) AS n FROM session_task_tags').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT count(*) AS n FROM sessions').get()).toEqual({ n: 3 });
+  });
   it('checks favorite cap, name uniqueness, colors and stale edit revisions', () => {
     expect(() =>
       run({ action: 'create', newId: 'x', name: 'Work', color: 'red', favorite: true }),

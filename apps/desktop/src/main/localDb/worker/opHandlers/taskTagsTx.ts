@@ -49,7 +49,11 @@ export function runTaskTagsTransaction(db: Database.Database, raw: unknown): Tas
   };
   const associatedCount = (id: string) =>
     (
-      db.prepare('SELECT count(*) AS n FROM session_task_tags WHERE tag_id=?').get(id) as {
+      db
+        .prepare(
+          "SELECT count(*) AS n FROM session_task_tags t JOIN sessions s ON s.id=t.session_id WHERE t.tag_id=? AND s.status <> 'deleted'",
+        )
+        .get(id) as {
         n: number;
       }
     ).n;
