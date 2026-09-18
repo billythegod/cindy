@@ -19,7 +19,6 @@ import {
   useReportWorktreeLiveness,
   useWorktreeForSession,
 } from '@/contexts/WorktreeContext';
-import { isDataOwnerPushCurrent } from '@/contexts/dataOwnerGeneration';
 import type { Session } from '@/lib/ccAgent.types';
 import type { GitContextDirSource } from '@/lib/gitContext.types';
 import type { DetectCwdResp, WorktreeMeta } from '@/lib/worktree.types';
@@ -139,20 +138,6 @@ export function useTaskInfoWorktree(
   const officialPath = official?.path ?? null;
   const deviceId = session.deviceLinkDeviceId ?? null;
   const isRemote = Boolean(deviceId || session.remoteHostId);
-
-  useEffect(() => {
-    if (!enabled || isRemote || liveOfficial) return;
-    // This push follows the durable write, unlike maker:event. Also recheck
-    // after tool_result: worktree creation may not exist yet at tool_use time.
-    return window.electronAPI.localDb?.messages?.onCreated?.(
-      ({ sessionId, message }, ownerStamp) => {
-        if (sessionId !== session.id || !isDataOwnerPushCurrent(ownerStamp)) return;
-        if (message.role === 'tool_use' || message.role === 'tool_result') {
-          void refreshObserved(session.id);
-        }
-      },
-    );
-  }, [enabled, isRemote, liveOfficial, session.id, refreshObserved]);
 
   useEffect(() => {
     if (!enabled || isRemote || !observeTelemetry) {
