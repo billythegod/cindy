@@ -8121,8 +8121,9 @@ const registerIpcHandlers = () => {
       // Dedicated owner subtree prevents unrelated folders from being treated as managed tasks.
       resolveDirectory: (selected) => customDialogueWorkspaceRoot(selected, path.basename(ownerScopedUserDataPath())),
       checkWritable: checkDialogueDirectoryWritable,
+      openDirectory: (directory) => shell.openPath(directory),
     });
-    for (const action of ['get', 'choose', 'reset'] as const) {
+    for (const action of ['get', 'choose', 'reset', 'open'] as const) {
       ipcMain.handle('dialogue-workspace:' + action, async (event) => {
         assertTrustedAppRendererEvent(event);
         try {

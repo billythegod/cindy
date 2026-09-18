@@ -4140,6 +4140,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // draftUrls 由 renderer 从 composerDraftStore 现场收集(main 读不到
   // renderer 内存,草稿附件是合法的零引用 blob,必须随参取证防误删)。
   dialogueWorkspace: {
+    open: (): Promise<{ success: boolean }> => ipcRenderer.invoke('dialogue-workspace:open'),
     get: (): Promise<DialogueWorkspaceSettingsState> => ipcRenderer.invoke('dialogue-workspace:get'),
     choose: (): Promise<DialogueWorkspaceSettingsState> => ipcRenderer.invoke('dialogue-workspace:choose'),
     reset: (): Promise<DialogueWorkspaceSettingsState> => ipcRenderer.invoke('dialogue-workspace:reset'),

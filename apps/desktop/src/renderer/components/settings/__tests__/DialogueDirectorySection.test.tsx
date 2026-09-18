@@ -10,14 +10,14 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 function setup() {
   const api = {
+    open: vi.fn(async () => ({ success: true })),
     get: vi.fn(async () => ({ directory: 'default-directory', isCustomized: false })),
     choose: vi.fn(async () => ({ directory: 'custom-directory', isCustomized: true })),
     reset: vi.fn(async () => ({ directory: 'default-directory', isCustomized: false })),
   };
-  const openPath = vi.fn(async () => ({ success: true }));
-  vi.stubGlobal('electronAPI', { dialogueWorkspace: api, platform: 'win32', openPath });
+  vi.stubGlobal('electronAPI', { dialogueWorkspace: api, platform: 'win32' });
   render(<DialogueDirectorySection />);
-  return { ...api, openPath };
+  return api;
 }
 
 describe('DialogueDirectorySection', () => {
@@ -25,13 +25,16 @@ describe('DialogueDirectorySection', () => {
     const api = setup();
     await screen.findByText('default-directory');
     fireEvent.click(screen.getByRole('button', { name: 'settings.about.storage.dialogueDirectoryOpen' }));
-    expect(api.openPath).toHaveBeenLastCalledWith('default-directory');
+    expect(api.open).toHaveBeenLastCalledWith();
     fireEvent.click(screen.getByText('settings.about.storage.dialogueDirectoryChoose'));
     await screen.findByText('custom-directory');
-    api.openPath.mockResolvedValue({ success: false });
+    api.open.mockResolvedValue({ success: false });
     fireEvent.click(screen.getByRole('button', { name: 'settings.about.storage.dialogueDirectoryOpen' }));
     await waitFor(() => expect(error).toHaveBeenCalledWith('ccAgent.common.openFolderFailed'));
-    expect(api.openPath).toHaveBeenLastCalledWith('custom-directory');
+    expect(api.open).toHaveBeenCalledTimes(2);
+    api.open.mockRejectedValue(new Error('denied'));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.about.storage.dialogueDirectoryOpen' }));
+    await waitFor(() => expect(error).toHaveBeenCalledTimes(2));
   });
 
   it('shows the effective path and restores the default after choosing a location', async () => {

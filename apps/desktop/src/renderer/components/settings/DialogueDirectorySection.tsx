@@ -56,7 +56,7 @@ export function DialogueDirectorySection() {
   const openDirectory = async () => {
     if (!state) return;
     try {
-      const result = await window.electronAPI.openPath(state.directory);
+      const result = await api.open();
       if (!result.success) toast.error(t('ccAgent.common.openFolderFailed'));
     } catch {
       toast.error(t('ccAgent.common.openFolderFailed'));

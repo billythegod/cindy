@@ -988,7 +988,7 @@
       },
       "storage": {
         "dialogueDirectoryTitle": "대화 작업 공간",
-        "dialogueDirectoryDescription": "새 대화에만 적용됩니다. 기존 파일은 원래 위치에 유지됩니다.",
+        "dialogueDirectoryDescription": "새 세션에만 적용됩니다. 기존 파일은 원래 위치에 유지됩니다.",
         "dialogueDirectoryOpen": "폴더 열기",
         "dialogueDirectoryChoose": "폴더 변경",
         "dialogueDirectoryReset": "기본 위치로 복원",

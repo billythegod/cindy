@@ -988,7 +988,7 @@
       },
       "storage": {
         "dialogueDirectoryTitle": "對話工作區",
-        "dialogueDirectoryDescription": "僅用於新建對話，現有檔案保留原位置。",
+        "dialogueDirectoryDescription": "僅用於新建任務，現有檔案保留原位置。",
         "dialogueDirectoryOpen": "開啟目錄",
         "dialogueDirectoryChoose": "變更目錄",
         "dialogueDirectoryReset": "恢復預設位置",

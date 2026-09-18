@@ -3638,6 +3638,7 @@ interface ElectronAPI {
    * composerDraftStore 现场收集随参带上(草稿附件是合法零引用,防误删)。
    */
   dialogueWorkspace: {
+    open(): Promise<{ success: boolean }>;
     get(): Promise<import('../shared/dialogueWorkspaceSettings').DialogueWorkspaceSettingsState>;
     choose(): Promise<import('../shared/dialogueWorkspaceSettings').DialogueWorkspaceSettingsState>;
     reset(): Promise<import('../shared/dialogueWorkspaceSettings').DialogueWorkspaceSettingsState>;

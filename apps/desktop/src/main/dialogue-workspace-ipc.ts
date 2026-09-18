@@ -12,6 +12,7 @@ interface Deps {
   chooseDirectory(): Promise<string | null>;
   resolveDirectory(selected: string): string;
   checkWritable(directory: string): Promise<void>;
+  openDirectory(directory: string): Promise<string>;
 }
 
 export function customDialogueWorkspaceRoot(
@@ -65,6 +66,13 @@ export function createDialogueWorkspaceHandlers(deps: Deps) {
   };
   return {
     get: () => { deps.captureScope(); return deps.read(); },
+    open: async () => {
+      const scope = deps.captureScope();
+      const { directory } = deps.read();
+      await fs.mkdir(directory, { recursive: true });
+      assertCurrent(scope);
+      return { success: (await deps.openDirectory(directory)) === '' };
+    },
     choose: () => mutate(true),
     reset: () => mutate(false),
   };

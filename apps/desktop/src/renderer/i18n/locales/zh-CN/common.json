@@ -988,7 +988,7 @@
       },
       "storage": {
         "dialogueDirectoryTitle": "对话工作区",
-        "dialogueDirectoryDescription": "仅用于新建对话，已有文件保持原位置。",
+        "dialogueDirectoryDescription": "仅用于新建任务，已有文件保持原位置。",
         "dialogueDirectoryOpen": "打开目录",
         "dialogueDirectoryChoose": "更改目录",
         "dialogueDirectoryReset": "恢复默认位置",

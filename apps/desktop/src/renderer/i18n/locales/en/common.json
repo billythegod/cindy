@@ -988,7 +988,7 @@
       },
       "storage": {
         "dialogueDirectoryTitle": "Chat workspace",
-        "dialogueDirectoryDescription": "For new chats only. Existing files stay where they are.",
+        "dialogueDirectoryDescription": "For new sessions only. Existing files stay where they are.",
         "dialogueDirectoryOpen": "Open directory",
         "dialogueDirectoryChoose": "Change directory",
         "dialogueDirectoryReset": "Restore default location",

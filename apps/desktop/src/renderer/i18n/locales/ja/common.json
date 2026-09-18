@@ -988,7 +988,7 @@
       },
       "storage": {
         "dialogueDirectoryTitle": "チャットワークスペース",
-        "dialogueDirectoryDescription": "新しいチャットにのみ適用されます。既存のファイルの場所は変わりません。",
+        "dialogueDirectoryDescription": "新しいセッションにのみ適用されます。既存のファイルの場所は変わりません。",
         "dialogueDirectoryOpen": "フォルダーを開く",
         "dialogueDirectoryChoose": "フォルダーを変更",
         "dialogueDirectoryReset": "既定の保存先に戻す",
