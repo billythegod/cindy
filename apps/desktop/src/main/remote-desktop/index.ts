@@ -50,6 +50,7 @@ import { NativeDesktopCapture } from './nativeCapture';
 import { PrivacyScreen } from './privacyScreen';
 import { systemAudioMuteGuard } from '../voice-input/SystemAudioMuteGuard.js';
 import { readWindowsDesktopSupport, configureWindowsDesktopSupport } from './windowsHost';
+import { WindowsDesktopSetup } from './windowsSetup';
 import {
   DesktopInputHost,
   readDesktopDisplayModes,
@@ -535,6 +536,10 @@ export const remoteDesktop = new RemoteDesktopController({
 export function registerRemoteDesktopIpc(
   isVoiceInputOwner?: Parameters<typeof denyAppDesktopCapture>[1],
 ): void {
+  const windowsSetup = new WindowsDesktopSetup({
+    configure: configureWindowsDesktopSupport,
+    stopDesktop: () => remoteDesktop.stop(),
+  });
   denyAppDesktopCapture(session.defaultSession, isVoiceInputOwner);
   const timer = setInterval(() => remoteDesktop.tick(), 1000);
   timer.unref();
@@ -627,29 +632,25 @@ export function registerRemoteDesktopIpc(
       permissionGuide: permissions.guideOpen,
       ...(checkWindowsSupport === true
         ? {
-            windowsSupport: await readWindowsDesktopSupport(),
+            windowsSupport: windowsSetup.read().phase ? 'missing' : await readWindowsDesktopSupport(),
             windowsDevelopment: process.platform === 'win32' && !app.isPackaged,
+            windowsSetup: windowsSetup.read(),
           }
         : {}),
     };
   });
-  let windowsSetupBusy = false;
   ipcMain.handle(DESKTOP_LOCAL.WINDOWS_SUPPORT, async (event, enabled: unknown) => {
     assertTrustedAppRendererEvent(event);
     if (process.platform !== 'win32' || typeof enabled !== 'boolean')
       throwIpcError('INVALID_PARAMS', 'Invalid Windows desktop support request');
-    if (event.sender !== getDeepLinkMainWindow()?.webContents || windowsSetupBusy)
+    if (event.sender !== getDeepLinkMainWindow()?.webContents)
       throwIpcError('PERMISSION_DENIED', 'Windows desktop setup unavailable');
-    windowsSetupBusy = true;
-    remoteDesktop.stop();
     try {
-      await configureWindowsDesktopSupport(enabled);
+      await windowsSetup.run(enabled);
     } catch (error) {
       if (error instanceof Error && error.message === 'DESKTOP_NATIVE_BUILD_FAILED')
         throwIpcError('PRECONDITION_FAILED', 'Windows desktop native preparation failed');
       throwIpcError('PERMISSION_DENIED', 'Windows desktop support setup failed');
-    } finally {
-      windowsSetupBusy = false;
     }
     windowsAvailable = enabled;
   });
