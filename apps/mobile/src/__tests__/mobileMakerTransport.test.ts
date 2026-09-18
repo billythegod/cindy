@@ -67,6 +67,32 @@ describe("mobile maker transport", () => {
         expect(invoke).toHaveBeenCalledTimes(2);
       },
     );
+    it.each([FILE_INLINE_MAX_BYTES - 1, FILE_INLINE_MAX_BYTES])(
+      "plays %i-byte inline media when an old host ignores prepareOnly",
+      async (size) => {
+        const metadata = { ossKey: "", size, mimeType };
+        const inline = { ...metadata, inlineBase64: Buffer.alloc(size).toString("base64") };
+        const invoke = vi.fn(async (_device, _channel, args) => {
+          expect(args[0]).not.toHaveProperty("stream");
+          return inline;
+        });
+        const presignGet = vi.fn();
+        const maker = createMobileMakerTransport({ deviceId: "d", invoke: invoke as RemoteInvoke });
+        const resolved = await resolveMobileRemoteMedia(
+          { kind, url: `cindy-media://blobs/${"a".repeat(64)}.${extension}` },
+          { fetchRemoteMedia: maker.fetchRemoteMedia, presignGet },
+        );
+        expect(isDirectPreviewableMediaUrl(resolved.url)).toBe(true);
+        expect(resolved).toMatchObject({
+          url: `data:${mimeType};base64,${inline.inlineBase64}`,
+          mimeType,
+          size,
+          previewable: true,
+        });
+        expect(presignGet).not.toHaveBeenCalled();
+        expect(invoke).toHaveBeenCalledTimes(2);
+      },
+    );
   });
   it.each(["audio/mpeg", "video/mp4", "image/png", "application/pdf", "application/octet-stream"])("retains %s previews while preserving peer for complete byte consumers", async (mimeType) => {
     const metadata = { ossKey: "", size: 70_000, mimeType, transferRequired: true };
