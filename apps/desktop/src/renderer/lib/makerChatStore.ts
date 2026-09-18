@@ -11842,19 +11842,23 @@ function reconcileRemoteMessages(sessionId: string, opts?: {
           releaseRemoteHistoryView(sessionId, view);
           return runRemoteReconcile(sessionId, { ...opts, force: true }, noteHydration);
         }
-        if (opts?.force) {
+        {
           // readPage starts expanded details without awaiting them. Join those
-          // same reads before hydrating; their cached display may still be old.
+          // same reads before certifying receipts; their display may still be old.
+          // Force repair also needs collapsed details to hydrate lost live rows.
           await Promise.all(historyWorkSummaries(view.getSnapshot().items)
-            .map((summary) => view.loadDetails(summary, { allowCollapsed: true })));
+            .filter((summary) => opts?.force || view.getSnapshot().expanded.has(summary.key))
+            .map((summary) => view.loadDetails(summary, { allowCollapsed: opts?.force })));
           if (getRemoteHistoryView(sessionId) !== view || !view.isActive()
             || (_messagesEpoch.get(sessionId) ?? 0) !== epochAtStart) return false;
           const detailsSnapshot = view.getSnapshot();
           const incompleteDetails = historyWorkSummaries(detailsSnapshot.items).some((summary) => {
+            if (!opts?.force && !detailsSnapshot.expanded.has(summary.key)) return false;
             const detail = detailsSnapshot.details.get(summary.key);
             return !detail?.complete || !!detail.error || detail.revision !== summary.revision;
           });
           if (incompleteDetails) {
+            if (!opts?.force) return false;
             // Collapse can cancel a joined detail read without rejecting it.
             // Missing, partial, failed or stale details cannot certify recovery.
             // Use the same authoritative fallback as a transient read failure;
