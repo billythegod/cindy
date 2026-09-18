@@ -127,14 +127,17 @@ impl Approval {
         // connection, so startup neither accesses shares nor depends on Main.
         Ok(approval)
     }
-    pub fn authorize(&self, pid: u32) -> Result<(Handle, u32, Vec<Handle>)> {
+    pub fn authorize(&self, caller: &Handle) -> Result<(Handle, u32, Vec<Handle>)> {
         let guards = if installation::development_identity().is_some() {
             Vec::new()
         } else {
             security::protect_application(&self.application)?
         };
-        let (client, session) =
-            security::authorize_client(pid, &self.application, Some(&self.user_sid))?;
+        let (client, session) = security::authorize_client_process(
+            duplicate(caller)?,
+            &self.application,
+            Some(&self.user_sid),
+        )?;
         if !security::same_file(&image(client.0)?, &self.application.join(&self.executable)) {
             return denied();
         }
@@ -209,11 +212,13 @@ pub fn install(pid: u32) -> Result<()> {
     // pins through hardening so neither Main nor a directory can be replaced
     // after Authenticode/capture and before ACL/approval write.
     let mut snapshot = if installation::development_identity().is_none() {
-        let paths = security::application_paths(&approval.application)?;
-        let ancestors = security::pin_ancestors(&approval.application)?;
+        // Freeze before the path list is trusted. CODE_DACL is not inherited, so a
+        // child that appears after an unprotected listing would stay user-writable.
+        let (ancestors, frozen) = security::freeze_code_tree(&approval.application)?;
         let (main, hash) =
             security::authenticate_application_code(&approval.application, &approval.executable)?;
-        let captured = security::CapturedTree::capture(&paths)?;
+        security::confirm_frozen_tree(&frozen)?;
+        let captured = security::CapturedTree::from_frozen(frozen)?;
         if !security::process_still_running(client.0) {
             return denied();
         }
@@ -439,6 +444,10 @@ mod tests {
         assert!(
             install.find("installation::ACL_RESTORE").unwrap()
                 < install.find("captured.harden()").unwrap()
+        );
+        assert!(install.find("freeze_code_tree").unwrap() < install.find("from_frozen").unwrap());
+        assert!(
+            install.find("confirm_frozen_tree").unwrap() < install.find("from_frozen").unwrap()
         );
     }
     #[test]

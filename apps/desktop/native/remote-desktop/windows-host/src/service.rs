@@ -444,13 +444,19 @@ fn spawn_worker(name: &str, session: u32) -> Result<(Handle, Handle, u32)> {
     Ok((job, child, process.dwProcessId))
 }
 fn serve(mut client: Pipe) -> Result<()> {
-    let caller_pid = client.client_pid()?;
+    let caller = process(client.client_pid()?)?;
+    if unsafe { WaitForSingleObject(caller.0, 0) } != WAIT_TIMEOUT {
+        return denied();
+    }
     let init = client.line(1024)?;
+    if unsafe { WaitForSingleObject(caller.0, 0) } != WAIT_TIMEOUT {
+        return denied();
+    }
     let parsed: serde_json::Value = serde_json::from_slice(&init)?;
     if !matches!(parsed["mode"].as_str(), Some("probe" | "input" | "capture")) {
         return denied();
     }
-    let (owner, session) = authorize_connection(caller_pid)?;
+    let (owner, session) = authorize_connection(caller)?;
     if parsed["mode"] == "probe" {
         return client.write(b"ready\n");
     }
@@ -665,21 +671,25 @@ pub fn worker(name: &str) -> Result<()> {
     }
 }
 
-fn authorize_connection(pid: u32) -> Result<(Handle, u32)> {
+fn authorize_connection(caller: Handle) -> Result<(Handle, u32)> {
+    let pid = pid_of(caller.0)?;
     let approval = APPROVAL.lock().map_err(|_| error())?;
     let approval = approval.as_ref().ok_or_else(error)?;
-    let (owner, session) =
-        crate::security::authorize_client(pid, &approval.application, Some(&approval.user_sid))?;
+    let (owner, session) = crate::security::authorize_client_process(
+        caller,
+        &approval.application,
+        Some(&approval.user_sid),
+    )?;
     let mut authorized = AUTHORIZED.lock().map_err(|_| error())?;
     authorized.retain(|(main, _)| unsafe { WaitForSingleObject(main.0, 0) == WAIT_TIMEOUT });
     if !authorized
         .iter()
-        .any(|(main, _)| unsafe { GetProcessId(main.0) == pid })
+        .any(|(main, _)| pid_of(main.0).ok() == Some(pid))
     {
         if authorized.len() >= 8 {
             return denied();
         }
-        let (main, _, guards) = approval.authorize(pid)?;
+        let (main, _, guards) = approval.authorize(&owner)?;
         authorized.push((main, guards));
     }
     Ok((owner, session))
@@ -737,4 +747,24 @@ fn send_sas(owner: &Handle) -> Result<()> {
         windows_sys::Win32::Security::Authentication::Identity::SendSAS(0);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pipe_client_process_is_opened_before_the_init_read() {
+        let serve = include_str!("service.rs")
+            .split("fn serve(")
+            .nth(1)
+            .unwrap()
+            .split("fn authorize_connection")
+            .next()
+            .unwrap();
+        assert!(
+            serve.find("process(client.client_pid()?)").unwrap()
+                < serve.find("client.line(1024)").unwrap()
+        );
+        assert!(serve.contains("authorize_connection(caller)"));
+        assert!(!serve.contains("authorize_connection(caller_pid)"));
+    }
 }

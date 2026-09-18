@@ -512,7 +512,10 @@ If a live writer or other sharing conflict still holds a code file, setup refuse
 before changing ACLs. Packaged setup also Authenticode-checks the approved Main
 executable against the elevated helper, keeps that no-write handle through
 hardening, re-hashes the same bytes before recording approval, and aborts if
-the requesting Main exits. Capture also keeps no-write/no-delete handles to every
+the requesting Main exits. Setup pins ancestors and freezes each discovered code
+object before the path list is trusted, then confirms the listing is unchanged
+before capture and approval. CODE_DACL is not inherited, so a child restored after
+an unprotected listing would otherwise stay user-writable. Capture also keeps no-write/no-delete handles to every
 unprotected code object and applies ACLs through those handles, so a junction
 cannot retarget hardening after the snapshot. Ancestor directories are pinned from the root down
 before the leaf is opened.
@@ -539,8 +542,9 @@ Authorization persists the application location, executable name and approved
 Windows user SID in the protected service directory. It contains no password,
 bearer token or PID. Each new Main connection is checked against that record,
 the active console session and protected application files. Executable path alone
-is insufficient: the native transport supplies the actual pipe client PID and
-the service rejects utility/renderer and debugging command lines. These checks
+is insufficient: the native transport opens and retains the pipe client process
+handle before reading the init line, then authenticates that same handle. The
+service rejects utility/renderer and debugging command lines. These checks
 do not make same-user arbitrary native process injection a sandbox boundary.
 The service is configured for automatic startup and remains running when Cindy
 exits. Restarting Cindy or the service does not require renewed administrator consent.

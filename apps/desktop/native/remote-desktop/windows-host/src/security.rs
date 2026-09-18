@@ -38,9 +38,119 @@ pub fn path_is_within(child: &Path, parent: &Path) -> bool {
             .all(|(a, b)| a.as_os_str().eq_ignore_ascii_case(b.as_os_str()))
 }
 
-// Code paths only: no userData, workspace, or parent-directory permission changes.
-// Keep the same ASAR/native-code boundary as the packaged application.
-pub fn application_paths(install: &Path) -> Result<Vec<PathBuf>> {
+fn is_packaged_binary(path: &Path) -> bool {
+    path.extension().is_some_and(|e| {
+        ["exe", "dll", "bin"]
+            .iter()
+            .any(|ext| e.eq_ignore_ascii_case(ext))
+    })
+}
+
+fn same_listed_path(left: &Path, right: &Path) -> bool {
+    left.as_os_str()
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&right.as_os_str().to_string_lossy())
+}
+
+fn freeze_object(frozen: &mut Vec<(PathBuf, Handle)>, path: PathBuf) -> Result<Option<HANDLE>> {
+    match open_for_hardening(&path) {
+        Ok(handle) => {
+            let raw = handle.0;
+            frozen.push((path, handle));
+            Ok(Some(raw))
+        }
+        Err(error) => {
+            if check_paths(vec![path]).is_ok() {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+fn directory_children(handle: HANDLE) -> Result<Vec<(String, u32)>> {
+    let mut children = Vec::new();
+    let mut buffer = vec![0u8; 16_384];
+    let mut restart = true;
+    loop {
+        let class = if restart {
+            FileFullDirectoryRestartInfo
+        } else {
+            FileFullDirectoryInfo
+        };
+        if unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                class,
+                buffer.as_mut_ptr().cast(),
+                buffer.len() as u32,
+            )
+        } == 0
+        {
+            let code = unsafe { GetLastError() };
+            if code == ERROR_NO_MORE_FILES {
+                break;
+            }
+            if code == ERROR_MORE_DATA {
+                buffer.resize(buffer.len() * 2, 0);
+                continue;
+            }
+            return Err(io::Error::from_raw_os_error(code as i32));
+        }
+        restart = false;
+        let mut offset = 0;
+        loop {
+            if offset + mem::size_of::<FILE_FULL_DIR_INFO>() > buffer.len() {
+                return denied();
+            }
+            let info = unsafe { &*buffer[offset..].as_ptr().cast::<FILE_FULL_DIR_INFO>() };
+            let name_bytes = info.FileNameLength as usize;
+            let name_offset = mem::offset_of!(FILE_FULL_DIR_INFO, FileName);
+            if offset + name_offset + name_bytes > buffer.len() || name_bytes % 2 != 0 {
+                return denied();
+            }
+            let name =
+                unsafe { std::slice::from_raw_parts(info.FileName.as_ptr(), name_bytes / 2) };
+            let name = String::from_utf16_lossy(name);
+            if name != "." && name != ".." {
+                children.push((name, info.FileAttributes));
+            }
+            if info.NextEntryOffset == 0 {
+                break;
+            }
+            offset += info.NextEntryOffset as usize;
+        }
+    }
+    Ok(children)
+}
+
+fn freeze_tree(frozen: &mut Vec<(PathBuf, Handle)>, path: PathBuf) -> Result<()> {
+    let Some(handle) = freeze_object(frozen, path.clone())? else {
+        return Ok(());
+    };
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0
+        || info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    {
+        return denied();
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+        return Ok(());
+    }
+    for (name, attributes) in directory_children(handle)? {
+        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return denied();
+        }
+        freeze_tree(frozen, path.join(name))?;
+        if frozen.len() > 100_000 {
+            return denied();
+        }
+    }
+    Ok(())
+}
+
+fn collect_code_paths(install: &Path) -> Result<Vec<PathBuf>> {
     if install.parent().is_none() || !install.join("resources/app.asar").is_file() {
         return denied();
     }
@@ -51,11 +161,7 @@ pub fn application_paths(install: &Path) -> Result<Vec<PathBuf>> {
     ];
     for item in std::fs::read_dir(install)? {
         let path = item?.path();
-        if path.extension().is_some_and(|e| {
-            ["exe", "dll", "bin"]
-                .iter()
-                .any(|ext| e.eq_ignore_ascii_case(ext))
-        }) {
+        if is_packaged_binary(&path) {
             paths.push(path);
         }
     }
@@ -90,11 +196,87 @@ pub fn application_paths(install: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+// Code paths only: no userData, workspace, or parent-directory permission changes.
+// Keep the same ASAR/native-code boundary as the packaged application.
+pub fn application_paths(install: &Path) -> Result<Vec<PathBuf>> {
+    collect_code_paths(install)
+}
+
+/// Pin ancestors, freeze known code roots, then walk children under those pins.
+/// CODE_DACL is not inherited, so a child restored after an unprotected listing
+/// would stay user-writable. Capture consumes these freeze handles.
+pub fn freeze_code_tree(install: &Path) -> Result<(Vec<Handle>, Vec<(PathBuf, Handle)>)> {
+    if install.parent().is_none() || !install.join("resources/app.asar").is_file() {
+        return denied();
+    }
+    let ancestors = pin_ancestors(install)?;
+    let mut frozen = Vec::new();
+    let Some(root) = freeze_object(&mut frozen, install.to_owned())? else {
+        return denied();
+    };
+    freeze_object(&mut frozen, install.join("resources"))?;
+    freeze_object(&mut frozen, install.join("resources/app.asar"))?;
+    for (name, attributes) in directory_children(root)? {
+        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return denied();
+        }
+        let path = install.join(&name);
+        if is_packaged_binary(&path) {
+            freeze_object(&mut frozen, path)?;
+        }
+    }
+    for directory in [
+        "resources/app.asar.unpacked",
+        "resources/tools",
+        "resources/cindy-updater-runtime",
+    ] {
+        let root = install.join(directory);
+        if root.exists() {
+            freeze_tree(&mut frozen, root)?;
+        }
+    }
+    Ok((ancestors, frozen))
+}
+
+pub fn confirm_frozen_tree(frozen: &[(PathBuf, Handle)]) -> Result<()> {
+    for (path, handle) in frozen {
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { mem::zeroed() };
+        if unsafe { GetFileInformationByHandle(handle.0, &mut info) } == 0
+            || info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            return denied();
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+            continue;
+        }
+        for (name, attributes) in directory_children(handle.0)? {
+            if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return denied();
+            }
+            let child = path.join(name);
+            if frozen
+                .iter()
+                .any(|(existing, _)| same_listed_path(existing, &child))
+            {
+                continue;
+            }
+            check_paths(vec![child])?;
+        }
+    }
+    Ok(())
+}
+
 /// Never infer trust from the directory name. Pin and check every executable
 /// object; pin ancestor directories against rename without changing their ACLs.
 pub fn protect_application(install: &Path) -> Result<Vec<Handle>> {
-    let mut guards = pin_ancestors(install)?;
-    guards.extend(check_paths(application_paths(install)?)?);
+    let (mut guards, frozen) = freeze_code_tree(install)?;
+    let trusted = trusted_installer()?;
+    for (_, handle) in &frozen {
+        if !handle_is_protected(handle.0, trusted.0) {
+            return denied();
+        }
+    }
+    guards.extend(frozen.into_iter().map(|(_, handle)| handle));
     Ok(guards)
 }
 
@@ -287,7 +469,16 @@ pub fn check_paths(paths: Vec<PathBuf>) -> Result<Vec<Handle>> {
 }
 
 pub fn authorize_client(pid: u32, install: &Path, user_sid: Option<&str>) -> Result<(Handle, u32)> {
-    let client = process(pid)?;
+    authorize_client_process(process(pid)?, install, user_sid)
+}
+
+pub fn authorize_client_process(
+    client: Handle,
+    install: &Path,
+    user_sid: Option<&str>,
+) -> Result<(Handle, u32)> {
+    #[cfg_attr(not(feature = "development"), allow(unused_variables))]
+    let pid = pid_of(client.0)?;
     if unsafe { windows_sys::Win32::System::Threading::WaitForSingleObject(client.0, 0) }
         != WAIT_TIMEOUT
     {
@@ -801,19 +992,10 @@ pub struct CapturedTree {
 
 impl CapturedTree {
     pub fn capture(paths: &[PathBuf]) -> Result<Self> {
-        let trusted = trusted_installer()?;
-        let mut snapshot_paths = Vec::new();
         let mut pins = Vec::new();
         for path in paths {
             match open_for_hardening(path) {
-                Ok(handle) => {
-                    if handle_is_protected(handle.0, trusted.0) {
-                        continue;
-                    }
-                    let descriptor = read_descriptor_handle(&handle)?;
-                    snapshot_paths.push((path.clone(), descriptor));
-                    pins.push(handle);
-                }
+                Ok(handle) => pins.push((path.clone(), handle)),
                 Err(error) => {
                     if check_paths(vec![path.clone()]).is_ok() {
                         continue;
@@ -821,6 +1003,21 @@ impl CapturedTree {
                     return Err(error);
                 }
             }
+        }
+        Self::from_frozen(pins)
+    }
+
+    pub fn from_frozen(frozen: Vec<(PathBuf, Handle)>) -> Result<Self> {
+        let trusted = trusted_installer()?;
+        let mut snapshot_paths = Vec::new();
+        let mut pins = Vec::new();
+        for (path, handle) in frozen {
+            if handle_is_protected(handle.0, trusted.0) {
+                continue;
+            }
+            let descriptor = read_descriptor_handle(&handle)?;
+            snapshot_paths.push((path, descriptor));
+            pins.push(handle);
         }
         Ok(Self {
             snapshot: AclSnapshot {
@@ -1181,7 +1378,6 @@ pub fn authenticate_application_code(
     install: &Path,
     executable: &str,
 ) -> Result<(Handle, [u8; 32])> {
-    let _ = application_paths(install)?;
     let main = install.join(executable);
     let handle = open_payload(&main)?;
     verify_authenticode(&main, handle.0)?;
@@ -1565,6 +1761,30 @@ mod tests {
         }
         assert_eq!(descriptor(&code), before);
         std::fs::write(&code, b"released").unwrap();
+    }
+    #[test]
+    fn freeze_code_tree_refuses_children_that_appear_after_the_first_listing() {
+        let fixture = Fixture::new();
+        let app = fixture.0.join("Cindy");
+        std::fs::create_dir_all(app.join("resources/app.asar.unpacked/native")).unwrap();
+        std::fs::write(app.join("Cindy.exe"), b"fixture").unwrap();
+        std::fs::write(app.join("resources/app.asar"), b"fixture").unwrap();
+        let restored = app.join("resources/app.asar.unpacked/native/addon.node");
+        let (ancestors, frozen) = freeze_code_tree(&app).unwrap();
+        assert!(!frozen.iter().any(|(path, _)| path == &restored));
+        let write_while_frozen = std::fs::write(&restored, b"payload");
+        if write_while_frozen.is_ok() {
+            assert!(confirm_frozen_tree(&frozen).is_err());
+        } else {
+            assert!(confirm_frozen_tree(&frozen).is_ok());
+        }
+        drop(frozen);
+        drop(ancestors);
+        if write_while_frozen.is_err() {
+            std::fs::write(&restored, b"payload").unwrap();
+            let (_, restored_tree) = freeze_code_tree(&app).unwrap();
+            assert!(restored_tree.iter().any(|(path, _)| path == &restored));
+        }
     }
     #[test]
     fn live_writers_block_hardening_before_any_acl_change() {
