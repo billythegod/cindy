@@ -250,8 +250,9 @@ import {
 import {
   ensureDialogueWorkspaceDir,
   dialogueWorkspaceRootDir,
+  dialogueWorkspaceRoots,
+  isManagedDialogueWorkspace,
 } from '../localDb/dialogueWorkspace.js';
-import { matchDialogueWorkspacePath } from '../localDb/dialogueWorkdirSelfHeal.js';
 import {
   broadcastMessageRow,
   broadcastMessageAgentMetaUpdate,
@@ -8475,7 +8476,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         agentKind: lead?.agentKind ?? leadRow?.agentKind ?? null,
       },
       (pluginId, workingDir) => getPluginRegistry().isEnabled(pluginId, workingDir),
-      (workingDir) => matchDialogueWorkspacePath(workingDir, dialogueWorkspaceRootDir()) !== null,
+      isManagedDialogueWorkspace,
     );
   }
 
@@ -12192,8 +12193,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     checkWorkDirExists,
     resolveRecoveredWorkingDir: (sessionId, dir) => workingDirectoryRecovery.resolve(sessionId, dir),
-    isPersistedWorktreeFallback: (dir) => path.dirname(path.resolve(dir)) ===
-      path.join(dialogueWorkspaceRootDir(), 'worktree-recovery'),
+    isPersistedWorktreeFallback: (dir) => dialogueWorkspaceRoots().some((root) =>
+      path.dirname(path.resolve(dir)) === path.join(root, 'worktree-recovery')),
     preflightBotRuntimeResources: async (opts) => { await preflightBotRuntimeResources(opts); },
     readWorkingDirectoryRecoveryCreateOpts: async (sessionId) => {
       const [row] = await getDbClient().drizzle.select().from(sessions)
@@ -17728,7 +17729,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               wd,
               typeof workspaceKind === 'string' ? workspaceKind : null,
               (candidate) =>
-                matchDialogueWorkspacePath(candidate, dialogueWorkspaceRootDir()) !== null,
+                isManagedDialogueWorkspace(candidate),
             )
           : wd;
       const state = await getPluginRegistry().getEnableState(id, policyWorkingDir);

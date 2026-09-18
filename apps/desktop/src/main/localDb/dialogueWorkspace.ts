@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ownerScopedUserDataPath } from '../appSessionState.js';
+import { dialogueWorkspaceRoots, readDialogueWorkspaceSettings } from '../dialogue-workspace-settings.js';
+import { matchDialogueWorkspacePath } from './dialogueWorkdirSelfHeal.js';
+
+export { dialogueWorkspaceRoots } from '../dialogue-workspace-settings.js';
 
 /**
  * Build the local date bucket used for XDT-created standalone dialogues.
@@ -18,7 +21,11 @@ export function dialogueWorkspaceDayKey(nowMs: number): string {
 
 /** Root directory owned by xdt-maker for folderless dialogue workspaces. */
 export function dialogueWorkspaceRootDir(): string {
-  return ownerScopedUserDataPath('dialogues');
+  return readDialogueWorkspaceSettings().directory;
+}
+
+export function isManagedDialogueWorkspace(workingDir: string): boolean {
+  return dialogueWorkspaceRoots().some((root) => matchDialogueWorkspacePath(workingDir, root) !== null);
 }
 
 /**

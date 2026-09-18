@@ -22,7 +22,7 @@ const h = vi.hoisted(() => ({
   hiddenKeys: [] as string[],
 }));
 vi.mock('../../localDb/dialogueWorkspace.js', () => ({
-  dialogueWorkspaceRootDir: () => h.dialogueRoot,
+  dialogueWorkspaceRoots: () => [h.dialogueRoot],
 }));
 vi.mock('electron', () => ({
   BrowserWindow: {
