@@ -2086,6 +2086,7 @@ function deactivateControllerState(
   deviceId: string,
   observedConnectionEpoch?: number,
   observedLinkGeneration?: number,
+  transientSignalingLoss = false,
 ): boolean {
   const activeEpoch = controllerConnectionEpochByDevice.get(deviceId);
   const activeLinkGeneration = controllerLinkGenerationByDevice.get(deviceId);
@@ -2112,7 +2113,8 @@ function deactivateControllerState(
   let changed = false;
   changed = acceptedLinkControllers.delete(deviceId) || changed;
   stopFilePeers(deviceId);
-  remoteDesktop.stop(deviceId);
+  if (transientSignalingLoss) remoteDesktop.signalingLost(deviceId);
+  else remoteDesktop.stop(deviceId);
   void remoteCredentialHost.close(deviceId).catch(() => remoteCredentialHost.dispose());
   changed = controllerConnectionEpochByDevice.delete(deviceId) || changed;
   changed = controllerLinkGenerationByDevice.delete(deviceId) || changed;
@@ -2139,11 +2141,13 @@ export function deactivateController(
   reason: string,
   observedConnectionEpoch?: number,
   observedLinkGeneration?: number,
+  transientSignalingLoss = false,
 ): boolean {
   const changed = deactivateControllerState(
     deviceId,
     observedConnectionEpoch,
     observedLinkGeneration,
+    transientSignalingLoss,
   );
   if (changed) {
     log.info(`controller ${shortId(deviceId)} deactivated (${reason})`);
@@ -2155,7 +2159,7 @@ export function deactivateController(
 /** Relay 连接离开 online：清本连接代所有 active controller，但保留恢复意图。 */
 export function deactivateAllControllers(reason: string): void {
   stopFilePeers();
-  remoteDesktop.stop();
+  remoteDesktop.signalingLost();
   const controllerIds = new Set([
     ...subscriptions.getControllerIds(),
     ...topicSubscriptionControllers,
@@ -2166,7 +2170,7 @@ export function deactivateAllControllers(reason: string): void {
   ]);
   let changed = false;
   for (const deviceId of controllerIds) {
-    changed = deactivateControllerState(deviceId) || changed;
+    changed = deactivateControllerState(deviceId, undefined, undefined, true) || changed;
   }
   if (changed) {
     log.info(`all active controllers deactivated (${reason}, count=${controllerIds.size})`);
@@ -2184,6 +2188,7 @@ export function handleControllerOffline(
     routeChange ? 'relay-device-offline' : 'presence-offline',
     routeChange?.connectionEpoch,
     routeChange?.linkGeneration,
+    true,
   );
 }
 
