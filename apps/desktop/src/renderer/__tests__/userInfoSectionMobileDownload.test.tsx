@@ -476,11 +476,10 @@ describe('UserInfoSection mobile download entry', () => {
     await waitFor(() =>
       expect(navigate).toHaveBeenCalledWith('/add-account', { state: { returnTo: '/' } }),
     );
-    await waitFor(() => expect(toast.dismiss).toHaveBeenCalledWith('progress-toast'));
-    expect(toast.loading).toHaveBeenCalledWith('sidebar.accountSwitcher.adding');
+    expect(toast.loading).not.toHaveBeenCalled();
   });
 
-  it('clears sign-in progress and re-enables the entry when navigation fails', async () => {
+  it('reports navigation failure and re-enables the sign-in entry', async () => {
     authState.user = null;
     authState.mode = 'local';
     navigate.mockRejectedValueOnce(new Error('navigation failed'));
@@ -492,7 +491,7 @@ describe('UserInfoSection mobile download entry', () => {
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith('sidebar.accountSwitcher.startFailed'),
     );
-    expect(toast.dismiss).toHaveBeenCalledWith('progress-toast');
+    expect(toast.loading).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByRole('button', { name: 'sidebar.user.moreLabel' }), {
       key: 'Enter',
     });

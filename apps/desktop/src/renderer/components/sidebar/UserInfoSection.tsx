@@ -154,17 +154,14 @@ export function UserInfoSection({ isCollapsed, onOpenUpdateNotice }: UserInfoSec
   const openAddAccount = async () => {
     if (addingAccount) return;
     setAddingAccount(true);
-    let progressToast: string | undefined;
     try {
       if (!(await confirmRunningTaskInterruption())) return;
-      progressToast = toast.loading(t('sidebar.accountSwitcher.adding'));
       await navigate('/add-account', {
         state: { returnTo: `${location.pathname}${location.search}` },
       });
     } catch {
       toast.error(t('sidebar.accountSwitcher.startFailed'));
     } finally {
-      if (progressToast) toast.dismiss(progressToast);
       setAddingAccount(false);
     }
   };
