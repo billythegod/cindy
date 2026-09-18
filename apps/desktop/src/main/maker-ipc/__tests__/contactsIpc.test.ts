@@ -118,9 +118,10 @@ describe('contacts-ipc handlers', () => {
     expect(writeContactsEnabled).toHaveBeenCalledWith(true);
     expect(runtime.shutdownCodexEnvironment).not.toHaveBeenCalled();
     expect(runtime.scheduleDeferredCodexRestart).toHaveBeenCalledWith('Contacts MCP configuration changed');
+    expect(runtime.invalidatePiEnvironment).toHaveBeenCalledTimes(1);
   });
 
-  it('uses injected runtime dependencies to refresh the bridge under the guard before Pi invalidation', async () => {
+  it('invalidates Pi after persistence and refreshes the Codex bridge under its guard', async () => {
     const order: string[] = [];
     runtime.restartCodexAfterAuthModeChange.mockImplementationOnce(async (refresh) => {
       order.push('guard');
@@ -128,7 +129,10 @@ describe('contacts-ipc handlers', () => {
       order.push('release');
     });
     runtime.shutdownCodexEnvironment.mockImplementationOnce(async () => { order.push('bridge'); });
-    runtime.invalidatePiEnvironment.mockImplementationOnce(() => { order.push('pi'); });
+    runtime.invalidatePiEnvironment.mockImplementationOnce(() => {
+      expect(writeContactsEnabled).toHaveBeenCalledWith(true);
+      order.push('pi');
+    });
     registerContactsIpc(runtime);
     const handler = vi.mocked(ipcMain.handle).mock.calls.find(
       ([channel]) => channel === MAKER_INVOKE.CONTACTS_SETTINGS_SET,
@@ -136,13 +140,41 @@ describe('contacts-ipc handlers', () => {
     await expect(handler({} as Electron.IpcMainInvokeEvent, true)).resolves.toEqual({
       enabled: true, codexMcpRefreshed: true,
     });
-    expect(order).toEqual(['guard', 'bridge', 'release', 'pi']);
+    expect(order).toEqual(['pi', 'guard', 'bridge', 'release']);
     expect(runtime.scheduleDeferredCodexRestart).not.toHaveBeenCalled();
+  });
+
+  it.each(['resolve', 'reject'] as const)('invalidates Pi without waiting for a Codex restart to %s', async (outcome) => {
+    let settle!: () => void;
+    const restart = new Promise<void>((resolve, reject) => {
+      settle = outcome === 'resolve' ? resolve : () => reject(new Error('bridge failed'));
+    });
+    runtime.restartCodexAfterAuthModeChange.mockReturnValueOnce(restart);
+    registerContactsIpc(runtime);
+    const handler = vi.mocked(ipcMain.handle).mock.calls.find(
+      ([channel]) => channel === MAKER_INVOKE.CONTACTS_SETTINGS_SET,
+    )![1];
+    const result = handler({} as Electron.IpcMainInvokeEvent, true);
+    await vi.waitFor(() => expect(runtime.restartCodexAfterAuthModeChange).toHaveBeenCalledTimes(1));
+    try {
+      expect(runtime.invalidatePiEnvironment).toHaveBeenCalledTimes(1);
+      expect(runtime.scheduleDeferredCodexRestart).not.toHaveBeenCalled();
+    } finally {
+      settle();
+      await result;
+    }
+    expect(await result).toEqual({ enabled: true, codexMcpRefreshed: outcome === 'resolve' });
+    expect(runtime.invalidatePiEnvironment).toHaveBeenCalledTimes(1);
+    expect(runtime.scheduleDeferredCodexRestart).toHaveBeenCalledTimes(outcome === 'reject' ? 1 : 0);
   });
 
   it.each(['pending', 'changed'] as const)('does not re-register a late refresh after owner boundary is %s', async (boundary) => {
     const scope = vi.spyOn(appSessionState, 'activeOwnerScopeKey').mockReturnValue('owner-a');
     const pending = vi.spyOn(appSessionState, 'isAppSessionBoundaryPending').mockReturnValue(false);
+    const piScopes: string[] = [];
+    runtime.invalidatePiEnvironment.mockImplementationOnce(() => {
+      piScopes.push(appSessionState.activeOwnerScopeKey());
+    });
     runtime.restartCodexAfterAuthModeChange.mockImplementationOnce(async () => {
       if (boundary === 'pending') pending.mockReturnValue(true);
       else scope.mockReturnValue('owner-b');
@@ -155,6 +187,20 @@ describe('contacts-ipc handlers', () => {
     await expect(handler({} as Electron.IpcMainInvokeEvent, true)).resolves.toEqual({
       enabled: true, codexMcpRefreshed: false,
     });
+    expect(runtime.scheduleDeferredCodexRestart).not.toHaveBeenCalled();
+    expect(runtime.invalidatePiEnvironment).toHaveBeenCalledTimes(1);
+    expect(piScopes).toEqual(['owner-a']);
+  });
+
+  it('does not invalidate either runtime when persisting the toggle fails', async () => {
+    vi.mocked(writeContactsEnabled).mockImplementationOnce(() => { throw new Error('write failed'); });
+    registerContactsIpc(runtime);
+    const handler = vi.mocked(ipcMain.handle).mock.calls.find(
+      ([channel]) => channel === MAKER_INVOKE.CONTACTS_SETTINGS_SET,
+    )![1];
+    await expect(handler({} as Electron.IpcMainInvokeEvent, true)).rejects.toThrow('write failed');
+    expect(runtime.invalidatePiEnvironment).not.toHaveBeenCalled();
+    expect(runtime.restartCodexAfterAuthModeChange).not.toHaveBeenCalled();
     expect(runtime.scheduleDeferredCodexRestart).not.toHaveBeenCalled();
   });
 

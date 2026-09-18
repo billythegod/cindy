@@ -364,6 +364,16 @@ export function registerContactsIpc(runtime: {
     // handler 把失败折成 codexMcpRefreshed:false 由 renderer 提示延迟生效。
     invalidateCodexMcp: async () => {
       const ownerScopeKey = activeOwnerScopeKey();
+      // Pi 的 generation lease 保留活动会话;落盘后立即让新会话读取新配置,
+      // 不等待 Codex 的 busy 检查或 bridge 重建,也不在迟到回调中给新 owner 换代。
+      try {
+        runtime.invalidatePiEnvironment();
+      } catch (err) {
+        log.warn('Pi MCP environment invalidation on contacts toggle failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
       try {
         await runtime.restartCodexAfterAuthModeChange(runtime.shutdownCodexEnvironment);
       } catch (err) {
@@ -372,19 +382,6 @@ export function registerContactsIpc(runtime: {
         }
         log.warn(
           'restartCodexAfterAuthModeChange on contacts toggle failed — idle retry if owner is still current',
-          {
-            error: err instanceof Error ? err.message : String(err),
-          },
-        );
-        throw err;
-      }
-      try {
-        // Codex 与 Pi 各自的 MCP bridge 都在首个会话冻结 server 集合;contacts 开关变更后
-        // 两者都要 invalidate,否则新会话仍暴露已禁用的 contacts server(Pi 侧 codex review P1)。
-        runtime.invalidatePiEnvironment();
-      } catch (err) {
-        log.warn(
-          'shutdown agent MCP environments on contacts toggle failed — cached spawn config still stale',
           {
             error: err instanceof Error ? err.message : String(err),
           },
