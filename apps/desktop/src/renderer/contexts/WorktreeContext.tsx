@@ -27,6 +27,16 @@ import {
 
 import type { WorktreeMeta } from '@/lib/worktree.types';
 import { createLogger } from '@/lib/logger';
+import {
+  getDataOwnerGeneration,
+  isDataOwnerGenerationCurrent,
+  type DataOwnerGeneration,
+} from './dataOwnerGeneration';
+
+interface ObservedWorktree {
+  owner: DataOwnerGeneration;
+  info: { workdir: string; branch: string | null };
+}
 
 const log = createLogger('WorktreeContext');
 interface WorktreeContextValue {
@@ -35,6 +45,8 @@ interface WorktreeContextValue {
   /** 保留失效目录的登记信息，供打开中的任务在聚焦/恢复时重新探测。 */
   rawMetas: Record<string, WorktreeMeta>;
   reportLiveness: (meta: WorktreeMeta, live: boolean) => void;
+  observed: Record<string, ObservedWorktree>;
+  refreshObserved: (sessionId: string) => Promise<void>;
   /** 从 main 查询并更新单个 session 的 worktree 缓存。 */
   refreshSession: (sessionId: string) => Promise<void>;
 }
@@ -42,6 +54,70 @@ interface WorktreeContextValue {
 const WorktreeContext = createContext<WorktreeContextValue | null>(null);
 
 export function WorktreeProvider({ children }: { children: ReactNode }) {
+  const [observed, setObserved] = useState<Record<string, ObservedWorktree>>({});
+  // Sidebar and composer share one in-flight query per session. A tool result arriving
+  // during discovery requires one more pass over the newly committed messages.
+  const observedRequests = useRef(
+    new Map<string, { owner: DataOwnerGeneration; queued: boolean; promise: Promise<void> }>(),
+  );
+  const refreshObserved = useCallback((sessionId: string): Promise<void> => {
+    const pending = observedRequests.current.get(sessionId);
+    if (pending && isDataOwnerGenerationCurrent(pending.owner)) {
+      pending.queued = true;
+      return pending.promise;
+    }
+    const owner = getDataOwnerGeneration();
+    const request = { owner, queued: false, promise: Promise.resolve() };
+    const isCurrent = () =>
+      observedRequests.current.get(sessionId) === request && isDataOwnerGenerationCurrent(owner);
+    observedRequests.current.set(sessionId, request);
+    request.promise = (async () => {
+      do {
+        request.queued = false;
+        try {
+          const found = await window.electronAPI.gitContext.findLinkedWorktree({ sessionId });
+          if (!isCurrent()) return;
+          if (request.queued) continue;
+          setObserved((current) => {
+            if (!isDataOwnerGenerationCurrent(owner)) return current;
+            if (!found?.workdir) {
+              if (!current[sessionId]) return current;
+              const next = { ...current };
+              delete next[sessionId];
+              return next;
+            }
+            const previous = current[sessionId];
+            if (
+              previous &&
+              isDataOwnerGenerationCurrent(previous.owner) &&
+              previous.info.workdir === found.workdir &&
+              previous.info.branch === found.branch
+            )
+              return current;
+            return {
+              ...current,
+              [sessionId]: {
+                owner,
+                info: found,
+              },
+            };
+          });
+        } catch {
+          // Transport failure is not evidence that a previously found path vanished.
+        }
+      } while (request.queued && isCurrent());
+    })().finally(() => {
+      if (observedRequests.current.get(sessionId) === request)
+        observedRequests.current.delete(sessionId);
+    });
+    return request.promise;
+  }, []);
+  useEffect(
+    () => () => {
+      observedRequests.current.clear();
+    },
+    [],
+  );
   const [snapshot, setSnapshot] = useState<{
     metas: Record<string, WorktreeMeta>;
     invalid: Set<string>;
@@ -59,18 +135,19 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
       // 中间发生了更新的 refresh，丢弃本次结果
       if (myTurn !== fullRefreshGenerationRef.current) return;
       const entries = (list ?? []).filter((meta) => meta?.sessionId && meta.path);
-      const mergeSnapshot = (next: Record<string, WorktreeMeta>) => setSnapshot((current) => {
-        if (myTurn !== fullRefreshGenerationRef.current) return current;
-        const merged = { ...next };
-        // 快照读取期间若某个 session 收到更晚的权威事件，只保留该 session 当前
-        // 的增量结果；未完成的增量请求随后会再落一次，不能让旧全量快照回写。
-        for (const [sessionId, generation] of sessionEventGenerationsRef.current) {
-          if (generation <= eventGenerationAtStart) continue;
-          if (current.metas[sessionId]) merged[sessionId] = current.metas[sessionId];
-          else delete merged[sessionId];
-        }
-        return { ...current, metas: merged };
-      });
+      const mergeSnapshot = (next: Record<string, WorktreeMeta>) =>
+        setSnapshot((current) => {
+          if (myTurn !== fullRefreshGenerationRef.current) return current;
+          const merged = { ...next };
+          // 快照读取期间若某个 session 收到更晚的权威事件，只保留该 session 当前
+          // 的增量结果；未完成的增量请求随后会再落一次，不能让旧全量快照回写。
+          for (const [sessionId, generation] of sessionEventGenerationsRef.current) {
+            if (generation <= eventGenerationAtStart) continue;
+            if (current.metas[sessionId]) merged[sessionId] = current.metas[sessionId];
+            else delete merged[sessionId];
+          }
+          return { ...current, metas: merged };
+        });
       mergeSnapshot(Object.fromEntries(entries.map((meta) => [meta.sessionId, meta])));
     } catch (err) {
       log.warn('refresh failed:', err);
@@ -89,8 +166,7 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
     try {
       const meta = await getForSession(sessionId);
       if (!isCurrent()) return;
-      const next =
-        meta?.sessionId === sessionId && meta.path ? meta : null;
+      const next = meta?.sessionId === sessionId && meta.path ? meta : null;
       if (!isCurrent()) return;
       setSnapshot((current) => {
         if (!isCurrent()) return current;
@@ -135,8 +211,12 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
     return subscribe(({ sessionId }) => {
       if (!sessionId) return;
       void refreshSession(sessionId);
+      // An observed path may subsequently have become managed. Recycling must
+      // invalidate that old display snapshot even when its task is not open.
+      const previous = observed[sessionId];
+      if (previous && isDataOwnerGenerationCurrent(previous.owner)) void refreshObserved(sessionId);
     });
-  }, [refreshSession]);
+  }, [refreshSession, observed, refreshObserved]);
 
   // Renderer 主动创建/恢复时调用方会直接 refreshSession；Scheduler、hook-control
   // 等后台入口只会在 session 建成后广播 sessions:created。这里同样只查该 session，
@@ -152,13 +232,19 @@ export function WorktreeProvider({ children }: { children: ReactNode }) {
     });
   }, [refreshSession]);
 
-  const value = useMemo<WorktreeContextValue>(() => ({
-    metas: Object.fromEntries(Object.entries(snapshot.metas)
-      .filter(([sessionId]) => !snapshot.invalid.has(sessionId))),
-    rawMetas: snapshot.metas,
-    reportLiveness,
-    refreshSession,
-  }), [snapshot, reportLiveness, refreshSession]);
+  const value = useMemo<WorktreeContextValue>(
+    () => ({
+      metas: Object.fromEntries(
+        Object.entries(snapshot.metas).filter(([sessionId]) => !snapshot.invalid.has(sessionId)),
+      ),
+      rawMetas: snapshot.metas,
+      reportLiveness,
+      observed,
+      refreshObserved,
+      refreshSession,
+    }),
+    [snapshot, reportLiveness, observed, refreshObserved, refreshSession],
+  );
 
   return <WorktreeContext.Provider value={value}>{children}</WorktreeContext.Provider>;
 }
@@ -189,6 +275,15 @@ export function useWorktreeForSession(
 /** 仅同步当前任务已有探测的结果，不额外启动 Git，也不修改 main store。 */
 export function useReportWorktreeLiveness(): WorktreeContextValue['reportLiveness'] {
   return useCtx().reportLiveness;
+}
+
+export function useObservedWorktreeForSession(sessionId: string): ObservedWorktree['info'] | null {
+  const observed = useCtx().observed[sessionId];
+  return observed && isDataOwnerGenerationCurrent(observed.owner) ? observed.info : null;
+}
+
+export function useRefreshObservedWorktree(): WorktreeContextValue['refreshObserved'] {
+  return useCtx().refreshObserved;
 }
 
 /** 让创建/恢复等明确知道 sessionId 的调用方只刷新对应 worktree。 */

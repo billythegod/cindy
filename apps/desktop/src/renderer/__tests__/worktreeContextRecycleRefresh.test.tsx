@@ -13,7 +13,15 @@ import {
   useWorktreeForSession,
 } from '@/contexts/WorktreeContext';
 import { useTaskInfoWorktree } from '@/features/cc-agent/sidebar/sessionWorktreeInfo';
+import { SessionInfoMeta } from '@/features/cc-agent/sidebar/SessionInfoMeta';
+import { setDataOwnerGeneration, __testing as ownerTesting } from '@/contexts/dataOwnerGeneration';
 import { emitRefresh } from '@/lib/sessionsBus';
+
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock('@/contexts/PrRefsContext', () => ({
+  usePrActions: () => ({ fetchStatusesForSession: vi.fn() }),
+  usePrStatus: () => undefined,
+}));
 
 vi.mock('@/lib/logger', () => ({
   createLogger: () => ({ warn: vi.fn(), error: vi.fn(), debug: vi.fn(), info: vi.fn() }),
@@ -27,6 +35,9 @@ const mocks = {
   listeners: new Set<(payload: { sessionId: string }) => void>(),
   sessionCreatedListeners: new Set<
     (payload: { sessionId: string }, ownerStamp?: unknown) => void
+  >(),
+  messageListeners: new Set<
+    (payload: { sessionId: string; message: { role: string } }, ownerStamp?: unknown) => void
   >(),
 };
 
@@ -51,11 +62,41 @@ function Probe() {
 }
 
 function ActiveProbe() {
-  const info = useTaskInfoWorktree({ id: 'open', workingDir: '/repo' }, true, { observeTelemetry: true });
+  const info = useTaskInfoWorktree({ id: 'open', workingDir: '/repo' }, true, {
+    observeTelemetry: true,
+  });
   return <span data-testid="active">{info?.path ?? ''}</span>;
 }
 
+function SidebarProbe({
+  id = 'open',
+  remoteHostId,
+  deviceLinkDeviceId,
+}: {
+  id?: string;
+  remoteHostId?: string;
+  deviceLinkDeviceId?: string;
+}) {
+  const info = useTaskInfoWorktree(
+    { id, workingDir: '/repo', remoteHostId, deviceLinkDeviceId },
+    true,
+  );
+  return (
+    <div data-testid={`sidebar-${id}`} data-path={info?.path ?? ''}>
+      <SessionInfoMeta
+        pieces={info ? [{ key: 'worktree', text: '' }] : []}
+        worktree={info ?? undefined}
+      />
+    </div>
+  );
+}
+
+function emitToolMessage(sessionId = 'open', role = 'tool_result', ownerStamp?: unknown) {
+  mocks.messageListeners.forEach((cb) => cb({ sessionId, message: { role } }, ownerStamp));
+}
+
 beforeEach(() => {
+  ownerTesting.reset();
   mocks.worktreeListAll.mockReset();
   mocks.worktreeGetForSession.mockReset();
   mocks.worktreeDetectCwd.mockReset();
@@ -67,6 +108,7 @@ beforeEach(() => {
   });
   mocks.listeners.clear();
   mocks.sessionCreatedListeners.clear();
+  mocks.messageListeners.clear();
   Object.defineProperty(window, 'electronAPI', {
     configurable: true,
     value: {
@@ -79,6 +121,17 @@ beforeEach(() => {
         return () => mocks.listeners.delete(cb);
       },
       localDb: {
+        messages: {
+          onCreated: (
+            cb: (
+              payload: { sessionId: string; message: { role: string } },
+              ownerStamp?: unknown,
+            ) => void,
+          ) => {
+            mocks.messageListeners.add(cb);
+            return () => mocks.messageListeners.delete(cb);
+          },
+        },
         sessionsPush: {
           onCreated: (cb: (payload: { sessionId: string }, ownerStamp?: unknown) => void) => {
             mocks.sessionCreatedListeners.add(cb);
@@ -97,16 +150,216 @@ afterEach(() => {
 });
 
 describe('WorktreeContext recycle refresh', () => {
+  it('shows the real sidebar icon after a persisted tool result, shares it with the composer, and keeps it after switching tasks', async () => {
+    mocks.worktreeListAll.mockResolvedValue([]);
+    const content = (active: boolean) => (
+      <WorktreeProvider>
+        <Probe />
+        <SidebarProbe />
+        {active && <ActiveProbe />}
+      </WorktreeProvider>
+    );
+    const view = render(content(true));
+    await act(async () => {});
+    expect(view.getByTestId('sidebar-open').querySelector('svg')).toBeNull();
+    await act(async () => emitToolMessage('open', 'tool_use'));
+    expect(view.getByTestId('sidebar-open').querySelector('svg')).toBeNull();
+
+    mocks.findLinkedWorktree.mockResolvedValue({
+      workdir: '/tmp/observed/open',
+      branch: 'feature',
+    });
+    await act(async () => emitToolMessage());
+    expect(view.getByTestId('sidebar-open').querySelector('svg.lucide-folders')).not.toBeNull();
+    expect(view.getByTestId('sidebar-open').querySelector('button')).toBeNull();
+    expect(view.getByTestId('active').textContent).toBe('/tmp/observed/open');
+    expect(view.getByTestId('ids').textContent).toBe(''); // never added to managed registry
+    view.rerender(content(false));
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/observed/open');
+
+    mocks.findLinkedWorktree.mockResolvedValue(null);
+    view.rerender(content(true));
+    await act(async () => {});
+    expect(view.getByTestId('sidebar-open').querySelector('svg')).toBeNull();
+    expect(view.getByTestId('active').textContent).toBe('');
+  });
+
+  it('updates a background list entry without opening it or scanning other rows', async () => {
+    mocks.worktreeListAll.mockResolvedValue([]);
+    mocks.findLinkedWorktree.mockResolvedValue({ workdir: '/tmp/background', branch: null });
+    const view = render(
+      <WorktreeProvider>
+        <SidebarProbe />
+        <SidebarProbe id="idle" />
+      </WorktreeProvider>,
+    );
+    await act(async () => {});
+    expect(mocks.findLinkedWorktree).not.toHaveBeenCalled();
+    await act(async () => emitToolMessage());
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledExactlyOnceWith({ sessionId: 'open' });
+    expect(view.getByTestId('sidebar-open').querySelector('svg')).not.toBeNull();
+    expect(view.getByTestId('sidebar-idle').querySelector('svg')).toBeNull();
+    expect(mocks.worktreeDetectCwd).not.toHaveBeenCalled();
+    view.unmount();
+    expect(mocks.messageListeners.size).toBe(0);
+  });
+
+  it('accepts current-owner messages, ignores stale-owner, unrelated, and non-tool pushes', async () => {
+    setDataOwnerGeneration('owner', 3);
+    mocks.worktreeListAll.mockResolvedValue([]);
+    render(
+      <WorktreeProvider>
+        <SidebarProbe />
+      </WorktreeProvider>,
+    );
+    await act(async () => {});
+    await act(async () => {
+      emitToolMessage('open', 'tool_result', { dataOwnerId: 'owner', ownerGeneration: 2 });
+      emitToolMessage('other');
+      emitToolMessage('open', 'assistant');
+    });
+    expect(mocks.findLinkedWorktree).not.toHaveBeenCalled();
+    await act(async () =>
+      emitToolMessage('open', 'tool_use', { dataOwnerId: 'owner', ownerGeneration: 3 }),
+    );
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledOnce();
+  });
+
+  it('keeps managed entries cheap and removes an old observed fallback when that worktree is recycled', async () => {
+    mocks.worktreeListAll.mockResolvedValue([]);
+    mocks.findLinkedWorktree.mockResolvedValue({ workdir: '/tmp/open', branch: null });
+    const view = render(
+      <WorktreeProvider>
+        <SidebarProbe />
+      </WorktreeProvider>,
+    );
+    await act(async () => emitToolMessage());
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/open');
+    mocks.worktreeGetForSession.mockResolvedValue({ sessionId: 'open', path: '/tmp/open' });
+    await act(async () => emitSessionCreated('open'));
+    mocks.findLinkedWorktree.mockClear();
+    await act(async () => emitToolMessage());
+    expect(mocks.findLinkedWorktree).not.toHaveBeenCalled();
+    mocks.worktreeGetForSession.mockResolvedValue(null);
+    mocks.findLinkedWorktree.mockResolvedValue(null);
+    await act(async () => emitWorktreeChanged('open'));
+    expect(view.getByTestId('sidebar-open').querySelector('svg')).toBeNull();
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledExactlyOnceWith({ sessionId: 'open' });
+  });
+
+  it.each([{ remoteHostId: 'ssh' }, { deviceLinkDeviceId: 'remote' }])(
+    'does not probe remote list entries: %j',
+    async (remote) => {
+      mocks.worktreeListAll.mockResolvedValue([]);
+      render(
+        <WorktreeProvider>
+          <SidebarProbe {...remote} />
+        </WorktreeProvider>,
+      );
+      await act(async () => emitToolMessage());
+      expect(mocks.findLinkedWorktree).not.toHaveBeenCalled();
+    },
+  );
+
+  it('coalesces a burst during discovery and applies only the result after the newest tool write', async () => {
+    mocks.worktreeListAll.mockResolvedValue([]);
+    let finish!: (value: unknown) => void;
+    mocks.findLinkedWorktree
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValue({ workdir: '/tmp/newest', branch: null });
+    const view = render(
+      <WorktreeProvider>
+        <SidebarProbe />
+      </WorktreeProvider>,
+    );
+    await act(async () => {
+      emitToolMessage();
+      for (let i = 0; i < 10; i++) emitToolMessage();
+      finish({ workdir: '/tmp/stale', branch: null });
+    });
+    expect(mocks.findLinkedWorktree).toHaveBeenCalledTimes(2);
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/newest');
+    mocks.findLinkedWorktree.mockRejectedValue(new Error('IPC unavailable'));
+    await act(async () => emitToolMessage());
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/newest');
+  });
+
+  it('does not attach a late discovery to a different task or owner', async () => {
+    mocks.worktreeListAll.mockResolvedValue([]);
+    let finish!: (value: unknown) => void;
+    mocks.findLinkedWorktree.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const content = (id: string) => (
+      <WorktreeProvider>
+        <SidebarProbe id={id} />
+      </WorktreeProvider>
+    );
+    const view = render(content('open'));
+    await act(async () => emitToolMessage());
+    view.rerender(content('other'));
+    await act(async () => finish({ workdir: '/tmp/open', branch: null }));
+    expect(view.getByTestId('sidebar-other').getAttribute('data-path')).toBe('');
+    await act(async () => emitToolMessage('other'));
+    setDataOwnerGeneration('replacement-owner');
+    await act(async () => finish({ workdir: '/tmp/old-owner', branch: null }));
+    expect(view.getByTestId('sidebar-other').getAttribute('data-path')).toBe('');
+  });
+
+  it('hides the previous owner snapshot and lets the new owner refresh while an old request is pending', async () => {
+    mocks.worktreeListAll.mockResolvedValue([]);
+    mocks.findLinkedWorktree.mockResolvedValue({ workdir: '/tmp/owner-a', branch: null });
+    const content = () => (
+      <WorktreeProvider>
+        <SidebarProbe />
+      </WorktreeProvider>
+    );
+    const view = render(content());
+    await act(async () => emitToolMessage());
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/owner-a');
+    let finishOld!: (value: unknown) => void;
+    mocks.findLinkedWorktree.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
+    );
+    await act(async () => emitToolMessage());
+    setDataOwnerGeneration('owner-b');
+    view.rerender(content());
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('');
+    mocks.findLinkedWorktree.mockResolvedValue({ workdir: '/tmp/owner-b', branch: null });
+    await act(async () => emitToolMessage());
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/owner-b');
+    await act(async () => finishOld({ workdir: '/tmp/old-owner-late', branch: null }));
+    expect(view.getByTestId('sidebar-open').getAttribute('data-path')).toBe('/tmp/owner-b');
+  });
+
   it('shares external deletion with sidebar badges, retains metadata for reopening and detects external restoration', async () => {
     const meta = { sessionId: 'open', path: '/tmp/wt/open' };
     mocks.worktreeListAll.mockResolvedValue([meta, { sessionId: 'idle', path: '/tmp/wt/idle' }]);
-    const content = (active: boolean) => <WorktreeProvider><Probe />{active && <ActiveProbe />}</WorktreeProvider>;
+    const content = (active: boolean) => (
+      <WorktreeProvider>
+        <Probe />
+        {active && <ActiveProbe />}
+      </WorktreeProvider>
+    );
     const view = render(content(true));
     await act(async () => {});
     expect(view.getByTestId('active').textContent).toBe(meta.path);
 
     mocks.worktreeDetectCwd.mockResolvedValue({ isInsideWorktree: false });
-    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
     expect(view.getByTestId('active').textContent).toBe('');
     expect(view.getByTestId('ids').textContent).toBe('idle:/tmp/wt/idle');
 
@@ -128,16 +381,27 @@ describe('WorktreeContext recycle refresh', () => {
     let refresh!: (sessionId: string) => Promise<void>;
     function Actions() {
       refresh = useRefreshWorktreeForSession();
-      return <><Probe /><ActiveProbe /></>;
+      return (
+        <>
+          <Probe />
+          <ActiveProbe />
+        </>
+      );
     }
-    const view = render(<WorktreeProvider><Actions /></WorktreeProvider>);
+    const view = render(
+      <WorktreeProvider>
+        <Actions />
+      </WorktreeProvider>,
+    );
     await act(async () => {});
     expect(view.getByTestId('active').textContent).toBe('');
     expect(view.getByTestId('ids').textContent).toBe('');
 
     mocks.worktreeGetForSession.mockResolvedValue({ ...meta });
     mocks.worktreeDetectCwd.mockClear().mockResolvedValue({ isInsideWorktree: true });
-    await act(async () => { await refresh('open'); });
+    await act(async () => {
+      await refresh('open');
+    });
     expect(view.getByTestId('active').textContent).toBe(meta.path);
     expect(view.getByTestId('ids').textContent).toBe(`open:${meta.path}`);
     expect(mocks.worktreeDetectCwd).toHaveBeenCalledExactlyOnceWith({ cwd: meta.path });
@@ -146,10 +410,17 @@ describe('WorktreeContext recycle refresh', () => {
 
   it('does not hide a live worktree when its probe rejects', async () => {
     mocks.worktreeListAll.mockResolvedValue([{ sessionId: 'open', path: '/tmp/wt/open' }]);
-    const view = render(<WorktreeProvider><Probe /><ActiveProbe /></WorktreeProvider>);
+    const view = render(
+      <WorktreeProvider>
+        <Probe />
+        <ActiveProbe />
+      </WorktreeProvider>,
+    );
     await act(async () => {});
     mocks.worktreeDetectCwd.mockRejectedValue(new Error('probe timeout'));
-    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
     expect(view.getByTestId('active').textContent).toBe('/tmp/wt/open');
     expect(view.getByTestId('ids').textContent).toBe('open:/tmp/wt/open');
   });
@@ -163,34 +434,63 @@ describe('WorktreeContext recycle refresh', () => {
       let refresh!: (sessionId: string) => Promise<void>;
       function Actions() {
         refresh = useRefreshWorktreeForSession();
-        return <><Probe /><ActiveProbe /></>;
+        return (
+          <>
+            <Probe />
+            <ActiveProbe />
+          </>
+        );
       }
-      const view = render(<WorktreeProvider><Actions /></WorktreeProvider>);
+      const view = render(
+        <WorktreeProvider>
+          <Actions />
+        </WorktreeProvider>,
+      );
       await act(async () => {});
       expect(view.getByTestId('active').textContent).toBe('');
       expect(view.getByTestId('ids').textContent).toBe('');
 
       let finishOld!: (value: { isInsideWorktree: boolean }) => void;
-      mocks.worktreeDetectCwd.mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }));
-      await act(async () => { window.dispatchEvent(new Event('focus')); });
+      mocks.worktreeDetectCwd.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishOld = resolve;
+          }),
+      );
+      await act(async () => {
+        window.dispatchEvent(new Event('focus'));
+      });
 
       let rejectNew!: (reason: Error) => void;
       mocks.worktreeGetForSession.mockResolvedValue({ ...meta, path: restoredPath });
-      mocks.worktreeDetectCwd.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectNew = reject; }));
-      await act(async () => { await refresh('open'); });
+      mocks.worktreeDetectCwd.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectNew = reject;
+          }),
+      );
+      await act(async () => {
+        await refresh('open');
+      });
       expect(view.getByTestId('ids').textContent).toBe(`open:${restoredPath}`);
       expect(view.getByTestId('active').textContent).toBe(restoredPath);
       expect(mocks.worktreeDetectCwd).toHaveBeenLastCalledWith({ cwd: restoredPath });
 
-      await act(async () => { finishOld({ isInsideWorktree: false }); });
+      await act(async () => {
+        finishOld({ isInsideWorktree: false });
+      });
       expect(view.getByTestId('active').textContent).toBe(restoredPath);
       expect(view.getByTestId('ids').textContent).toBe(`open:${restoredPath}`);
-      await act(async () => { rejectNew(new Error('[INTERNAL] Worktree directory probe failed')); });
+      await act(async () => {
+        rejectNew(new Error('[INTERNAL] Worktree directory probe failed'));
+      });
       expect(view.getByTestId('active').textContent).toBe(restoredPath);
       expect(view.getByTestId('ids').textContent).toBe(`open:${restoredPath}`);
 
       // A conclusive result for the new metadata must still update both views.
-      await act(async () => { window.dispatchEvent(new Event('focus')); });
+      await act(async () => {
+        window.dispatchEvent(new Event('focus'));
+      });
       expect(view.getByTestId('active').textContent).toBe('');
       expect(view.getByTestId('ids').textContent).toBe('');
       expect(mocks.worktreeDetectCwd).toHaveBeenCalledTimes(4);
@@ -211,16 +511,28 @@ describe('WorktreeContext recycle refresh', () => {
       refresh = useRefreshWorktreeForSession();
       return <Probe />;
     }
-    const view = render(<WorktreeProvider><Actions /></WorktreeProvider>);
+    const view = render(
+      <WorktreeProvider>
+        <Actions />
+      </WorktreeProvider>,
+    );
     await act(async () => {});
     const oldMeta = original;
     mocks.worktreeGetForSession.mockResolvedValue({ ...meta });
-    await act(async () => { await refresh('open'); });
-    await act(async () => { report(oldMeta, false); });
+    await act(async () => {
+      await refresh('open');
+    });
+    await act(async () => {
+      report(oldMeta, false);
+    });
     expect(view.getByTestId('ids').textContent).toBe('open:/tmp/wt/open');
     mocks.worktreeGetForSession.mockResolvedValue(null);
-    await act(async () => { await refresh('open'); });
-    await act(async () => { report(original, true); });
+    await act(async () => {
+      await refresh('open');
+    });
+    await act(async () => {
+      report(original, true);
+    });
     expect(view.getByTestId('ids').textContent).toBe('');
     expect(mocks.worktreeDetectCwd).not.toHaveBeenCalled();
   });
@@ -397,16 +709,25 @@ describe('WorktreeContext recycle refresh', () => {
       refresh = useRefreshWorktreeForSession();
       return <Probe />;
     }
-    const view = render(<WorktreeProvider><Actions /></WorktreeProvider>);
+    const view = render(
+      <WorktreeProvider>
+        <Actions />
+      </WorktreeProvider>,
+    );
     await act(async () => {});
     for (let i = 0; i < 3; i++) {
       mocks.worktreeGetForSession.mockResolvedValueOnce({
-        sessionId: 'restored', path: `/tmp/wt/restored-${i}`,
+        sessionId: 'restored',
+        path: `/tmp/wt/restored-${i}`,
       });
-      await act(async () => { await refresh('restored'); });
+      await act(async () => {
+        await refresh('restored');
+      });
       expect(view.getByTestId('ids').textContent).toBe(`restored:/tmp/wt/restored-${i}`);
       mocks.worktreeGetForSession.mockResolvedValueOnce(null);
-      await act(async () => { emitWorktreeChanged('restored'); });
+      await act(async () => {
+        emitWorktreeChanged('restored');
+      });
       expect(view.getByTestId('ids').textContent).toBe('');
     }
     expect(mocks.worktreeListAll).toHaveBeenCalledOnce();
@@ -435,11 +756,17 @@ describe('WorktreeContext recycle refresh', () => {
 
   it('loads idle worktree metadata without Git probes or a periodic full scan', async () => {
     vi.useFakeTimers();
-    mocks.worktreeListAll.mockResolvedValue(Array.from({ length: 69 }, (_, i) => ({
-      sessionId: `session-${i}`,
-      path: `/tmp/wt/${i}`,
-    })));
-    const view = render(<WorktreeProvider><Probe /></WorktreeProvider>);
+    mocks.worktreeListAll.mockResolvedValue(
+      Array.from({ length: 69 }, (_, i) => ({
+        sessionId: `session-${i}`,
+        path: `/tmp/wt/${i}`,
+      })),
+    );
+    const view = render(
+      <WorktreeProvider>
+        <Probe />
+      </WorktreeProvider>,
+    );
 
     await act(async () => {});
     expect(view.getByTestId('ids').textContent).toContain('session-68:/tmp/wt/68');
@@ -454,13 +781,20 @@ describe('WorktreeContext recycle refresh', () => {
 
   it('keeps creation and recycling events newer than a pending metadata snapshot', async () => {
     let finishList!: (value: Array<{ sessionId: string; path: string }>) => void;
-    mocks.worktreeListAll.mockImplementation(() => new Promise((resolve) => {
-      finishList = resolve;
-    }));
-    mocks.worktreeGetForSession.mockImplementation(async (sessionId: string) => (
-      sessionId === 'new' ? { sessionId, path: '/tmp/wt/new' } : null
-    ));
-    const view = render(<WorktreeProvider><Probe /></WorktreeProvider>);
+    mocks.worktreeListAll.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishList = resolve;
+        }),
+    );
+    mocks.worktreeGetForSession.mockImplementation(async (sessionId: string) =>
+      sessionId === 'new' ? { sessionId, path: '/tmp/wt/new' } : null,
+    );
+    const view = render(
+      <WorktreeProvider>
+        <Probe />
+      </WorktreeProvider>,
+    );
     await act(async () => {
       emitSessionCreated('new');
       emitWorktreeChanged('recycled');
@@ -507,5 +841,4 @@ describe('WorktreeContext recycle refresh', () => {
       expect(view.getByTestId('ids').textContent).toBe('only:/tmp/wt/only');
     });
   });
-
 });
