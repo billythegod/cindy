@@ -237,7 +237,8 @@ import {
   isDbClientNotReadyError,
 } from '../localDb/client/current.js';
 import { createBotRuntimeRestoreCoordinator } from './botRuntimeRestore.js';
-import { createWorkingDirectoryRecovery, isUnavailableFilesystemError, worktreeConversationFallbackDir } from './workingDirectoryRecovery.js';
+import { createWorkingDirectoryRecovery, isUnavailableFilesystemError } from './workingDirectoryRecovery.js';
+import { allocateDialogueRecoveryWorkspace } from './dialogueRecoveryWorkspace.js';
 import { workdirDiagnosticContext, workdirDiagnosticErrorCode, workdirDiagnosticId } from '../workdirDiagnostics.js';
 import { statWorkingDirectory, mkdirWorkingDirectory, realpathWorkingDirectory, findSimilarWorkingDirectory } from '../workdir-probe-host/index.js';
 import { getMessagesForHistory } from '../localDb/chatHistoryReader.js';
@@ -249,7 +250,6 @@ import {
 } from '../localDb/agentInputQueueSnapshots.js';
 import {
   ensureDialogueWorkspaceDir,
-  dialogueWorkspaceRootDir,
   dialogueWorkspaceRoots,
   isManagedDialogueWorkspace,
 } from '../localDb/dialogueWorkspace.js';
@@ -1112,14 +1112,7 @@ import { installSessionTurnObserver } from './sessionTurnObserver.js';
 
 const log = createLogger('maker-ipc');
 const workdirLog = createLogger('workdir-diagnostics');
-const workingDirectoryRecovery = createWorkingDirectoryRecovery({ stat: statWorkingDirectory, mkdir: mkdirWorkingDirectory, realpath: realpathWorkingDirectory }, async (sessionId, workingDir, mode) => {
-  if (mode === 'unrestored-worktree') {
-    const fallback = worktreeConversationFallbackDir(dialogueWorkspaceRootDir(), sessionId, workingDir);
-    await fsp.mkdir(fallback, { recursive: true });
-    return fallback;
-  }
-  return ensureDialogueWorkspaceDir(sessionId, Date.now());
-}, workdirLog);
+const workingDirectoryRecovery = createWorkingDirectoryRecovery({ stat: statWorkingDirectory, mkdir: mkdirWorkingDirectory, realpath: realpathWorkingDirectory }, allocateDialogueRecoveryWorkspace, workdirLog);
 
 function localModelWindowSwitchErrorCode(code: IpcErrorCode): IpcErrorCode {
   return isDeviceLinkInvoke() ? 'PRECONDITION_FAILED' : code;

@@ -143,6 +143,56 @@ describe('dialogue workspace directory', () => {
     }
   });
 
+  it.each(['ordinary', 'unrestored-worktree'] as const)('keeps %s recovery on the owner default root when the custom volume is offline', async (mode) => {
+    const { ensureDialogueWorkspaceDir, dialogueWorkspaceRoots } = await import('../localDb/dialogueWorkspace');
+    const { writeDialogueWorkspaceDirectory, readDialogueWorkspaceSettings } = await import('../dialogue-workspace-settings');
+    const { allocateDialogueRecoveryWorkspace } = await import('../maker-ipc/dialogueRecoveryWorkspace');
+    const { createWorkingDirectoryRecovery } = await import('../maker-ipc/workingDirectoryRecovery');
+    const mount = path.join(userDataDir, 'volume');
+    const custom = path.join(mount, 'dialogues', 'owner-a');
+    await writeDialogueWorkspaceDirectory(custom);
+    const original = path.join(custom, '2026-09-18', 'disconnected');
+    const unaffected = path.join(userDataDir, 'other-project');
+    fs.mkdirSync(unaffected);
+    const recovery = createWorkingDirectoryRecovery({
+      stat: async (dir) => {
+        if (dir.startsWith(mount) && !fs.existsSync(mount)) {
+          throw Object.assign(new Error('offline'), { code: 'EIO' });
+        }
+        return fs.promises.stat(dir);
+      },
+      mkdir: fs.promises.mkdir,
+    }, allocateDialogueRecoveryWorkspace);
+    await recovery.observe('unaffected', unaffected);
+    expect(await recovery.recover('disconnected', original, null, [], mode)).toBe(true);
+    const fallback = recovery.resolve('disconnected', original);
+    expect(path.relative(path.join(userDataDir, 'dialogues'), fallback).startsWith('..')).toBe(false);
+    expect(fs.statSync(fallback).isDirectory()).toBe(true);
+    expect(dialogueWorkspaceRoots()).toContain(path.join(userDataDir, 'dialogues'));
+    expect(recovery.peek('disconnected')).toContain('not been restored or copied');
+    expect(recovery.peek('disconnected')).toContain(JSON.stringify(fallback));
+    expect(recovery.resolve('unaffected', unaffected)).toBe(unaffected);
+    expect(recovery.peek('unaffected')).toBeNull();
+    expect(fs.existsSync(mount)).toBe(false);
+    expect(readDialogueWorkspaceSettings()).toEqual({ directory: custom, isCustomized: true });
+    expect(() => ensureDialogueWorkspaceDir('new-offline', Date.now())).toThrow();
+    fs.writeFileSync(path.join(fallback, 'keep.txt'), 'keep');
+    fs.mkdirSync(custom, { recursive: true });
+    expect(await recovery.recover('disconnected', original, null, [], mode)).toBe(true);
+    expect(recovery.resolve('disconnected', original)).toBe(fallback);
+    expect(fs.readFileSync(path.join(fallback, 'keep.txt'), 'utf8')).toBe('keep');
+    expect(ensureDialogueWorkspaceDir('new-online', Date.now()).startsWith(custom + path.sep)).toBe(true);
+    const firstOwner = userDataDir;
+    try {
+      userDataDir = path.join(firstOwner, 'second-owner');
+      const otherOwnerFallback = await allocateDialogueRecoveryWorkspace('disconnected', original, mode);
+      expect(otherOwnerFallback.startsWith(path.join(userDataDir, 'dialogues') + path.sep)).toBe(true);
+      expect(otherOwnerFallback).not.toBe(fallback);
+    } finally {
+      userDataDir = firstOwner;
+    }
+  });
+
   it('rejects invalid paths and preserves unreadable settings on writes', async () => {
     const { writeDialogueWorkspaceDirectory } = await import('../dialogue-workspace-settings');
     await expect(writeDialogueWorkspaceDirectory('relative')).rejects.toThrow();
