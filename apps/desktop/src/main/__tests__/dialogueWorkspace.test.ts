@@ -203,7 +203,7 @@ describe('dialogue workspace directory', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe('{broken');
   });
 
-  it('reuses ordinary recovery files across a next-day restart without mixing bindings', async () => {
+  it.each([false, true])('reuses ordinary recovery files across a next-day restart without mixing bindings (reconnected: %s)', async (reconnected) => {
     const { writeDialogueWorkspaceDirectory } = await import('../dialogue-workspace-settings');
     const custom = path.join(userDataDir, 'offline', 'dialogues', 'owner-a');
     const original = path.join(custom, '2026-09-18', 'task');
@@ -213,19 +213,38 @@ describe('dialogue workspace directory', () => {
       vi.setSystemTime(new Date(2026, 8, 18, 23, 50));
       const firstModule = await import('../maker-ipc/dialogueRecoveryWorkspace');
       const { createWorkingDirectoryRecovery } = await import('../maker-ipc/workingDirectoryRecovery');
-      const first = createWorkingDirectoryRecovery({ ...fs.promises, requiredRoot: firstModule.requiredDialogueRecoveryRoot }, firstModule.allocateDialogueRecoveryWorkspace);
+      const first = createWorkingDirectoryRecovery({ ...fs.promises, requiredRoot: firstModule.requiredDialogueRecoveryRoot, findFallback: firstModule.findDialogueRecoveryWorkspace }, firstModule.allocateDialogueRecoveryWorkspace);
       expect(await first.recover('task', original)).toBe(true);
       const fallback = first.resolve('task', original);
       fs.writeFileSync(path.join(fallback, 'work.txt'), 'recover this');
+      if (reconnected) {
+        fs.mkdirSync(original, { recursive: true });
+        fs.writeFileSync(path.join(original, 'original.txt'), 'original work');
+      }
       vi.setSystemTime(new Date(2026, 8, 19, 10));
       vi.resetModules();
       const restartedModule = await import('../maker-ipc/dialogueRecoveryWorkspace');
       const restartedRecovery = await import('../maker-ipc/workingDirectoryRecovery');
-      const restarted = restartedRecovery.createWorkingDirectoryRecovery({ ...fs.promises, requiredRoot: restartedModule.requiredDialogueRecoveryRoot }, restartedModule.allocateDialogueRecoveryWorkspace);
+      const restarted = restartedRecovery.createWorkingDirectoryRecovery({ ...fs.promises, requiredRoot: restartedModule.requiredDialogueRecoveryRoot, findFallback: restartedModule.findDialogueRecoveryWorkspace }, restartedModule.allocateDialogueRecoveryWorkspace);
       expect(await restarted.recover('task', original)).toBe(true);
       expect(restarted.resolve('task', original)).toBe(fallback);
       expect(fs.readFileSync(path.join(fallback, 'work.txt'), 'utf8')).toBe('recover this');
-      expect(fs.existsSync(custom)).toBe(false);
+      expect(restarted.peek('task')).toContain('previously selected');
+      expect(fs.existsSync(custom)).toBe(reconnected);
+      if (reconnected) {
+        expect(fs.readFileSync(path.join(original, 'original.txt'), 'utf8')).toBe('original work');
+        expect(fs.existsSync(path.join(original, 'work.txt'))).toBe(false);
+      }
+      expect(await restartedModule.findDialogueRecoveryWorkspace('other-task', original)).toBeUndefined();
+      expect(await restartedModule.findDialogueRecoveryWorkspace('task', original + '-other')).toBeUndefined();
+      const previousOwner = userDataDir;
+      userDataDir = path.join(previousOwner, 'other-owner');
+      try {
+        expect(await restartedModule.findDialogueRecoveryWorkspace('task', original)).toBeUndefined();
+        expect(fs.existsSync(userDataDir)).toBe(false);
+      } finally {
+        userDataDir = previousOwner;
+      }
       const { isManagedDialogueWorkspace } = await import('../localDb/dialogueWorkspace');
       expect(isManagedDialogueWorkspace(fallback)).toBe(true);
       expect(isManagedDialogueWorkspace(path.join(fallback, 'child'))).toBe(false);

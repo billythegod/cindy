@@ -239,7 +239,7 @@ import {
 } from '../localDb/client/current.js';
 import { createBotRuntimeRestoreCoordinator } from './botRuntimeRestore.js';
 import { createWorkingDirectoryRecovery, isUnavailableFilesystemError } from './workingDirectoryRecovery.js';
-import { allocateDialogueRecoveryWorkspace, requiredDialogueRecoveryRoot } from './dialogueRecoveryWorkspace.js';
+import { allocateDialogueRecoveryWorkspace, findDialogueRecoveryWorkspace, requiredDialogueRecoveryRoot } from './dialogueRecoveryWorkspace.js';
 import { workdirDiagnosticContext, workdirDiagnosticErrorCode, workdirDiagnosticId } from '../workdirDiagnostics.js';
 import { statWorkingDirectory, mkdirWorkingDirectory, realpathWorkingDirectory, findSimilarWorkingDirectory } from '../workdir-probe-host/index.js';
 import { getMessagesForHistory } from '../localDb/chatHistoryReader.js';
@@ -1114,7 +1114,7 @@ import { installSessionTurnObserver } from './sessionTurnObserver.js';
 
 const log = createLogger('maker-ipc');
 const workdirLog = createLogger('workdir-diagnostics');
-const workingDirectoryRecovery = createWorkingDirectoryRecovery({ stat: statWorkingDirectory, mkdir: mkdirWorkingDirectory, realpath: realpathWorkingDirectory, requiredRoot: requiredDialogueRecoveryRoot }, allocateDialogueRecoveryWorkspace, workdirLog);
+const workingDirectoryRecovery = createWorkingDirectoryRecovery({ stat: statWorkingDirectory, mkdir: mkdirWorkingDirectory, realpath: realpathWorkingDirectory, requiredRoot: requiredDialogueRecoveryRoot, findFallback: findDialogueRecoveryWorkspace }, allocateDialogueRecoveryWorkspace, workdirLog);
 
 function localModelWindowSwitchErrorCode(code: IpcErrorCode): IpcErrorCode {
   return isDeviceLinkInvoke() ? 'PRECONDITION_FAILED' : code;
