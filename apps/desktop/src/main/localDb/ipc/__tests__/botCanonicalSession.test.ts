@@ -4075,6 +4075,45 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { after.dispose(); }
   });
 
+  it.each(['restart', 'unpause'] as const)('retries a persisted %s prompt without its own acceptance receipt', async kind => {
+    await seedPair();
+    const oldExecution = { instanceId: 'old-runtime', generation: 1 };
+    const before = createDelegationRuntime({ taskControl: true, readSessionExecution: () => oldExecution });
+    const task = await before.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Continue the original task.' });
+    if (!task.ok) throw new Error('missing task');
+    if (kind === 'unpause') {
+      await before.delegation.stopSessionTask('session-1', task.delegationId, 'pause');
+      await before.settleChild(task.childSessionId, 'Paused.', oldExecution);
+    }
+    const snapshot = JSON.parse(h.sqlite!.prepare('SELECT permission_snapshot_json FROM bot_delegations WHERE id = ?').pluck().get(task.delegationId) as string);
+    const clientId = kind === 'restart'
+      ? `bot-delegation-resume:${task.delegationId}:10000`
+      : `bot-delegation-unpause:${task.delegationId}:${snapshot.taskPause.token}`;
+    // Crash after saving this recovery input, before native acceptance. The
+    // existing receipt belongs to the interrupted original turn, not this input.
+    h.sqlite!.prepare('INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('persisted-recovery-fixture', clientId, task.childSessionId, 'user', 'Continue existing work.', 10_500);
+    before.dispose();
+    const execution = { instanceId: 'new-runtime', generation: 1 };
+    const after = createDelegationRuntime({ taskControl: true, startTime: 11_000, readSessionExecution: () => execution });
+    try {
+      if (kind === 'restart') await after.delegation.restore();
+      else expect(await after.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'resume' })).toMatchObject({ ok: true });
+      expect(after.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(1);
+      const retryId = after.dispatch.mock.calls.at(-1)![0].clientId!;
+      expect(retryId).not.toBe(clientId);
+      const saved = JSON.parse(h.sqlite!.prepare('SELECT permission_snapshot_json FROM bot_delegations WHERE id = ?').pluck().get(task.delegationId) as string);
+      expect(saved.taskExecution).toMatchObject({ ...execution, runSequence: 1, clientId: retryId });
+      expect(saved.taskRecoveryRetry.clientId).toBe(retryId);
+      expect(h.sqlite!.prepare('SELECT COUNT(*) FROM messages WHERE session_id = ? AND client_id = ?').pluck().get(task.childSessionId, clientId)).toBe(1);
+      if (kind === 'restart') await after.delegation.restore();
+      else expect(await after.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'resume' })).toMatchObject({ ok: true });
+      expect(after.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(1);
+      await after.delegation.settleSession({ childSessionId: task.childSessionId, execution, outcome: 'done', resultText: 'Recovered.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      expect(await after.delegation.getSessionTask('session-1', task.delegationId)).toMatchObject({ task: { status: 'completed', result: 'Recovered.' } });
+    } finally { after.dispose(); }
+  });
+
   it('does not rebind an idempotent supplement replay to a later direct turn', async () => {
     await seedPair();
     let execution = { instanceId: 'native', generation: 1 };
