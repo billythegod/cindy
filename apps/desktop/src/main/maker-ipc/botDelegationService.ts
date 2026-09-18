@@ -489,12 +489,26 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const clientId = retry?.runSequence === row.runSequence && retry.originalClientId === input.clientId
       ? retry.clientId : input.clientId;
     let replayed = false;
+    let acceptedThisAttempt = false;
     const result = await deps.dispatch({ ...input, clientId, targetSessionId: row.childSessionId!,
       onAccepted: async persisted => {
         if (persisted) { replayed = true; return; }
         await acceptExecution(row, clientId);
+        acceptedThisAttempt = true;
       },
     });
+    if (!result.ok && acceptedThisAttempt) {
+      // Native acceptance may still be cancelled before vendor dispatch. Only
+      // undo this input's receipt; never replace a later run or another input.
+      const previous = parseRecord(row.permissionSnapshotJson).taskExecution;
+      await db.update(botDelegations).set({
+        permissionSnapshotJson: previous
+          ? sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskExecution', json(${JSON.stringify(previous)}))`
+          : sql`json_remove(${botDelegations.permissionSnapshotJson}, '$.taskExecution')`,
+      }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
+        sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.clientId') = ${clientId}`,
+        inArray(botDelegations.status, [...ACTIVE_DELEGATION_STATUSES])));
+    }
     const [current] = await db.select().from(botDelegations).where(eq(botDelegations.id, row.id)).limit(1);
     if (!current || current.runSequence !== row.runSequence || !isActiveDelegation(current.status as DelegationStatus)) {
       return { row, result: { ok: false, errorCode: 'TASK_CHANGED', message: 'Task changed during recovery' } };

@@ -3366,6 +3366,7 @@ describe('Bot Session task end-to-end runtime', () => {
     queueSnapshots?: Map<string, AgentInputQueuedMessage[]>;
     onNativeStarted?: (sessionId: string) => void;
     beforeNativeAcceptance?: (sessionId: string) => void;
+    rejectAfterNativeAcceptance?: () => boolean;
     appliedOnResume?: () => string[];
     reconcileWorktree?: Parameters<typeof createBotDelegationService>[0]['reconcileWorktree'];
     stopUnsupported?: boolean;
@@ -3504,6 +3505,10 @@ describe('Bot Session task end-to-end runtime', () => {
         .run(JSON.stringify({ origin: { kind: 'session', senderSessionId: params.dispatcherSessionId } }), params.targetSessionId, clientId);
       options.beforeNativeAcceptance?.(params.targetSessionId);
       await params.onAccepted?.();
+      if (options.rejectAfterNativeAcceptance?.()) {
+        started.pop();
+        return { ok: false as const, errorCode: 'TEMPORARILY_UNAVAILABLE', message: 'Cancelled before vendor dispatch' };
+      }
       h.sqlite!.prepare('UPDATE sessions SET active_turn_started_at = ? WHERE id = ?')
         .run(currentTime, params.targetSessionId);
       pendingTurns.push({ sessionId: params.targetSessionId, queued: queuedBehindRunningTurn });
@@ -4111,6 +4116,38 @@ describe('Bot Session task end-to-end runtime', () => {
       expect(after.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(1);
       await after.delegation.settleSession({ childSessionId: task.childSessionId, execution, outcome: 'done', resultText: 'Recovered.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
       expect(await after.delegation.getSessionTask('session-1', task.delegationId)).toMatchObject({ task: { status: 'completed', result: 'Recovered.' } });
+    } finally { after.dispose(); }
+  });
+
+  it.each(['restart', 'unpause'] as const)('retries %s after acceptance is followed by dispatch rejection', async kind => {
+    await seedPair();
+    const oldExecution = { instanceId: 'original-runtime', generation: 1 };
+    const before = createDelegationRuntime({ taskControl: true, readSessionExecution: () => oldExecution });
+    const task = await before.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Finish existing work.' });
+    if (!task.ok) throw new Error('missing task');
+    if (kind === 'unpause') {
+      await before.delegation.stopSessionTask('session-1', task.delegationId, 'pause');
+      await before.settleChild(task.childSessionId, 'Paused.', oldExecution);
+    }
+    before.dispose();
+    let reject = true;
+    const execution = { instanceId: 'recovery-runtime', generation: 1 };
+    const after = createDelegationRuntime({ taskControl: true, startTime: 11_000,
+      readSessionExecution: () => execution, rejectAfterNativeAcceptance: () => reject });
+    const resume = () => kind === 'restart' ? after.delegation.restore()
+      : after.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'resume' });
+    try {
+      await resume();
+      expect(after.started).toHaveLength(0);
+      const saved = JSON.parse(h.sqlite!.prepare('SELECT permission_snapshot_json FROM bot_delegations WHERE id = ?').pluck().get(task.delegationId) as string);
+      expect(saved.taskExecution).toMatchObject(oldExecution);
+      reject = false;
+      await resume();
+      expect(after.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(1);
+      await resume();
+      expect(after.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(1);
+      await after.delegation.settleSession({ childSessionId: task.childSessionId, execution, outcome: 'done', resultText: 'Recovered after cancellation.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      expect(await after.delegation.getSessionTask('session-1', task.delegationId)).toMatchObject({ task: { status: 'completed' } });
     } finally { after.dispose(); }
   });
 
