@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   dialogueRoot: '',
+  historicalRoots: [] as string[],
+  inaccessibleRoots: {} as Record<string, string>,
   owner: { dataOwnerId: 'owner-a', ownerGeneration: 1 },
   boundary: false,
   ready: true,
@@ -22,8 +24,20 @@ const h = vi.hoisted(() => ({
   hiddenKeys: [] as string[],
 }));
 vi.mock('../../localDb/dialogueWorkspace.js', () => ({
-  dialogueWorkspaceRoots: () => [h.dialogueRoot],
+  dialogueWorkspaceRootDir: () => h.dialogueRoot,
+  dialogueWorkspaceRoots: () => [h.dialogueRoot, ...h.historicalRoots],
 }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    realpath: async (target: Parameters<typeof actual.realpath>[0]) => {
+      const code = h.inaccessibleRoots[path.normalize(String(target))];
+      if (code) throw Object.assign(new Error('workspace unavailable'), { code });
+      return actual.realpath(target);
+    },
+  };
+});
 vi.mock('electron', () => ({
   BrowserWindow: {
     getAllWindows: () => [
@@ -81,6 +95,8 @@ describe('createProject', () => {
     vi.clearAllMocks();
     directory = await mkdtemp(path.join(os.tmpdir(), 'cindy-create-project-'));
     h.dialogueRoot = path.join(directory, 'dialogues');
+    h.historicalRoots = [];
+    h.inaccessibleRoots = {};
     h.owner = { dataOwnerId: 'owner-a', ownerGeneration: 1 };
     h.boundary = false;
     h.ready = true;
@@ -101,6 +117,46 @@ describe('createProject', () => {
     await rm(directory, { recursive: true, force: true });
   });
   const run = (workingDir: string) => createProject({ callerSessionId: 'caller', workingDir });
+
+  it.each(['EACCES', 'EPERM', 'ENODEV', 'ESTALE', 'ETIMEDOUT'])(
+    'permits unrelated projects when a historical workspace reports %s',
+    async (code) => {
+      const oldRoot = path.join(directory, 'old-dialogues');
+      h.historicalRoots = [oldRoot];
+      h.inaccessibleRoots[oldRoot] = code;
+      expect(await run(oldRoot)).toMatchObject({ errorCode: 'INVALID_ARGS' });
+      expect(await run(path.join(oldRoot, '2026-09-18', 'task'))).toMatchObject({ errorCode: 'INVALID_ARGS' });
+      expect(h.upsert).not.toHaveBeenCalled();
+      expect(await run(directory)).toMatchObject({ ok: true });
+    },
+  );
+
+  it('permits unrelated projects when a historical root ancestor is now a file', async () => {
+    const oldLocation = path.join(directory, 'removed-volume');
+    await writeFile(oldLocation, 'keep');
+    h.historicalRoots = [path.join(oldLocation, 'dialogues')];
+    expect(await run(directory)).toMatchObject({ ok: true });
+    expect(await readFile(oldLocation, 'utf8')).toBe('keep');
+  });
+
+  it('retains physical containment checks for accessible historical workspace aliases', async () => {
+    const oldRoot = path.join(directory, 'old-dialogues');
+    const managed = path.join(oldRoot, '2026-09-18', 'task');
+    await mkdir(managed, { recursive: true });
+    h.historicalRoots = [oldRoot];
+    const alias = path.join(directory, 'old-alias');
+    await symlink(managed, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    expect(await run(alias)).toMatchObject({ errorCode: 'INVALID_ARGS' });
+    expect(h.upsert).not.toHaveBeenCalled();
+  });
+
+  it('still rejects failures resolving the current root or the requested project', async () => {
+    h.inaccessibleRoots[h.dialogueRoot] = 'EACCES';
+    expect(await run(directory)).toMatchObject({ errorCode: 'INTERNAL' });
+    h.inaccessibleRoots = { [directory]: 'EACCES' };
+    expect(await run(directory)).toMatchObject({ errorCode: 'INTERNAL' });
+    expect(h.upsert).not.toHaveBeenCalled();
+  });
 
   it('rejects managed dialogue roots, descendants and symlink aliases but permits adjacent projects', async () => {
     const managed = path.join(h.dialogueRoot, '2026-09-18', 'task');

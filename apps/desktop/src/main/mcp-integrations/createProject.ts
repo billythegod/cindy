@@ -4,7 +4,7 @@ import { BrowserWindow } from 'electron';
 import { eq } from 'drizzle-orm';
 import { getActiveDataOwnerPushStamp, isAppSessionBoundaryPending } from '../appSessionState.js';
 import { tryGetDbClient } from '../localDb/client/current.js';
-import { dialogueWorkspaceRoots } from '../localDb/dialogueWorkspace.js';
+import { dialogueWorkspaceRootDir, dialogueWorkspaceRoots } from '../localDb/dialogueWorkspace.js';
 import { sessions, botSessionLinks } from '../localDb/schema.js';
 import { normalizeRecentWorkdirPath, upsertRecentWorkdir } from '../localDb/ipc/recentWorkdirs.js';
 import { restoreLocalProjectVisibility } from '../sidebarSettingsStore.js';
@@ -114,6 +114,7 @@ function isWithinDirectory(directory: string, root: string): boolean {
 /** Check physical targets without changing the caller's normalized project identity. */
 export async function validateExistingLocalProjectDirectory(workingDir: string) {
   const roots = dialogueWorkspaceRoots();
+  const currentRoot = dialogueWorkspaceRootDir();
   if (roots.some((root) => isWithinDirectory(workingDir, root))) {
     return fail('INVALID_ARGS', 'Managed dialogue workspaces cannot be registered as projects.');
   }
@@ -124,6 +125,9 @@ export async function validateExistingLocalProjectDirectory(workingDir: string) 
   for (const root of roots) {
     const physicalRoot = await realpath(root).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return root;
+      // Old removable/network locations must not block unrelated projects after a switch.
+      // Keep their lexical boundary (also checked above), and still resolve accessible aliases.
+      if (root !== currentRoot && typeof error.code === 'string') return root;
       throw error;
     });
     if (isWithinDirectory(physicalDirectory, physicalRoot)) {
