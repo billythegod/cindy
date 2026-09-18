@@ -5880,6 +5880,7 @@
   "login": {
     "title": "歡迎使用 Cindy",
     "subtitle": "選擇一種方式安全登入",
+    "savedLoginPreserved": "已儲存的登入資訊仍在本機",
     "phonePlaceholder": "請輸入手機號碼",
     "emailPlaceholder": "請輸入電子郵件",
     "invalidEmail": "請輸入正確的電子郵件地址",
@@ -5979,6 +5980,9 @@
       "fallback": "登入失敗，請稍後重試",
       "AUTH_SERVICE_UNAVAILABLE": "登入服務暫不可用",
       "AUTH_REQUEST_FAILED": "登入請求失敗，請重試",
+      "CREDENTIAL_STORE_UNAVAILABLE": "請完全退出 Cindy 後重新開啟，以恢復登入",
+      "BROWSER_OPEN_FAILED": "無法開啟瀏覽器，請重試",
+      "BROWSER_OPEN_TIMEOUT": "瀏覽器未及時啟動，請重試",
       "NETWORK_ERROR": "網路連線失敗，請檢查網路",
       "REQUEST_TIMEOUT": "請求超時，請重試",
       "INVALID_PARAMS": "輸入格式不正確",
@@ -7296,6 +7300,10 @@
       "downloadMobile": "下載 Cindy 移動端"
     },
     "accountSwitcher": {
+      "current": "目前帳號",
+      "switching": "正在切換帳號…",
+      "adding": "正在準備登入…",
+      "sharedDataRestriction": "目前的開發視窗與另一個 Cindy 執行個體共用帳號資料，無法切換或新增帳號。請在原 Cindy 視窗操作，或使用獨立資料啟動開發版。",
       "title": "切換帳號",
       "description": "選擇這台裝置上登入過的帳號",
       "syncing": "正在檢查登入狀態…",

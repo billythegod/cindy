@@ -5880,6 +5880,7 @@
   "login": {
     "title": "Cindy へようこそ",
     "subtitle": "安全なログイン方法を選択してください",
+    "savedLoginPreserved": "保存済みのログイン情報はこの端末に残っています",
     "phonePlaceholder": "電話番号を入力",
     "emailPlaceholder": "メールアドレスを入力",
     "invalidEmail": "正しいメールアドレスを入力してください",
@@ -5979,6 +5980,9 @@
       "fallback": "ログインに失敗しました。再試行してください。",
       "AUTH_SERVICE_UNAVAILABLE": "ログインサービスは一時的に利用できません。",
       "AUTH_REQUEST_FAILED": "ログインリクエストに失敗しました。",
+      "CREDENTIAL_STORE_UNAVAILABLE": "Cindy を完全に終了して開き直すと、ログインを復元できます。",
+      "BROWSER_OPEN_FAILED": "ブラウザを開けませんでした。再試行してください。",
+      "BROWSER_OPEN_TIMEOUT": "ブラウザの起動がタイムアウトしました。再試行してください。",
       "NETWORK_ERROR": "ネットワーク接続を確認してください。",
       "REQUEST_TIMEOUT": "リクエストがタイムアウトしました。",
       "INVALID_PARAMS": "入力内容を確認してください。",
@@ -7296,6 +7300,10 @@
       "downloadMobile": "Cindy モバイル版をダウンロード"
     },
     "accountSwitcher": {
+      "current": "現在のアカウント",
+      "switching": "アカウントを切り替え中…",
+      "adding": "ログインを準備中…",
+      "sharedDataRestriction": "この開発用ウィンドウは別の Cindy インスタンスとアカウントデータを共有しているため、アカウントの切り替えや追加はできません。元の Cindy ウィンドウで操作するか、独立したデータで開発版を起動してください。",
       "title": "アカウントを切り替え",
       "description": "このデバイスでログインしたアカウントを選択します",
       "syncing": "ログイン状態を確認中…",
