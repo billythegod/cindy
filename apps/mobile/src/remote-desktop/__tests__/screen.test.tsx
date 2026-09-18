@@ -721,84 +721,122 @@ describe("remote desktop controls", () => {
     );
   });
 
-  it("changes portrait resolution without stopping the temporary display and stops it on exit", async () => {
-    const original = fixture.invoke.getMockImplementation()!;
-    fixture.invoke.mockImplementation(async (...args) => {
-      const request = args[2][0];
-      if (request.op === "capabilities")
-        return {
-          ...(await original(...args)),
-          viewerDisplay: true,
-          viewerDisplayRestore: true,
-          videoSettings: true,
-          displayModes: true,
-        };
-      if (request.op === "displayModes")
-        return [{ id: "640", width: 640, height: 1242, current: false }];
-      if (request.op === "viewerDisplay")
-        return {
-          lease: "lease",
-          controlling: false,
-          display: {
-            ...display,
-            id: "virtual",
-            width: request.width,
-            height: request.height,
+  it.each([
+    [false, 390, 760, 658, 1280],
+    [true, 760, 390, 1280, 658],
+  ])(
+    "keeps fitted resolution choices until explicit restore (native menu: %s)",
+    async (nativeMenus, width, height, modeWidth, modeHeight) => {
+      fixture.nativeMenus = nativeMenus;
+      const original = fixture.invoke.getMockImplementation()!;
+      fixture.invoke.mockImplementation(async (...args) => {
+        const request = args[2][0];
+        if (request.op === "capabilities")
+          return {
+            ...(await original(...args)),
+            viewerDisplay: true,
+            viewerDisplayRestore: true,
+            resolutionRestore: true,
+            videoSettings: true,
+            displayModes: true,
+          };
+        if (request.op === "displayModes")
+          return [
+            { id: "4k", width: 3840, height: 2160, current: false },
+            { id: "4:3", width: 1024, height: 768, current: false },
+          ];
+        if (request.op === "restoreViewerDisplay")
+          return { lease: "lease", controlling: false, display };
+        if (request.op === "viewerDisplay")
+          return {
+            lease: "lease",
+            controlling: false,
+            display: {
+              ...display,
+              id: "virtual",
+              width: request.width,
+              height: request.height,
+            },
+          };
+        return original(...args);
+      });
+      await connect();
+      act(() => button("operations").click());
+      act(() => button("displaySettings").click());
+      await act(async () =>
+        fixture.message!({
+          nativeEvent: {
+            data: JSON.stringify({
+              type: "viewportSize",
+              epoch: "lease",
+              width,
+              height,
+            }),
           },
-        };
-      return original(...args);
-    });
-    await connect();
-    act(() => button("operations").click());
-    act(() => button("displaySettings").click());
-    await act(async () =>
-      fixture.message!({
-        nativeEvent: {
-          data: JSON.stringify({
-            type: "viewportSize",
-            epoch: "lease",
-            width: 390,
-            height: 760,
-          }),
-        },
-      }),
-    );
-    act(() => button("resolution").click());
-    const mode = Array.from(
-      host.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((item) => item.textContent === "640 × 1242")!;
-    expect(mode).toBeDefined();
-    await act(async () => mode.click());
-    expect(
-      requests()
-        .filter((request) => request.op === "viewerDisplay")
-        .at(-1),
-    ).toEqual({
-      op: "viewerDisplay",
-      lease: "lease",
-      width: 640,
-      height: 1242,
-    });
-    expect(
-      requests().filter(
-        (request) =>
-          request.op === "resolution" ||
-          request.op === "restoreViewerDisplay" ||
-          request.op === "stop",
-      ),
-    ).toHaveLength(0);
-    expect(requests().filter((request) => request.op === "start")).toHaveLength(
-      1,
-    );
-    expect(host.textContent).not.toContain(
-      "remoteDesktop.resolutionControlHint",
-    );
-    await act(async () => root.unmount());
-    mounted = false;
-    expect(requests().filter((request) => request.op === "stop")).toHaveLength(
-      1,
-    );
-  });
+        }),
+      );
+      act(() => button("resolution").click());
+      const mode = Array.from(
+        host.querySelectorAll<HTMLButtonElement>("button"),
+      ).find((item) => item.textContent === `${modeWidth} × ${modeHeight}`)!;
+      expect(mode).toBeDefined();
+      expect(host.textContent).not.toContain("3840 × 2160");
+      await act(async () => mode.click());
+      expect(
+        requests()
+          .filter((request) => request.op === "viewerDisplay")
+          .at(-1),
+      ).toEqual({
+        op: "viewerDisplay",
+        lease: "lease",
+        width: modeWidth,
+        height: modeHeight,
+      });
+      expect(
+        requests().filter(
+          (request) =>
+            request.op === "resolution" ||
+            request.op === "restoreViewerDisplay" ||
+            request.op === "stop",
+        ),
+      ).toHaveLength(0);
+      expect(
+        requests().filter((request) => request.op === "start"),
+      ).toHaveLength(1);
+      expect(host.textContent).not.toContain(
+        "remoteDesktop.resolutionControlHint",
+      );
+      expect(button("restoreViewerDisplay").disabled).toBe(false);
+      act(() => button("resolution").click());
+      expect(host.textContent).not.toContain("3840 × 2160");
+      expect(host.textContent).toContain(`${modeWidth} × ${modeHeight}`);
+      act(() => button("restoreViewerDisplay").click());
+      await act(async () =>
+        fixture.message!({
+          nativeEvent: {
+            data: JSON.stringify({
+              type: "viewportSize",
+              epoch: "lease",
+              width,
+              height,
+            }),
+          },
+        }),
+      );
+      expect(
+        requests().filter((request) => request.op === "restoreViewerDisplay"),
+      ).toHaveLength(1);
+      expect(button("fitViewerDisplay").disabled).toBe(false);
+      expect(host.textContent).toContain("3840 × 2160");
+      expect(host.textContent).not.toContain("1024 × 768");
+      expect(host.textContent).not.toContain(`${modeWidth} × ${modeHeight}`);
+      await act(async () => root.unmount());
+      mounted = false;
+      expect(
+        requests().filter((request) => request.op === "stop"),
+      ).toHaveLength(1);
+    },
+  );
   it.each([true, false])(
     "keeps matching after rotation and supports restore when advertised: %s",
     async (canRestore) => {

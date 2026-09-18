@@ -31,6 +31,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { connectionDiagnostics } from "./connectionDiagnostics";
+import { fittedDisplayModes } from "./fittedDisplayModes";
 import { controlFailureAction, remoteDesktopErrorCode } from "./controlFailure";
 import { transferClipboardContent } from "./clipboardTransfer";
 import * as Clipboard from "expo-clipboard";
@@ -245,7 +246,10 @@ export default function RemoteDesktopScreen() {
   const unlockFrame = useRef<((presented: boolean) => void) | null>(null);
   const inputBusy = useRef<string | null>(null);
   const [lease, setLease] = useState<RemoteDesktopLease | null>(null);
-  const [viewerDisplayApplied, setViewerDisplayApplied] = useState(false);
+  const [fittedDisplay, setFittedDisplay] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   const [viewerViewport, setViewerViewport] = useState({ width: 0, height: 0 });
   const viewportGeneration = useRef(0);
   const matchesViewer = (
@@ -257,10 +261,10 @@ export default function RemoteDesktopScreen() {
     height > 0 &&
     Math.abs(display.width / display.height - width / height) < 0.003;
   const viewerDisplayMatched = Boolean(
-    viewerDisplayApplied &&
+    fittedDisplay &&
     caps?.viewerDisplayRestore &&
     lease &&
-    matchesViewer(lease.display, viewerViewport.width, viewerViewport.height),
+    matchesViewer(fittedDisplay, viewerViewport.width, viewerViewport.height),
   );
   exitLock.current =
     lockOnExitLoaded && lockOnExit && caps?.lockOnExit === true;
@@ -536,7 +540,7 @@ export default function RemoteDesktopScreen() {
       send({ type: "stop", preserveFrame });
       if (alive.current) {
         setLease(null);
-        setViewerDisplayApplied(false);
+        setFittedDisplay(null);
         setFrameReady(false);
         setControlReady(false);
         setCanPip(false);
@@ -1554,6 +1558,18 @@ export default function RemoteDesktopScreen() {
       if (alive.current) setSettingsRevision((value) => value + 1);
     }
   };
+  const readResolutionModes = async (): Promise<RemoteDesktopDisplayMode[]> => {
+    const current = active.current;
+    if (!current) return [];
+    if (fittedDisplay)
+      return fittedDisplayModes(fittedDisplay, current.display);
+    const { width, height } = current.display;
+    const modes = await request<RemoteDesktopDisplayMode[]>({
+      op: "displayModes",
+      lease: current.lease,
+    });
+    return modes.filter((mode) => matchesViewer(mode, width, height));
+  };
   const changeResolution = async (modeId: string) => {
     const current = active.current;
     if (!current?.controlling || settingInFlight.current) return;
@@ -1562,9 +1578,7 @@ export default function RemoteDesktopScreen() {
       (caps?.viewerDisplay && caps.viewerDisplayRestore)
     ) {
       try {
-        const modes = await request<
-          import("@cindy/device-link").RemoteDesktopDisplayMode[]
-        >({ op: "displayModes", lease: current.lease });
+        const modes = await readResolutionModes();
         if (active.current !== current) return;
         const mode = modes.find((item) => item.id === modeId);
         if (!mode) throw new Error("DESKTOP_DISPLAY_MODE_MISSING");
@@ -1576,7 +1590,7 @@ export default function RemoteDesktopScreen() {
             mode.width,
             mode.height,
             true,
-            caps?.resolutionRestore ? mode.id : undefined,
+            !fittedDisplay && caps?.resolutionRestore ? mode.id : undefined,
           );
           return;
         }
@@ -1626,9 +1640,9 @@ export default function RemoteDesktopScreen() {
       viewerMedia.reset();
       const restore = Boolean(
         !exactResolution &&
-        viewerDisplayApplied &&
+        fittedDisplay &&
         caps?.viewerDisplayRestore &&
-        matchesViewer(current.display, width, height),
+        matchesViewer(fittedDisplay, width, height),
       );
       const requestGeneration = viewportGeneration.current;
       const next = await viewerSession.current.fitDisplay(
@@ -1642,7 +1656,13 @@ export default function RemoteDesktopScreen() {
       recovery.current.displayId = sourceDisplayId;
       if (!exactResolution && viewportGeneration.current === requestGeneration)
         setViewerViewport({ width, height });
-      setViewerDisplayApplied(!modeId && !restore);
+      setFittedDisplay((previous) =>
+        modeId || restore
+          ? null
+          : exactResolution && previous
+            ? previous
+            : { width: next.display.width, height: next.display.height },
+      );
       setLease({ ...next });
       streaming.current = false;
       setCanPip(false);
@@ -2033,7 +2053,7 @@ export default function RemoteDesktopScreen() {
                     busy: settingBusy,
                     modesSupported: Boolean(caps?.displayModes),
                     displayGeometry: lease
-                      ? `${lease.display.id}:${lease.display.width}:${lease.display.height}`
+                      ? `${lease.display.id}:${lease.display.width}:${lease.display.height}:${Boolean(fittedDisplay)}`
                       : undefined,
                     viewerDisplaySupported: caps?.viewerDisplay === true,
                     viewerDisplayMatched,
@@ -2044,13 +2064,7 @@ export default function RemoteDesktopScreen() {
                     onChange: (settings) => {
                       void changeVideoSettings(settings);
                     },
-                    readModes: () =>
-                      active.current
-                        ? request<RemoteDesktopDisplayMode[]>({
-                            op: "displayModes",
-                            lease: active.current.lease,
-                          })
-                        : Promise.resolve([]),
+                    readModes: readResolutionModes,
                     onResolution: changeResolution,
                   }}
                   inputMode={inputMode}
