@@ -73,6 +73,7 @@ function run({ targetTop = 42, missing = false, loading = false, exact = false, 
     isLoadingMore: loading,
     queryMessageElement: () => (exact && !missing ? target : null),
     pickIntersectingChildAnchor: () => null,
+    readViewportChildAnchorClientId: () => null,
     toRenderItemViewportSnapshot,
     detectScrollAnchoringApplied,
     viewportAnchorCorrection,
@@ -95,20 +96,24 @@ describe('history viewport compensation', () => {
   it('keeps an aligned reading row through native scroll events but accepts user movement', () => {
     let readingTop = 28;
     const estimatedRow = {
+      getAttribute: () => 'estimated-row',
       getBoundingClientRect: () => ({ top: -180, bottom: 60, height: 240 }),
       querySelectorAll: () => [],
     };
     const previous = { viewportTopKey: 'reading-row', offset: -28 };
+    const readingRow = {
+      getAttribute: () => 'reading-row',
+      getBoundingClientRect: () => ({ top: readingTop, bottom: readingTop + 100, height: 100 }),
+      querySelectorAll: () => [],
+    };
     const bindings = {
       useCallback: (fn: unknown) => fn,
       scrollRef: { current: { getBoundingClientRect: () => ({ top: 0, bottom: 700 }) } },
-      itemsRef: { current: { children: [estimatedRow, {
-        getBoundingClientRect: () => ({ top: readingTop, bottom: readingTop + 100, height: 100 }),
-        querySelectorAll: () => [],
-      }] } },
+      itemsRef: { current: { children: [estimatedRow, readingRow] } },
       visibleRenderItemsRef: { current: [{ key: 'estimated-row' }, { key: 'reading-row' }] },
       lastViewportTopRef: { current: previous },
       pickIntersectingChildAnchor: () => null,
+      readViewportChildAnchorClientId: () => null,
       viewportAnchorCorrection,
       settleChipJump: vi.fn(),
       chipJumpGenerationRef: { current: null },
