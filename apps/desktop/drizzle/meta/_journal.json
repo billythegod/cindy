@@ -771,13 +771,6 @@
       "when": 1789622514585,
       "tag": "0109_deep_wolfpack",
       "breakpoints": true
-    },
-    {
-      "idx": 110,
-      "version": "6",
-      "when": 1789730472739,
-      "tag": "0110_remove_worker_only_recent_workdirs",
-      "breakpoints": true
     }
   ]
 }

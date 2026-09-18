@@ -28,6 +28,7 @@ import {
   pinnedSidebarEntryComparisonKey,
 } from '@/features/cc-agent/lib/pinnedSidebarOrder';
 import type { Session } from '@/lib/ccAgent.types';
+import { findProjectRepresentativeKey } from '@/features/cc-agent/lib/sidebarProjectVisibility';
 
 /* ---------------- helpers ---------------- */
 
@@ -428,6 +429,45 @@ describe('groupSessions', () => {
         persistentLocalProjects: filterPersistentLocalProjectsByLastActivity(persistent, null),
       }).projects,
     ).toHaveLength(2);
+  });
+
+  it.each([
+    ['D:/Work/Repo', 'd:/work/repo'],
+    ['//Server/Share/École', '//server/share/école'],
+  ])('groups Windows case variants under an activity filter: %s', (first, second) => {
+    const tasks = [
+      s({ workingDir: first, updatedAt: '2026-08-12T00:00:00.000Z' }),
+      s({ workingDir: second, updatedAt: '2026-08-11T00:00:00.000Z' }),
+    ];
+    const persistent = [
+      { workingDir: first.toUpperCase(), lastUsedAt: tasks[0].updatedAt, knownAgentKinds: [] },
+    ];
+    const result = groupSessions(tasks, {
+      localPlatform: 'win32',
+      persistentLocalProjects: filterPersistentLocalProjectsByLastActivity(
+        persistent,
+        Date.parse('2026-08-05T00:00:00.000Z'),
+      ),
+    });
+    expect(result.projects).toHaveLength(1);
+    expect(result.projects[0].sessions).toEqual(tasks);
+    expect(result.projects[0].workingDir).toBe(first);
+    expect(
+      findProjectRepresentativeKey(result.projects, `local:${first.toUpperCase()}`, 'win32'),
+    ).toBe(result.projects[0].projectKey);
+  });
+
+  it('keeps POSIX casing and remote identities distinct without persistent seeds', () => {
+    const result = groupSessions(
+      [
+        s({ workingDir: '/Work/Repo' }),
+        s({ workingDir: '/work/repo' }),
+        s({ workingDir: '/work/repo', remoteHostId: 'host-a' }),
+        s({ workingDir: '/work/repo', remoteHostId: 'host-b' }),
+      ],
+      { localPlatform: 'linux' },
+    );
+    expect(result.projects).toHaveLength(4);
   });
 
   it('does not let an older session regress retained project activity', () => {

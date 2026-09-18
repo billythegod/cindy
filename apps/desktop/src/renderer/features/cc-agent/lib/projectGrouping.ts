@@ -548,7 +548,7 @@ export function groupSessions(
     ? sessions
     : sessions.filter((s) => s.pinnedAt == null);
 
-  const persistentRepresentativeByComparison = new Map<
+  const localRepresentativeByComparison = new Map<
     string,
     { projectKey: string; workingDir: string }
   >();
@@ -557,8 +557,8 @@ export function groupSessions(
     if (!workingDir) continue;
     const projectKey = projectIdentityKey('local', workingDir, null);
     const comparisonKey = projectKeyComparisonKey(projectKey, localPlatform);
-    if (comparisonKey && !persistentRepresentativeByComparison.has(comparisonKey)) {
-      persistentRepresentativeByComparison.set(comparisonKey, { projectKey, workingDir });
+    if (comparisonKey && !localRepresentativeByComparison.has(comparisonKey)) {
+      localRepresentativeByComparison.set(comparisonKey, { projectKey, workingDir });
     }
   }
 
@@ -618,11 +618,14 @@ export function groupSessions(
       if (scope === 'local') {
         const comparisonKey = projectKeyComparisonKey(projectKey, localPlatform);
         const representative = comparisonKey
-          ? persistentRepresentativeByComparison.get(comparisonKey)
+          ? localRepresentativeByComparison.get(comparisonKey)
           : undefined;
         if (representative) {
           projectKey = representative.projectKey;
           identityWorkingDir = representative.workingDir;
+        } else if (comparisonKey) {
+          // Filtered views have no persistent seeds; tasks still share path identity.
+          localRepresentativeByComparison.set(comparisonKey, { projectKey, workingDir: dir });
         }
       }
       const arr = groups.get(projectKey);
