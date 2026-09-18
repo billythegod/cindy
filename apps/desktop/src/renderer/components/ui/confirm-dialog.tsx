@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import { WINDOW_DRAG_STYLE, WINDOW_NO_DRAG_STYLE } from '@/components/layout/windowDrag';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-import { Tip } from '@/components/ui/tooltip';
+import { Tooltip } from '@/components/ui/tooltip';
 
 export interface ConfirmDialogProps {
   /** Explicit pilot opt-in; unselected callers retain their existing presentation. */
@@ -227,18 +227,25 @@ export function ConfirmDialog({
             }
           >
             {showCloseButton && (
-              <Tip text={t('common.dismiss')}>
-                <Button
-                  variant="secondary"
-                  size="md"
-                  className="absolute right-3 top-3 w-8 border-transparent bg-transparent px-0 text-[var(--confirm-desc)]"
-                  disabled={loading}
-                  aria-label={t('common.dismiss')}
-                  onClick={() => onOpenChange(false)}
-                >
-                  <X size={16} aria-hidden />
-                </Button>
-              </Tip>
+              <Tooltip.Provider>
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      className="absolute right-3 top-3 w-8 border-transparent bg-transparent px-0 text-[var(--confirm-desc)]"
+                      disabled={loading}
+                      aria-label={t('common.dismiss')}
+                      onClick={() => onOpenChange(false)}
+                    >
+                      <X size={16} aria-hidden />
+                    </Button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content style={{ zIndex: zIndex + 1 }}>
+                    {t('common.dismiss')}
+                  </Tooltip.Content>
+                </Tooltip.Root>
+              </Tooltip.Provider>
             )}
             <AlertDialog.Title
               className={cn(
