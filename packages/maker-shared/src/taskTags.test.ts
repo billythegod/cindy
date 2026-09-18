@@ -1,10 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeTaskTags, reconcileTaskTags, type TaskTag } from './taskTags';
+import {
+  normalizeTaskTags,
+  reconcileTaskTags,
+  taskTagEditRevision,
+  type TaskTag,
+} from './taskTags';
 const tag = (
   id: string,
   color: TaskTag['color'] = 'red',
   favoriteOrder: number | null = null,
 ): TaskTag => ({ id, name: id, color, favoriteOrder, revision: 1 });
+
+it('advances edit revisions only while the editable baseline remains unchanged', () => {
+  const editing = { ...tag('a'), revision: 3 };
+  expect(taskTagEditRevision(editing, [{ ...editing, revision: 5, sortOrder: 2 }])).toBe(5);
+  expect(taskTagEditRevision(editing, [{ ...editing, revision: 2 }])).toBe(3);
+  expect(taskTagEditRevision(editing, [{ ...editing, revision: 5, name: 'Other' }])).toBe(3);
+  expect(taskTagEditRevision(editing, [{ ...editing, revision: 5, color: 'blue' }])).toBe(3);
+  expect(taskTagEditRevision(editing, [])).toBe(3);
+});
 describe('task tag wire and cache projection', () => {
   it('rejects invalid colors and caps malformed cache growth', () => {
     expect(normalizeTaskTags([tag('a'), { ...tag('b'), color: 'url(secret)' }, null])).toEqual([

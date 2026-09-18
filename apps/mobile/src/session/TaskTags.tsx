@@ -31,6 +31,7 @@ import {
   TASK_TAG_COLORS,
   taskTagNameKey,
   taskTagErrorKey,
+  taskTagEditRevision,
   normalizeTaskTags,
   reconcileTaskTags,
   type TaskTag,
@@ -1070,7 +1071,9 @@ export function TaskTagsPanel({
                       accessibilityRole="button"
                       accessibilityLabel={t(`taskTags.${c}`)}
                       accessibilityState={{ selected: color === c }}
-                      disabled={busy || blocked || Boolean(pendingAttach) || !supportedColors.includes(c)}
+                      disabled={
+                        busy || blocked || Boolean(pendingAttach) || !supportedColors.includes(c)
+                      }
                       onPress={() => setColor(c)}
                       style={{
                         width: '16.666667%',
@@ -1149,7 +1152,7 @@ export function TaskTagsPanel({
                             ? {
                                 action: 'update',
                                 tagId: editing.id,
-                                revision: editing.revision,
+                                revision: taskTagEditRevision(editing, latestCatalog.current),
                                 name: name === tagName(editing, t) ? editing.name : name,
                                 color:
                                   editing.color === 'none' &&
@@ -1201,7 +1204,15 @@ export function TaskTagsPanel({
             )}
             {deletion && (
               <View style={{ gap: spacing.xl, paddingVertical: spacing.sm }}>
-                <Text style={[textStyle, { color: colors.textSecondary, lineHeight: lineHeight.bodyRelaxed }]}>
+                <Text
+                  style={[
+                    textStyle,
+                    {
+                      color: colors.textSecondary,
+                      lineHeight: lineHeight.bodyRelaxed,
+                    },
+                  ]}
+                >
                   {t('taskTags.deleteConfirm', {
                     name: editing ? tagName(editing, t) : '',
                     count: deletion.count,

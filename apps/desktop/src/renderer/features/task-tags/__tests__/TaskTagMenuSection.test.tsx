@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import React from 'react';
+import React, { act } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { TaskTagEditor, TaskTagMenuSection } from '../TaskTags';
 import { TASK_TAG_COLORS } from '@cindy/maker-shared';
+import { emitTaskTagCatalog } from '../taskTagEvents';
 import type { Session } from '@/lib/ccAgent.types';
 
 vi.mock('@/features/cc-agent/lib/remoteSessionWriteGuard', () => ({
@@ -26,6 +27,44 @@ vi.mock('react-i18next', () => ({
 }));
 
 afterEach(cleanup);
+it.each([false, true])(
+  'preserves drafts across catalog pushes (external rename: %s)',
+  async (renamed) => {
+    const tag = {
+      id: 'work',
+      name: 'Work',
+      color: 'red' as const,
+      favoriteOrder: null,
+      revision: 1,
+    };
+    const execute = vi.fn(async () => ({ tags: [tag], sessions: [] }));
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: { localDb: { taskTags: { execute } } },
+    });
+    render(
+      <TaskTagEditor session={{ id: 'task', tags: [] } as unknown as Session} onClose={() => {}} />,
+    );
+    fireEvent.doubleClick(await screen.findByRole('button', { name: 'Work' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My draft' } });
+    act(() =>
+      emitTaskTagCatalog(undefined, [
+        { ...tag, revision: 2, name: renamed ? 'Other name' : tag.name },
+      ]),
+    );
+    expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('My draft');
+    fireEvent.click(screen.getByRole('button', { name: 'taskTags.save' }));
+    await waitFor(() =>
+      expect(execute).toHaveBeenLastCalledWith({
+        action: 'update',
+        tagId: tag.id,
+        revision: renamed ? 1 : 2,
+        name: 'My draft',
+        color: 'red',
+      }),
+    );
+  },
+);
 it('names the hovered label, describes the action and toggles its inner check', async () => {
   const red = {
     id: 'default:red',
@@ -220,15 +259,26 @@ it('lets an old host rename an existing uncolored tag without requiring a new co
   );
 });
 
-
 it.each(['menu', 'editor'])('retries a failed %s load without reopening', async (surface) => {
-  const execute = vi.fn().mockRejectedValueOnce(new Error('network failure')).mockResolvedValue({
-    tags: [{ id: 'x', name: 'Recovered', color: 'red', favoriteOrder: null, revision: 1 }],
-    sessions: [],
+  const execute = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('network failure'))
+    .mockResolvedValue({
+      tags: [{ id: 'x', name: 'Recovered', color: 'red', favoriteOrder: null, revision: 1 }],
+      sessions: [],
+    });
+  Object.defineProperty(window, 'electronAPI', {
+    configurable: true,
+    value: { localDb: { taskTags: { execute } } },
   });
-  Object.defineProperty(window, 'electronAPI', { configurable: true, value: { localDb: { taskTags: { execute } } } });
   const session = { id: 'task', tags: [] } as unknown as Session;
-  render(surface === 'menu' ? <TaskTagMenuSection session={session} onMore={() => {}} /> : <TaskTagEditor session={session} onClose={() => {}} />);
+  render(
+    surface === 'menu' ? (
+      <TaskTagMenuSection session={session} onMore={() => {}} />
+    ) : (
+      <TaskTagEditor session={session} onClose={() => {}} />
+    ),
+  );
   fireEvent.click(await screen.findByRole('button', { name: 'taskTags.retry' }));
   await screen.findByRole('button', { name: 'Recovered' });
   expect(execute).toHaveBeenCalledTimes(2);

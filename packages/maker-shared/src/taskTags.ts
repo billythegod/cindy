@@ -135,6 +135,14 @@ export function reconcileTaskTags(
   return catalog.filter((tag) => ids.has(tag.id)).sort(compareTaskTags);
 }
 
+/** Association/order changes advance the version without changing the edit baseline. */
+export function taskTagEditRevision(editing: TaskTag, catalog: readonly TaskTag[]): number {
+  const latest = catalog.find((tag) => tag.id === editing.id);
+  return latest && latest.name === editing.name && latest.color === editing.color
+    ? Math.max(editing.revision, latest.revision)
+    : editing.revision;
+}
+
 /** Device-link errors carry code separately from Error.message. */
 export function taskTagErrorKey(error: unknown, action: TaskTagRequest['action']): string {
   const value = error as {

@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   invoke: vi.fn(),
   compact: null as any,
   input: null as any,
+  onCatalog: null as any,
   context: {
     status: "online",
     connectionEpoch: 1,
@@ -122,7 +123,12 @@ vi.mock("@/session/swipeRowRegistry", () => ({
 }));
 vi.mock("@/device-link/DeviceLinkContext", () => ({
   useDeviceLink: () => ({ ...h.context, invoke: h.invoke }),
-  subscribeRemoteTaskTagsChanged: () => () => {},
+  subscribeRemoteTaskTagsChanged: (callback: any) => {
+    h.onCatalog = callback;
+    return () => {
+      h.onCatalog = null;
+    };
+  },
 }));
 vi.mock("@/session/remoteSessionStore", () => ({
   remoteSessionStore: {
@@ -172,6 +178,45 @@ beforeEach(() => {
   root = createRoot(node);
 });
 afterEach(() => act(() => root.unmount()));
+it.each([false, true])(
+  "preserves drafts across catalog pushes (external recolor: %s)",
+  async (recolored) => {
+    await act(async () =>
+      root.render(
+        <TaskTagsPanel
+          session={session}
+          expanded
+          onExpandedChange={() => {}}
+        />,
+      ),
+    );
+    await act(async () =>
+      node
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="taskTags.editLabel"]',
+        )!
+        .click(),
+    );
+    await act(async () => h.input.onChangeText("My draft"));
+    await act(async () =>
+      h.onCatalog("host", [
+        { ...tag, revision: 2, color: recolored ? "blue" : "red" },
+      ]),
+    );
+    expect(h.input.value).toBe("My draft");
+    const save = Array.from(node.querySelectorAll("button")).find(
+      (b) => b.textContent === "taskTags.save",
+    )!;
+    await act(async () => save.click());
+    expect(h.invoke.mock.calls.at(-1)![2][0]).toEqual({
+      action: "update",
+      tagId: tag.id,
+      revision: recolored ? 1 : 2,
+      name: "My draft",
+      color: "red",
+    });
+  },
+);
 it("refreshes only after the target peer recovers and retains cached offline navigation", async () => {
   await render();
   h.context.recoveringDeviceIds.add("other");

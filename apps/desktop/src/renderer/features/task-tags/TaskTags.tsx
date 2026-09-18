@@ -9,6 +9,7 @@ import {
   TASK_TAG_COLORS,
   taskTagNameKey,
   taskTagErrorKey,
+  taskTagEditRevision,
   reconcileTaskTags,
   type TaskTag,
   type TaskTagColor,
@@ -115,7 +116,9 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
       .catch((e) => {
         if (alive) setError(taskTagErrorKey(e, 'get'));
       })
-      .finally(() => { if (alive) setBusy(false); });
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
     return () => {
       alive = false;
     };
@@ -228,8 +231,14 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
         <p className="max-w-64 text-xs text-[var(--text-secondary)]" role="status">
           {t(`taskTags.${error}`)}
           {error === 'loadFailed' && (
-            <button type="button" className={button} disabled={busy || blocked}
-              onClick={() => setReload((value) => value + 1)}>{t('taskTags.retry')}</button>
+            <button
+              type="button"
+              className={button}
+              disabled={busy || blocked}
+              onClick={() => setReload((value) => value + 1)}
+            >
+              {t('taskTags.retry')}
+            </button>
           )}
         </p>
       )}
@@ -692,7 +701,7 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
                     ? {
                         action: 'update',
                         tagId: editing.id,
-                        revision: editing.revision,
+                        revision: taskTagEditRevision(editing, latestCatalog.current),
                         name: name === tagName(editing, t) ? editing.name : name,
                         color:
                           editing.color === 'none' &&
@@ -744,7 +753,9 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
                       title={t(
                         supportedColors.includes(c) ? `taskTags.${c}` : 'taskTags.unavailable',
                       )}
-                      disabled={busy || blocked || Boolean(pendingAttach) || !supportedColors.includes(c)}
+                      disabled={
+                        busy || blocked || Boolean(pendingAttach) || !supportedColors.includes(c)
+                      }
                       onClick={() => setColor(c)}
                       className="flex h-11 items-center justify-center rounded-full hover:bg-[var(--surface-hover)] disabled:opacity-30"
                     >
@@ -851,8 +862,14 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
             >
               {t(`taskTags.${blocked ? 'offline' : error}`)}
               {!blocked && error === 'loadFailed' && (
-                <button type="button" className={button} disabled={busy}
-                  onClick={() => void run({ action: 'get', sessionIds: [session.id] })}>{t('taskTags.retry')}</button>
+                <button
+                  type="button"
+                  className={button}
+                  disabled={busy}
+                  onClick={() => void run({ action: 'get', sessionIds: [session.id] })}
+                >
+                  {t('taskTags.retry')}
+                </button>
               )}
             </p>
           )}
