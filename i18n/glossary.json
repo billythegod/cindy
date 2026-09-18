@@ -6,6 +6,19 @@
   "punctuationExempt": ["desktop:settings.help.qnaFeedbackBodyTemplate"],
   "terms": [
     {
+      "id": "task-tag",
+      "status": "proposed",
+      "en": "Tag",
+      "translations": {
+        "zh-CN": "标签",
+        "zh-TW": "標籤",
+        "ja": "タグ",
+        "ko": "태그"
+      },
+      "checkCase": false,
+      "note": "任务列表的 Finder 式颜色标签；仅标识任务，不改变运行状态。用户已确认显示为重叠色球，整合现有任务菜单，当前不增加筛选入口。"
+    },
+    {
       "id": "local-session-scope",
       "status": "proposed",
       "en": "Local",

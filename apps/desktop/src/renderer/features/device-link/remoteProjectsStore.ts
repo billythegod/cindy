@@ -1,3 +1,4 @@
+import { normalizeTaskTags, reconcileTaskTags } from '@cindy/maker-shared';
 /**
  * remoteProjectsStore —— 控制端「远程项目」内存层(device-link 跨设备远程控制)。
  * ---------------------------------------------------------------------------
@@ -631,6 +632,17 @@ const actions = {
    *  - 落到未知 session:active 一律重拉；archived 仅在归档桶已加载时重拉，避免后台
    *    为用户尚未查看的历史记录额外取数。
    */
+  applyTagCatalog(deviceId: string, tags: unknown): void {
+    const shard = shards.get(deviceId);
+    if (!shard) return;
+    const catalog = normalizeTaskTags(tags, 256);
+    shard.sessions = shard.sessions.map((session) => ({
+      ...session,
+      tags: reconcileTaskTags(session.tags, catalog),
+    }));
+    for (const status of shard.loadedStatuses) actions.nextSnapshotEpoch(deviceId, status);
+    recompute();
+  },
   applyPatch(deviceId: string, sessionId: string, patch: Record<string, unknown>): void {
     // Even an unknown row can be deleted/archived while its first GET is in flight.
     // Usage, reply timestamps and list presentation cannot change its route

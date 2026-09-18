@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { projectRemoteSessionResult, setRemoteBotSessionLookup } from '../remoteBotSessionBoundary';
+import {
+  assertRemoteBotInvocationAllowed,
+  projectRemoteSessionResult, setRemoteBotSessionLookup } from '../remoteBotSessionBoundary';
 
 afterEach(() => setRemoteBotSessionLookup(null));
 
@@ -53,4 +55,34 @@ it('filters batch detail reads using the shared fresh visibility lookup', async 
   hidden = true;
   expect(await projectRemoteSessionResult('local-db:sessions:get-many', [{ id: 's' }])).toEqual([]);
   expect(batch).toHaveBeenCalledTimes(2);
+});
+
+it('checks every target of a label batch and filters only task rows in label results', async () => {
+  setRemoteBotSessionLookup(async (id) => (id === 'hidden' ? 'hidden' : 'ordinary'));
+  await expect(
+    assertRemoteBotInvocationAllowed(
+      [{ action: 'attach', sessionIds: ['ordinary', 'hidden'], tagIds: ['label'] }],
+      'local-db:task-tags:execute',
+    ),
+  ).rejects.toThrow('[NOT_FOUND]');
+  const tags = [{ id: 'hidden', name: 'A label ID is not a task ID' }];
+  expect(
+    await projectRemoteSessionResult('local-db:task-tags:execute', {
+      tags,
+      sessions: [
+        { sessionId: 'ordinary', tags: [] },
+        { sessionId: 'hidden', tags: [] },
+      ],
+    }),
+  ).toEqual({ tags, sessions: [{ sessionId: 'ordinary', tags: [] }] });
+});
+
+it.each(['get', 'attach', 'detach'])('checks normalized task IDs for tag %s', async (action) => {
+  setRemoteBotSessionLookup(async (id) => (id === 'hidden' ? 'hidden' : 'missing'));
+  await expect(
+    assertRemoteBotInvocationAllowed(
+      [{ action, sessionIds: [' hidden '], tagIds: ['label'] }],
+      'local-db:task-tags:execute',
+    ),
+  ).rejects.toThrow('[NOT_FOUND]');
 });

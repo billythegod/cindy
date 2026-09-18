@@ -3559,7 +3559,8 @@ interface ElectronAPI {
     uninstall: (
       absolutePath: string,
       skillId?: string,
-    ) => Promise<{ success: true; cleanupToken?: string } | { success: false; errorCode: string; message: string }>;
+    ) => Promise<
+      | { success: true; cleanupToken?: string } | { success: false; errorCode: string; message: string }>;
     retryUninstallCleanup: (token: string) => Promise<{ complete: boolean }>;
 
     /** 在 main 内选择并检查本地包，成功时签发绑定当前 renderer 的短期导入授权。 */
@@ -4758,6 +4759,17 @@ interface ElectronAPI {
         ) => void,
       ) => () => void;
     };
+    taskTags: {
+      onChanged: (
+        cb: (
+          payload: { tags: import('@cindy/maker-shared').TaskTag[] },
+          ownerStamp?: import('../shared/dataOwnerPush').DataOwnerPushStamp,
+        ) => void,
+      ) => () => void;
+      execute: (
+        request: import('@cindy/maker-shared').TaskTagRequest,
+      ) => Promise<import('@cindy/maker-shared').TaskTagResult>;
+    };
     projectAliases: {
       list: () => Promise<import('../shared/projectAliases').ProjectAlias[]>;
       set: (input: {
@@ -5320,7 +5332,8 @@ interface ElectronAPI {
     ) => Promise<import('../shared/providerImport').ProviderImportConfirmResult>;
     cancelProviderImport: (importId: string) => Promise<{ ok: true }>;
     onProviderOAuthProgress: (
-      cb: (progress: {
+      cb: (progress:
+          | {
         providerId: string;
         phase: 'device-code';
         verificationUrl: string;

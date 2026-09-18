@@ -73,6 +73,7 @@ import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { GestureDetector } from '@/platform/gestureHandler';
 import { MobileAgentMark } from '@/components/MobileAgentMark';
 import { SessionHeaderNativeBack, SessionHeaderNativeActions, SessionHeaderNativeTitle, SessionHeaderNativeBlur } from '@/session/SessionHeaderNativeControls';
+import { TaskTagDots } from '@/session/TaskTags';
 import type { TextInput as NativeTextInput } from 'react-native';
 import { ScreenBackButton } from '@/components/MobilePrimitives';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1417,7 +1418,7 @@ export default function SessionScreen() {
   const queueEditingRef = useRef<QueueEditingState | null>(null);
   // 会话切换 cleanup(声明在前)引用组件后段的回收函数,经 ref 断开声明顺序依赖。
   const discardQueueEditTransientAttachmentResourcesRef = useRef<
-    ((editing: QueueEditingState, attachmentsAtExit: readonly RemoteSerializedAttachment[]) => void) | null
+    | ((editing: QueueEditingState, attachmentsAtExit: readonly RemoteSerializedAttachment[]) => void) | null
   >(null);
   // 排队编辑保存(update-content RPC)在途 promise:会话切换 cleanup 据此把解锁
   // 排到保存落定之后,防止 device-link 并发下解锁超车、桌面端用旧内容抢先派发。
@@ -1992,7 +1993,8 @@ export default function SessionScreen() {
   const composerInputRef = useRef<ComposerRichInputHandle | null>(null);
   const voiceControllerSessionRef = useRef<MobileVoiceControllerSession | null>(null);
   const voiceDictionaryLearningTrackerRef = useRef<MobileVoiceDictionaryLearningTracker | null>(null);
-  const sendLatestRef = useRef<((options?: {
+  const sendLatestRef = useRef<
+    | ((options?: {
     draftOverride?: string;
     documentOverride?: ComposerDocument;
   }) => Promise<void>) | null>(null);
@@ -9035,6 +9037,7 @@ export default function SessionScreen() {
         </View>
         {currentSession ? (
           <SessionMenuSheet
+            tagDeviceId={deviceId}
             providerName={providerAccountLabel}
             messageOnly={sessionManagedByHost}
             onOpenSearch={() => {
@@ -9899,6 +9902,8 @@ function SessionHeaderBar({
 
       {nativeHeader ? <SessionHeaderNativeTitle
         title={title}
+          tags={isDeviceAccessRevoked ? undefined : currentSession?.tags}
+          onTagsPress={onOpenSettings}
         pinned={!messageOnly && !!currentSession?.pinnedAt}
         syncing={syncing}
         syncingImmediately={syncingImmediately}
@@ -9916,7 +9921,12 @@ function SessionHeaderBar({
           <Text numberOfLines={1} style={styles.sessionHeaderTitle} testID="session.title">
             {title}
           </Text>
-          <QuietSyncIndicator active={syncing} immediate={syncingImmediately} />
+          <TaskTagDots
+              tags={isDeviceAccessRevoked ? undefined : currentSession?.tags}
+              maxVisible={7}
+              onPress={onOpenSettings}
+            />
+            <QuietSyncIndicator active={syncing} immediate={syncingImmediately} />
         </View>
         {notice ? (
           <Text numberOfLines={1} style={styles.sessionHeaderNotice} testID="session.headerNotice">

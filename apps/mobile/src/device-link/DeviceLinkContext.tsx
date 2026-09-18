@@ -50,6 +50,11 @@ import {
 } from '@/session/agentCapabilitiesCache';
 import { createDeviceCatalogRefresh } from '@/device-link/deviceCatalogRefresh';
 import { evictComposerPaletteCacheForDevice, resetComposerPaletteCache } from '@/session/composerPaletteCache';
+import {
+  evictTaskTagCatalog,
+  resetTaskTagCatalogCache,
+  writeTaskTagCatalog,
+} from '@/session/taskTagCatalogCache';
 import { clearAllDeviceModelMeta, evictDeviceModelMeta } from '@/device-link/deviceModelMetaCache';
 import { dispatchFileBrowserWatchEvent } from '@/device-link/fileBrowserWatch';
 import {
@@ -210,6 +215,15 @@ const CONTROLLER_CAPABILITIES = [
 const remoteResponseEvidenceEpochs = createPresenceAvailabilityEpochs();
 const remoteResponseEvidenceListeners = new Set<(deviceId: string) => void>();
 const remoteAgentRosterListeners = new Set<(deviceId: string) => void>();
+const remoteTaskTagsChangedListeners = new Set<(deviceId: string, tags: unknown) => void>();
+export function subscribeRemoteTaskTagsChanged(
+  listener: (deviceId: string, tags: unknown) => void,
+): () => void {
+  remoteTaskTagsChangedListeners.add(listener);
+  return () => {
+    remoteTaskTagsChangedListeners.delete(listener);
+  };
+}
 const remoteFavoritesChangedListeners = new Set<(deviceId: string) => void>();
 export function subscribeRemoteFavoritesChanged(listener: (deviceId: string) => void): () => void {
   remoteFavoritesChangedListeners.add(listener);
@@ -422,6 +436,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
     clearAllDeviceModelMeta();
     resetAgentCapabilitiesCache();
     resetComposerPaletteCache();
+    resetTaskTagCatalogCache();
     setLastPresenceSnapshot(null);
     setPresenceVersion((version) => version + 1);
   }, []);
@@ -1441,6 +1456,15 @@ export function routeFrame(env: Envelope, handlers: {
   if (peerLinkClosed) return;
   if (env.kind !== 'push' || !env.src) return;
   const push = env.payload as PushPayload;
+  if (push.channel === 'local-db:task-tags:changed') {
+    writeTaskTagCatalog(
+      handlers.currentDataOwnerId,
+      env.src,
+      (push.payload as { tags?: unknown })?.tags,
+    );
+    for (const listener of remoteTaskTagsChangedListeners)
+      listener(env.src, (push.payload as { tags?: unknown })?.tags);
+  }
   if (push.channel === 'maker:model-favorites:changed') {
     for (const listener of remoteFavoritesChangedListeners) listener(env.src);
     return;
@@ -1956,6 +1980,7 @@ function markOfflineDeviceMirror(deviceId: string): void {
 }
 
 function wipeUnavailableDeviceMirror(deviceId: string): void {
+  evictTaskTagCatalog(deviceId);
   resetRemoteProjectOrderPushFence(deviceId);
   invalidateScheduleIndexForDevice(deviceId);
   remoteSessionStore.removeDevice(deviceId);

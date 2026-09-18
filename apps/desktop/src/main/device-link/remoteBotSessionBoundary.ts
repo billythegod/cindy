@@ -16,7 +16,9 @@ function record(value: unknown): Record<string, unknown> | null {
 function sessionIds(value: unknown): string[] {
   const row = record(value);
   if (!row) return [];
-  return [row.sessionId, row.parentSessionId, record(row.session)?.id, record(row.message)?.sessionId]
+  return [
+    ...(Array.isArray(row.sessionIds) ? row.sessionIds : []),
+    row.sessionId, row.parentSessionId, record(row.session)?.id, record(row.message)?.sessionId]
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
 }
 
@@ -37,7 +39,11 @@ export async function assertRemoteBotInvocationAllowed(args: unknown[], channel 
     ...(index === 0 && typeof arg === 'string' ? [arg] : []), ...sessionIds(arg),
   ]));
   for (const id of ids) {
-    if (await lookup(id, channel.startsWith('local-db:bots:') ? 'bot' : 'session') === 'hidden') throw new Error('[NOT_FOUND] Session does not exist');
+    // Tag transactions trim IDs before resolving them; authorization must inspect
+    // that same identity rather than treating whitespace as a missing task.
+    const targetId = channel === 'local-db:task-tags:execute' ? id.trim() : id;
+    if (
+      (await lookup(targetId, channel.startsWith('local-db:bots:') ? 'bot' : 'session')) === 'hidden') throw new Error('[NOT_FOUND] Session does not exist');
   }
   for (const arg of args) {
     const row = record(arg);
@@ -49,7 +55,17 @@ export async function assertRemoteBotInvocationAllowed(args: unknown[], channel 
 }
 
 export async function projectRemoteSessionResult(channel: string, value: unknown): Promise<unknown> {
-  if (!lookup || !['local-db:sessions:get', 'local-db:sessions:get-many', 'local-db:sessions:list', 'maker:list-active', 'local-db:sessions:interrupted-pending', 'local-db:bots:get', 'local-db:bots:list', 'maker:remote-resources:get', 'maker:remote-resources:list'].includes(channel)) return value;
+  if (!lookup || ![
+      'local-db:task-tags:execute',
+      'local-db:sessions:get', 'local-db:sessions:get-many', 'local-db:sessions:list', 'maker:list-active', 'local-db:sessions:interrupted-pending', 'local-db:bots:get', 'local-db:bots:list', 'maker:remote-resources:get', 'maker:remote-resources:list'].includes(channel)) return value;
+  if (channel === 'local-db:task-tags:execute') {
+    const row = record(value);
+    if (!row) return value;
+    return {
+      ...row,
+      sessions: await projectRemoteSessionResult('local-db:sessions:list', row.sessions),
+    };
+  }
   const activeLookup = lookup;
   const activeBatchLookup = batchLookup;
   const identity = (item: unknown) => {

@@ -244,6 +244,7 @@ function DeviceDetailScreenContent() {
   const showConnectionBanner = useShowConnectionBanner(status, error, connectionIssue, deviceUnresponsive);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
+  const [selectionRequested, setSelectionRequested] = useState(false);
   const [expandedAutomationGroups, setExpandedAutomationGroups] = useState<string[]>([]);
   const [bulkActionPending, setBulkActionPending] = useState<MobileSessionBulkAction | null>(null);
   const [bulkConfirmAction, setBulkConfirmAction] = useState<MobileSessionBulkAction | null>(null);
@@ -441,7 +442,7 @@ function DeviceDetailScreenContent() {
     [bulkActionSummaries],
   );
   const bulkConfirmSummary = bulkConfirmAction ? bulkActionSummaries[bulkConfirmAction] : null;
-  const selectionMode = selectedSessionIds.length > 0;
+  const selectionMode = selectionRequested || selectedSessionIds.length > 0;
   const runningAutomationCount = filterCounts.runningAutomation;
   const controlsSummary = useMemo(
     () => remoteSessionControlsSummary(statusFilter, filterCounts),
@@ -473,6 +474,7 @@ function DeviceDetailScreenContent() {
   }, [visibleSessionIds]);
 
   const clearSelection = useCallback(() => {
+    setSelectionRequested(false);
     setSelectedSessionIds([]);
     setBulkConfirmAction(null);
     setBulkNotice(null);
@@ -567,7 +569,8 @@ function DeviceDetailScreenContent() {
     }
     setBulkConfirmAction(null);
     setSelectedSessionIds([]);
-    try {
+      setSelectionRequested(false);
+      try {
       const failed: typeof rows = [];
       await Promise.all(rows.map(async (row) => {
         try {
@@ -1003,6 +1006,17 @@ function DeviceDetailScreenContent() {
                 onPress: () => setFiltersOpen((value) => !value),
                 testID: 'deviceDetail.filtersToggleButton',
               },
+              {
+                label: t('session.new.select'),
+                accessibilityLabel: t('session.new.select'),
+                active: selectionMode,
+                onPress: () => {
+                  swipeRegistry.closeOpenRow();
+                  if (selectionMode) clearSelection();
+                  else setSelectionRequested(true);
+                },
+                testID: 'deviceDetail.selectionToggleButton',
+              },
             ]}
             testID="deviceDetail.toolbarActions"
           />
@@ -1316,6 +1330,7 @@ function SessionListActionOverlays({
   return (
     <>
       <SessionOptionsPresenter
+        session={actionSheetSession}
         onAction={handleSessionSheetAction}
         onClose={() => setActionSheetSession(null)}
         onClosed={handleSessionSheetClosed}

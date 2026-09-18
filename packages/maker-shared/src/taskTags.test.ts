@@ -1,0 +1,32 @@
+import { describe, expect, it } from 'vitest';
+import { normalizeTaskTags, reconcileTaskTags, type TaskTag } from './taskTags';
+const tag = (
+  id: string,
+  color: TaskTag['color'] = 'red',
+  favoriteOrder: number | null = null,
+): TaskTag => ({ id, name: id, color, favoriteOrder, revision: 1 });
+describe('task tag wire and cache projection', () => {
+  it('rejects invalid colors and caps malformed cache growth', () => {
+    expect(normalizeTaskTags([tag('a'), { ...tag('b'), color: 'url(secret)' }, null])).toEqual([
+      tag('a'),
+    ]);
+    expect(normalizeTaskTags(Array.from({ length: 40 }, (_, i) => tag(String(i))))).toHaveLength(
+      32,
+    );
+  });
+  it('preserves membership while applying global rename/recolor/delete with stable ordering', () => {
+    const catalog = [tag('b', 'blue', 1), { ...tag('a', 'none', 0), name: 'Renamed' }, tag('new')];
+    expect(reconcileTaskTags([tag('deleted'), tag('a'), tag('b')], catalog)).toEqual([
+      catalog[1],
+      catalog[0],
+    ]);
+    expect(normalizeTaskTags([...catalog].reverse())).toEqual([catalog[1], catalog[0], catalog[2]]);
+  });
+});
+
+it('uses persisted positions before names and matches SQLite legacy unicode ordering', () => {
+  const a = { ...tag('a'), sortOrder: 2 };
+  const b = { ...tag('b'), sortOrder: 0 };
+  expect(normalizeTaskTags([a, b]).map((t) => t.id)).toEqual(['b', 'a']);
+  expect(normalizeTaskTags([tag('😀'), tag('\ue000')]).map((t) => t.id)).toEqual(['\ue000', '😀']);
+});

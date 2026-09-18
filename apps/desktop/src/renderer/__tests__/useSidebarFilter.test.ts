@@ -365,8 +365,8 @@ describe('taskInfoFields（任务行右侧信息复选）', () => {
   beforeEach(() => installMemoryLocalStorage());
   afterEach(() => uninstallLocalStorage());
 
-  it("defaults to ['time'] when storage is empty", () => {
-    expect(loadTaskInfoFields()).toEqual(['time']);
+  it("defaults to ['tags', 'time'] when storage is empty", () => {
+    expect(loadTaskInfoFields()).toEqual(['tags', 'time']);
   });
 
   it('空数组是合法状态（用户显式全不选），不回落默认', () => {
@@ -383,9 +383,9 @@ describe('taskInfoFields（任务行右侧信息复选）', () => {
 
   it('falls back to default on broken JSON or shape mismatch', () => {
     localStorage.setItem(TASK_INFO_KEY, '{not-json');
-    expect(loadTaskInfoFields()).toEqual(['time']);
+    expect(loadTaskInfoFields()).toEqual(['tags', 'time']);
     localStorage.setItem(TASK_INFO_KEY, JSON.stringify({ fields: ['time'] }));
-    expect(loadTaskInfoFields()).toEqual(['time']);
+    expect(loadTaskInfoFields()).toEqual(['tags', 'time']);
   });
 
   it('nextTaskInfoAfterToggle toggles membership and allows empty', () => {

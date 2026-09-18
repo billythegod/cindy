@@ -6443,3 +6443,29 @@ describe('device-clock live row clamp (applyRemoteTextEvent createdAt, cross-clo
     }
   });
 });
+
+describe('task tag source isolation', () => {
+  beforeEach(() => remoteSessionStore.clear());
+  it('projects rename and deletion only into the source computer task memberships', () => {
+    const tag = {
+      id: 'default:red',
+      name: 'Red',
+      color: 'red' as const,
+      favoriteOrder: 0,
+      revision: 1,
+    };
+    remoteSessionStore.setDeviceSessions('dev-a', 'A', [session('a', { tags: [tag] })]);
+    remoteSessionStore.setDeviceSessions('dev-b', 'B', [session('b', { tags: [tag] })]);
+    const renamed = { ...tag, name: 'Work', revision: 2 };
+    remoteSessionStore.applyRemotePush('dev-a', 'local-db:task-tags:changed', {
+      tags: [renamed],
+    });
+    expect(remoteSessionStore.getSessions().find((row) => row.id === 'a')?.tags).toEqual([renamed]);
+    expect(remoteSessionStore.getSessions().find((row) => row.id === 'b')?.tags).toEqual([tag]);
+    remoteSessionStore.applyRemotePush('dev-a', 'local-db:task-tags:changed', {
+      tags: [],
+    });
+    expect(remoteSessionStore.getSessions().find((row) => row.id === 'a')?.tags).toEqual([]);
+    expect(remoteSessionStore.getSessions().find((row) => row.id === 'b')?.tags).toEqual([tag]);
+  });
+});

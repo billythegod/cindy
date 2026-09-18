@@ -74,7 +74,7 @@ export type FilterProjectOrder = 'activity' | 'custom';
  * 任务行右侧信息项（复选）。存储数组的顺序 = 用户勾选先后(nextTaskInfoAfterToggle
  * 按序追加),列表行据此渲染(2026-08-12 用户裁决);菜单里选项的排列另有固定顺序。
  */
-export type TaskInfoField = 'time' | 'pr' | 'worktree' | 'tokens' | 'cost';
+export type TaskInfoField = 'time' | 'pr' | 'worktree' | 'tokens' | 'cost' | 'tags';
 export type ManualProjectDropPosition = 'before' | 'after';
 
 const STATUS_VALUES: ReadonlySet<string> = new Set<FilterStatus>(['active', 'archived', 'all']);
@@ -556,9 +556,10 @@ const TASK_INFO_VALUES: ReadonlySet<string> = new Set<TaskInfoField>([
   'worktree',
   'tokens',
   'cost',
+  'tags',
 ]);
-/** 默认只显示最近活动时间（现状行为）。 */
-export const DEFAULT_TASK_INFO_FIELDS: readonly TaskInfoField[] = ['time'];
+/** 默认显示标签和最近活动时间。 */
+export const DEFAULT_TASK_INFO_FIELDS: readonly TaskInfoField[] = ['tags', 'time'];
 
 /**
  * 读任务行右侧信息复选。存储为 JSON string[]；非法值逐项剔除。
