@@ -80,6 +80,33 @@ export function RemoteDesktopSetting() {
   if (!window.electronAPI?.remoteDesktop) return null;
   const setupBusy = setupPending || !!setup?.phase;
   const setupPhase = setup?.phase ?? (setupPending ? 'preparing' : null);
+  const configureSupport = (enabled: boolean) => {
+    revision.current++;
+    // Setup outlives this settings page. Keep polling its Main-owned
+    // phase so leaving/reopening never hides a compiler or UAC wait.
+    setSetupPending(true);
+    setServiceError(null);
+    void window.electronAPI.remoteDesktop
+      .windowsSupport(enabled)
+      .then(() => window.electronAPI.remoteDesktop.state(true))
+      .then(applyState)
+      .catch((error) => {
+        if (mounted.current)
+          setServiceError(
+            extractIpcError(error)?.code === 'PRECONDITION_FAILED' ? 'prepare' : 'setup',
+          );
+      })
+      .finally(() => {
+        if (mounted.current) {
+          setSetupPending(false);
+          void window.electronAPI.remoteDesktop
+            .state(true)
+            .then(applyState)
+            .catch(() => {});
+        }
+      });
+  };
+  const actionDisabled = busy || setupBusy || windowsSupport === 'installRequired';
   return (
     <section
       aria-label={t('remoteDesktop.allow')}
@@ -147,47 +174,33 @@ export function RemoteDesktopSetting() {
               </p>
             )}
           </div>
-          <Button
-            disabled={busy || setupBusy || windowsSupport === 'installRequired'}
-            onClick={() => {
-              revision.current++;
-              // Setup outlives this settings page. Keep polling its Main-owned
-              // phase so leaving/reopening never hides a compiler or UAC wait.
-              setSetupPending(true);
-              setServiceError(null);
-              void window.electronAPI.remoteDesktop
-                .windowsSupport(windowsSupport !== 'ready')
-                .then(() => window.electronAPI.remoteDesktop.state(true))
-                .then(applyState)
-                .catch((error) => {
-                  if (mounted.current)
-                    setServiceError(
-                      extractIpcError(error)?.code === 'PRECONDITION_FAILED' ? 'prepare' : 'setup',
-                    );
-                })
-                .finally(() => {
-                  if (mounted.current) {
-                    setSetupPending(false);
-                    void window.electronAPI.remoteDesktop
-                      .state(true)
-                      .then(applyState)
-                      .catch(() => {});
-                  }
-                });
-            }}
-          >
-            {t(
-              setupBusy
-                ? 'remoteDesktop.windowsSettingUp'
-                : windowsSupport === 'ready'
-                  ? 'remoteDesktop.windowsDisable'
-                  : windowsSupport === 'unavailable' || serviceError
-                    ? 'remoteDesktop.windowsRetry'
-                    : windowsSupport === 'updateRequired'
-                      ? 'remoteDesktop.windowsUpdate'
-                      : 'remoteDesktop.windowsEnable',
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            {windowsSupport === 'updateRequired' && !setupBusy && (
+              <Button
+                variant="secondary"
+                disabled={actionDisabled}
+                onClick={() => configureSupport(false)}
+              >
+                {t('remoteDesktop.windowsDisable')}
+              </Button>
             )}
-          </Button>
+            <Button
+              disabled={actionDisabled}
+              onClick={() => configureSupport(windowsSupport !== 'ready')}
+            >
+              {t(
+                setupBusy
+                  ? 'remoteDesktop.windowsSettingUp'
+                  : windowsSupport === 'ready'
+                    ? 'remoteDesktop.windowsDisable'
+                    : windowsSupport === 'unavailable' || serviceError
+                      ? 'remoteDesktop.windowsRetry'
+                      : windowsSupport === 'updateRequired'
+                        ? 'remoteDesktop.windowsUpdate'
+                        : 'remoteDesktop.windowsEnable',
+              )}
+            </Button>
+          </div>
         </div>
       )}
       {enabled && !windowsSupport && <RemoteDesktopPermissions />}

@@ -235,3 +235,25 @@ it('does not permanently disable setup after a transient status probe failure', 
   await act(async () => {});
   expect(windowsSupport).toHaveBeenCalledExactlyOnceWith(true);
 });
+
+it('keeps an independent remove action while the authorized service needs an update', async () => {
+  let support = 'updateRequired';
+  const state = vi.fn(async () => ({
+    enabled: true,
+    active: null,
+    windowsSupport: support,
+    windowsDevelopment: true,
+  }));
+  const windowsSupport = vi.fn(async (enabled: boolean) => {
+    support = enabled ? 'ready' : 'missing';
+  });
+  Object.assign(window, { electronAPI: { remoteDesktop: { state, windowsSupport } } });
+  render(<RemoteDesktopSetting />);
+  await act(async () => {});
+  expect(screen.getByRole('button', { name: 'remoteDesktop.windowsUpdate' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'remoteDesktop.windowsDisable' }));
+  await act(async () => {});
+  expect(windowsSupport).toHaveBeenCalledExactlyOnceWith(false);
+  expect(screen.getByRole('button', { name: 'remoteDesktop.windowsEnable' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'remoteDesktop.windowsDisable' })).toBeNull();
+});
