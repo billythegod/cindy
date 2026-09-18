@@ -21,6 +21,32 @@ function setup(defaultDirectory = path.resolve('default')) {
 }
 
 describe('dialogue directory settings IPC', () => {
+  it('does not recreate an offline custom workspace and opens it after it returns', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-dialogue-offline-'));
+    try {
+      const mount = path.join(root, 'volume');
+      const detached = path.join(root, 'detached');
+      const directory = path.join(mount, 'dialogues', 'owner-a');
+      await fs.mkdir(directory, { recursive: true });
+      await fs.writeFile(path.join(directory, 'keep.txt'), 'keep');
+      const { deps, handlers } = setup(path.join(root, 'default'));
+      await deps.write(directory);
+      await fs.rename(mount, detached);
+      await fs.mkdir(mount); // An unmounted POSIX volume can leave a writable mount point.
+      await expect(handlers.open()).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(deps.openDirectory).not.toHaveBeenCalled();
+      expect(await fs.readdir(mount)).toEqual([]);
+      expect(handlers.get()).toEqual({ directory, isCustomized: true });
+      await fs.rmdir(mount);
+      await fs.rename(detached, mount);
+      expect(await handlers.open()).toEqual({ success: true });
+      expect(deps.openDirectory).toHaveBeenCalledWith(directory);
+      expect(await fs.readFile(path.join(directory, 'keep.txt'), 'utf8')).toBe('keep');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each(['', 'file manager unavailable'])('creates a missing default directory before opening and reports shell result %j', async (shellError) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-dialogue-open-'));
     try {

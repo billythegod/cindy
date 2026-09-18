@@ -68,8 +68,15 @@ export function createDialogueWorkspaceHandlers(deps: Deps) {
     get: () => { deps.captureScope(); return deps.read(); },
     open: async () => {
       const scope = deps.captureScope();
-      const { directory } = deps.read();
-      await fs.mkdir(directory, { recursive: true });
+      const { directory, isCustomized } = deps.read();
+      if (isCustomized) {
+        // The picker already created this root. Recreating it could write beneath an offline mount.
+        if (!(await fs.stat(directory)).isDirectory()) {
+          throwIpcError('PRECONDITION_FAILED', 'dialogue workspace directory unavailable');
+        }
+      } else {
+        await fs.mkdir(directory, { recursive: true });
+      }
       assertCurrent(scope);
       return { success: (await deps.openDirectory(directory)) === '' };
     },

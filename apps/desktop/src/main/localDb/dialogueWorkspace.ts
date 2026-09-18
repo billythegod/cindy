@@ -43,7 +43,22 @@ export function buildDialogueWorkspaceDir(sessionId: string, nowMs: number): str
 
 /** Create and return the app-managed dialogue cwd. */
 export function ensureDialogueWorkspaceDir(sessionId: string, nowMs: number): string {
-  const dir = buildDialogueWorkspaceDir(sessionId, nowMs);
-  fs.mkdirSync(dir, { recursive: true });
+  const { directory, isCustomized } = readDialogueWorkspaceSettings();
+  const dayDir = path.join(directory, dialogueWorkspaceDayKey(nowMs));
+  const dir = path.join(dayDir, sessionId);
+  if (!isCustomized) {
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  // Custom roots are created by the picker. Never recreate a missing root or its
+  // ancestors: an unmounted volume may leave a writable local mount point behind.
+  // Non-recursive creation also fails if the root disappears between these steps.
+  for (const child of [dayDir, dir]) {
+    try {
+      fs.mkdirSync(child);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || !fs.statSync(child).isDirectory()) throw error;
+    }
+  }
   return dir;
 }

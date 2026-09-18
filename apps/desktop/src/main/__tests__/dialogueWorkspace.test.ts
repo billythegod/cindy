@@ -62,6 +62,7 @@ describe('dialogue workspace directory', () => {
     const oldDir = ensureDialogueWorkspaceDir('old', now);
     fs.writeFileSync(path.join(oldDir, 'work.txt'), 'keep me');
     const custom = path.join(userDataDir, 'external', 'dialogues');
+    fs.mkdirSync(custom, { recursive: true });
     await writeDialogueWorkspaceDirectory(custom);
     const customDir = ensureDialogueWorkspaceDir('new', now);
     expect(customDir).toBe(path.join(custom, '2026-09-18', 'new'));
@@ -97,6 +98,49 @@ describe('dialogue workspace directory', () => {
       userDataDir = firstOwner;
     }
     expect(dialogueWorkspaceRootDir()).toBe(custom);
+  });
+
+  it('fails without recreating an offline custom root and resumes after it returns', async () => {
+    const { ensureDialogueWorkspaceDir } = await import('../localDb/dialogueWorkspace');
+    const { writeDialogueWorkspaceDirectory, readDialogueWorkspaceSettings } = await import('../dialogue-workspace-settings');
+    const mount = path.join(userDataDir, 'volume');
+    const detached = path.join(userDataDir, 'detached');
+    const custom = path.join(mount, 'dialogues', 'owner-a');
+    fs.mkdirSync(custom, { recursive: true });
+    await writeDialogueWorkspaceDirectory(custom);
+    const now = new Date(2026, 8, 18, 12).getTime();
+    const oldDir = ensureDialogueWorkspaceDir('existing', now);
+    fs.writeFileSync(path.join(oldDir, 'keep.txt'), 'keep');
+    fs.renameSync(mount, detached);
+    fs.mkdirSync(mount);
+    expect(() => ensureDialogueWorkspaceDir('new', now)).toThrow();
+    expect(fs.readdirSync(mount)).toEqual([]);
+    expect(readDialogueWorkspaceSettings()).toEqual({ directory: custom, isCustomized: true });
+    fs.rmdirSync(mount);
+    fs.renameSync(detached, mount);
+    expect(ensureDialogueWorkspaceDir('existing', now)).toBe(oldDir);
+    expect(fs.readFileSync(path.join(oldDir, 'keep.txt'), 'utf8')).toBe('keep');
+    expect(fs.statSync(ensureDialogueWorkspaceDir('new', now)).isDirectory()).toBe(true);
+  });
+
+  it('does not recreate the custom root if it disappears after creating the day bucket', async () => {
+    const { ensureDialogueWorkspaceDir } = await import('../localDb/dialogueWorkspace');
+    const { writeDialogueWorkspaceDirectory } = await import('../dialogue-workspace-settings');
+    const custom = path.join(userDataDir, 'custom');
+    fs.mkdirSync(custom);
+    await writeDialogueWorkspaceDirectory(custom);
+    const mkdirSync = fs.mkdirSync.bind(fs);
+    const spy = vi.spyOn(fs, 'mkdirSync').mockImplementation(((...args: Parameters<typeof fs.mkdirSync>) => {
+      const result = mkdirSync(...args);
+      fs.renameSync(custom, path.join(userDataDir, 'detached'));
+      return result;
+    }) as typeof fs.mkdirSync);
+    try {
+      expect(() => ensureDialogueWorkspaceDir('new', Date.now())).toThrow();
+      expect(fs.existsSync(custom)).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('rejects invalid paths and preserves unreadable settings on writes', async () => {
