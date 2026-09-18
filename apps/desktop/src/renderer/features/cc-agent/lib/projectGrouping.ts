@@ -196,6 +196,7 @@ export function buildPersistentLocalProjects(
   for (const session of sessions) {
     if (
       session.workspaceKind === 'dialogue' ||
+      isOrcaWorkerSession(session) ||
       session.remoteHostId != null ||
       session.deviceLinkDeviceId != null
     ) {
@@ -231,7 +232,9 @@ export function filterPersistentLocalProjectsByLastActivity(
   cutoffMs: number | null,
 ): readonly PersistentLocalProject[] {
   if (cutoffMs === null) return projects;
-  return projects.filter((project) => toMs(project.lastUsedAt) >= cutoffMs);
+  // With an activity filter, only matching tasks may introduce a project group.
+  // A recently registered directory alone is not evidence of task activity.
+  return [];
 }
 
 export function persistentProjectMatchesVendor(
