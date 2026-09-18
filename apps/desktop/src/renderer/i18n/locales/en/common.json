@@ -1688,8 +1688,6 @@
           "quotaTitle": "Remaining this period",
           "quotaUsed": "Used {{used}} / Period allowance {{total}}",
           "loading": "Loading…",
-          "loadFailed": "Could not load tags. Try again.",
-          "retry": "Retry",
           "unavailable": "Temporarily unavailable. Refresh to retry.",
           "refresh": "Refresh allowance"
         },
@@ -12836,6 +12834,8 @@
     }
   },
   "taskTags": {
+    "loadFailed": "Could not load tags. Try again.",
+    "retry": "Retry",
     "editLabel": "Edit “{{name}}”",
     "reorderLabel": "Reorder “{{name}}”",
     "reorderHint": "Drag to reorder, or use the up and down arrow keys",

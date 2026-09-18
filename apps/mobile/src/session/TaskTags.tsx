@@ -293,7 +293,9 @@ export function TaskTagsPanel({
     session.canonicalDeviceId ??
     session.deviceLinkDeviceId ??
     remoteSessionStore.getSessionDeviceId(session.id);
+  const recovering = Boolean(target && link.recoveringDeviceIds.has(target));
   const blocked =
+    recovering ||
     disabled ||
     !target ||
     link.status !== 'online' ||
@@ -459,7 +461,7 @@ export function TaskTagsPanel({
     return () => {
       requestGeneration.current++;
     };
-  }, [owner, session.id, target, blocked]);
+  }, [owner, session.id, target, blocked, link.connectionEpoch]);
   useEffect(() => {
     const sync = () => {
       const row = remoteSessionStore
@@ -890,7 +892,7 @@ export function TaskTagsPanel({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={t('taskTags.more')}
-            disabled={blocked || busy || error === 'unavailable'}
+            disabled={(blocked && !hasCatalog) || busy || error === 'unavailable'}
             onPress={() => onExpandedChange(true)}
             style={{
               minHeight: 44,
@@ -1043,7 +1045,7 @@ export function TaskTagsPanel({
                 <TextInput
                   ref={nameInput}
                   accessibilityLabel={t('taskTags.name')}
-                  editable={!busy && !blocked}
+                  editable={!busy && !blocked && !pendingAttach}
                   value={name}
                   onChangeText={setName}
                   maxLength={80}
@@ -1067,7 +1069,7 @@ export function TaskTagsPanel({
                       accessibilityRole="button"
                       accessibilityLabel={t(`taskTags.${c}`)}
                       accessibilityState={{ selected: color === c }}
-                      disabled={busy || blocked || !supportedColors.includes(c)}
+                      disabled={busy || blocked || Boolean(pendingAttach) || !supportedColors.includes(c)}
                       onPress={() => setColor(c)}
                       style={{
                         width: '16.666667%',
@@ -1132,6 +1134,15 @@ export function TaskTagsPanel({
                     t(editing ? 'taskTags.save' : 'taskTags.create'),
                     () => {
                       void (async () => {
+                        if (pendingAttach) {
+                          const attached = await run({
+                            action: 'attach',
+                            sessionIds: [session.id],
+                            tagIds: [pendingAttach],
+                          });
+                          if (attached) closeEditor();
+                          return;
+                        }
                         const r = await run(
                           editing
                             ? {

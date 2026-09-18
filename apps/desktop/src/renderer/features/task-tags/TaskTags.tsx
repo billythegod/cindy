@@ -68,6 +68,7 @@ async function execute(session: Session, request: TaskTagRequest): Promise<TaskT
 export function TaskTagMenuSection({ session, onMore }: { session: Session; onMore: () => void }) {
   const { t } = useTranslation();
   const [tags, setTags] = useState<TaskTag[]>([]);
+  const [reload, setReload] = useState(0);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [selected, setSelected] = useState(session.tags ?? []);
   const catalogGeneration = useRef(0);
@@ -102,6 +103,7 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
     const selectionAtStart = selectionGeneration.current;
     if (blocked) return;
     setError('');
+    setBusy(true);
     execute(session, { action: 'get', sessionIds: [session.id] })
       .then((r) => {
         if (alive && catalogAtStart === catalogGeneration.current) setTags(r.tags);
@@ -112,11 +114,12 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
       })
       .catch((e) => {
         if (alive) setError(taskTagErrorKey(e, 'get'));
-      });
+      })
+      .finally(() => { if (alive) setBusy(false); });
     return () => {
       alive = false;
     };
-  }, [session.id, session.deviceLinkDeviceId, session.deviceLinkConnectionStatus, blocked]);
+  }, [session.id, session.deviceLinkDeviceId, session.deviceLinkConnectionStatus, blocked, reload]);
 
   const highlightedTag = tags.find((tag) => tag.id === highlightedId);
   return (
@@ -136,7 +139,7 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
             )
           : t('taskTags.title')}
       </div>
-      {!error && (
+      {error !== 'unavailable' && (
         <div className="flex items-center" role="group" aria-label={t('taskTags.title')}>
           {tags.slice(0, 7).map((tag) => {
             const checked = selected.some((value) => value.id === tag.id);
@@ -224,6 +227,10 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
       {error && (
         <p className="max-w-64 text-xs text-[var(--text-secondary)]" role="status">
           {t(`taskTags.${error}`)}
+          {error === 'loadFailed' && (
+            <button type="button" className={button} disabled={busy || blocked}
+              onClick={() => setReload((value) => value + 1)}>{t('taskTags.retry')}</button>
+          )}
         </p>
       )}
     </div>
@@ -671,6 +678,15 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
               className="space-y-4 pt-4"
               onSubmit={async (e) => {
                 e.preventDefault();
+                if (pendingAttach) {
+                  const attached = await run({
+                    action: 'attach',
+                    sessionIds: [session.id],
+                    tagIds: [pendingAttach],
+                  });
+                  if (attached) closeEditor();
+                  return;
+                }
                 const r = await run(
                   editing
                     ? {
@@ -712,7 +728,7 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
                   className="mt-2 block w-full rounded-lg border border-[var(--border-default)] bg-[var(--surface)] px-3 py-2"
                   value={name}
                   maxLength={80}
-                  disabled={busy || blocked}
+                  disabled={busy || blocked || Boolean(pendingAttach)}
                   onChange={(e) => setName(e.target.value)}
                 />
               </label>
@@ -728,7 +744,7 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
                       title={t(
                         supportedColors.includes(c) ? `taskTags.${c}` : 'taskTags.unavailable',
                       )}
-                      disabled={busy || blocked || !supportedColors.includes(c)}
+                      disabled={busy || blocked || Boolean(pendingAttach) || !supportedColors.includes(c)}
                       onClick={() => setColor(c)}
                       className="flex h-11 items-center justify-center rounded-full hover:bg-[var(--surface-hover)] disabled:opacity-30"
                     >
@@ -834,6 +850,10 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
               role="alert"
             >
               {t(`taskTags.${blocked ? 'offline' : error}`)}
+              {!blocked && error === 'loadFailed' && (
+                <button type="button" className={button} disabled={busy}
+                  onClick={() => void run({ action: 'get', sessionIds: [session.id] })}>{t('taskTags.retry')}</button>
+              )}
             </p>
           )}
           {!formOpen && (

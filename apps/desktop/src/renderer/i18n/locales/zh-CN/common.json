@@ -7558,8 +7558,6 @@
       "title": "能力",
       "search": "搜索能力",
       "loading": "加载中…",
-      "loadFailed": "标签加载失败，请重试。",
-      "retry": "重试",
       "skill": "技能",
       "mcp": "MCP",
       "toolset": "内置工具",
@@ -12819,6 +12817,8 @@
     }
   },
   "taskTags": {
+    "loadFailed": "标签加载失败，请重试。",
+    "retry": "重试",
     "editLabel": "编辑“{{name}}”",
     "reorderLabel": "调整“{{name}}”的顺序",
     "reorderHint": "拖动排序，也可用上下方向键调整",

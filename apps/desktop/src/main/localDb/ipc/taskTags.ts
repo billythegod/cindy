@@ -50,7 +50,7 @@ export async function executeTaskTags(
     for (const row of result.sessions)
       broadcastSessionPatched(row.sessionId, { tags: row.tags }, scope);
   }
-  if (['create', 'update', 'delete', 'reorder'].includes(request.action)) {
+  if (['create', 'update', 'delete', 'reorder', 'attach', 'detach'].includes(request.action)) {
     const payload = { tags: result.tags };
     // A closed renderer must not turn an already committed write into a failed request.
     try {

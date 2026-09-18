@@ -165,7 +165,11 @@ it('keeps the form when attachment fails and retries without creating a duplicat
   const created = { id: 'new', name: 'Paper', color: 'blue', favoriteOrder: null, revision: 1 };
   let failures = 1;
   const execute = vi.fn(async (request: { action: string }) => {
-    if (request.action === 'attach' && failures-- > 0) throw new Error('OFFLINE');
+    if (request.action === 'update') throw new Error('CONFLICT');
+    if (request.action === 'attach' && failures-- > 0) {
+      created.revision++; // Committed on the host; only the response was lost.
+      throw new Error('OFFLINE');
+    }
     return {
       tags: request.action === 'get' ? [] : [created],
       sessions: [],
@@ -189,6 +193,7 @@ it('keeps the form when attachment fails and retries without creating a duplicat
   await waitFor(() => expect(screen.queryByRole('textbox')).toBeNull());
   expect(execute.mock.calls.filter(([r]) => r.action === 'create')).toHaveLength(1);
   expect(execute.mock.calls.filter(([r]) => r.action === 'attach')).toHaveLength(2);
+  expect(execute.mock.calls.filter(([r]) => r.action === 'update')).toHaveLength(0);
 });
 
 it('lets an old host rename an existing uncolored tag without requiring a new color', async () => {
@@ -213,4 +218,18 @@ it('lets an old host rename an existing uncolored tag without requiring a new co
       color: undefined,
     }),
   );
+});
+
+
+it.each(['menu', 'editor'])('retries a failed %s load without reopening', async (surface) => {
+  const execute = vi.fn().mockRejectedValueOnce(new Error('network failure')).mockResolvedValue({
+    tags: [{ id: 'x', name: 'Recovered', color: 'red', favoriteOrder: null, revision: 1 }],
+    sessions: [],
+  });
+  Object.defineProperty(window, 'electronAPI', { configurable: true, value: { localDb: { taskTags: { execute } } } });
+  const session = { id: 'task', tags: [] } as unknown as Session;
+  render(surface === 'menu' ? <TaskTagMenuSection session={session} onMore={() => {}} /> : <TaskTagEditor session={session} onClose={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'taskTags.retry' }));
+  await screen.findByRole('button', { name: 'Recovered' });
+  expect(execute).toHaveBeenCalledTimes(2);
 });

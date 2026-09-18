@@ -7558,8 +7558,6 @@
       "title": "能力",
       "search": "搜尋能力",
       "loading": "載入中…",
-      "loadFailed": "標籤載入失敗，請重試。",
-      "retry": "重試",
       "skill": "技能",
       "mcp": "MCP",
       "toolset": "內建工具",
@@ -12819,6 +12817,8 @@
     }
   },
   "taskTags": {
+    "loadFailed": "標籤載入失敗，請重試。",
+    "retry": "重試",
     "editLabel": "編輯「{{name}}」",
     "reorderLabel": "調整「{{name}}」的順序",
     "reorderHint": "拖曳排序，也可用上下方向鍵調整",
