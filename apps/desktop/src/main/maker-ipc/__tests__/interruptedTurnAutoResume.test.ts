@@ -300,6 +300,15 @@ describe('isInterruptedTurnError', () => {
         errorStatus: 400,
       }),
     ).toBe(false);
+    // The overload reason normally bypasses message checks. Keeping it retryable
+    // for a non-503 status proves the OAuth exception is scoped to HTTP 503.
+    expect(
+      isInterruptedTurnError({
+        reason: 'upstream-overload',
+        message: 'No available OAuth accounts in pool',
+        errorStatus: 400,
+      }),
+    ).toBe(true);
     expect(
       isInterruptedTurnError({
         message: 'No available OAuth accounts in pool',
