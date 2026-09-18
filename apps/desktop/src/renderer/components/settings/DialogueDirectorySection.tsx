@@ -57,9 +57,9 @@ export function DialogueDirectorySection() {
     if (!state) return;
     try {
       const result = await window.electronAPI.openPath(state.directory);
-      if (!result.success) toast.error(t('chat.common.openFolderFailed'));
+      if (!result.success) toast.error(t('ccAgent.common.openFolderFailed'));
     } catch {
-      toast.error(t('chat.common.openFolderFailed'));
+      toast.error(t('ccAgent.common.openFolderFailed'));
     }
   };
 

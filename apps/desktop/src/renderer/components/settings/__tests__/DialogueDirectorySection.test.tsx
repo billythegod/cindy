@@ -30,7 +30,7 @@ describe('DialogueDirectorySection', () => {
     await screen.findByText('custom-directory');
     api.openPath.mockResolvedValue({ success: false });
     fireEvent.click(screen.getByRole('button', { name: 'settings.about.storage.dialogueDirectoryOpen' }));
-    await waitFor(() => expect(error).toHaveBeenCalledWith('chat.common.openFolderFailed'));
+    await waitFor(() => expect(error).toHaveBeenCalledWith('ccAgent.common.openFolderFailed'));
     expect(api.openPath).toHaveBeenLastCalledWith('custom-directory');
   });
 
