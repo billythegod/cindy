@@ -140,12 +140,18 @@ export function OrcaWorkerStatusCard({ leadSessionId, deviceId, maker, onOpenWor
   //    peer 掉线再上线必然翻转,正是所需的 peer 代次。
   // 失焦再聚焦不在其中:那不产生新的连接代,不该重探。
   const { connectionEpoch, getPresenceAvailability } = useDeviceLink();
-  const peerAvailable = getPresenceAvailability(deviceId);
+  // null = 本代尚无权威 verdict。只把**确定离线**(false)当作不可达:verdict 迟迟不来
+  // 时仍允许探测,否则面板会因为一个未决状态被永久关掉。
+  const peerReachable = getPresenceAvailability(deviceId) !== false;
   const [unsupported, setUnsupported] = useState(false);
   useEffect(() => {
+    // peer 确定离线时不复位:此刻重探只会立刻撞 DEVICE_OFFLINE。等它回来再说。
+    if (!peerReachable) return;
     setUnsupported(false);
-  }, [leadSessionId, maker, connectionEpoch, peerAvailable]);
-  const polling = focused && appActive && !unsupported;
+  }, [leadSessionId, maker, connectionEpoch, peerReachable]);
+  // peer 确定离线时暂停轮询:DeviceLinkContext.invoke 会立刻抛 DEVICE_OFFLINE,
+  // 每 5 秒撞一次既无意义又耗电。peer 回来后由上面的复位 effect 重新起轮。
+  const polling = focused && appActive && !unsupported && peerReachable;
   useEffect(() => {
     if (!polling) return;
     let active = true;

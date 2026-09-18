@@ -397,3 +397,53 @@ it('仅被控端重启(connectionEpoch 不变)也必须重探通道', async () =
   await act(async () => toggle().click());
   expect(container.textContent).toContain('w-peer-back');
 });
+
+it('peer 确定离线时暂停轮询,不再每 5 秒撞 DEVICE_OFFLINE', async () => {
+  vi.useFakeTimers();
+  h.peerAvailable = false;
+  h.listOrcaWorkersByLead.mockRejectedValue(
+    Object.assign(new Error('offline'), { code: 'DEVICE_OFFLINE' }),
+  );
+  await act(async () => {
+    root.render(
+      createElement(OrcaWorkerStatusCard as any, {
+        leadSessionId: lead,
+        deviceId: 'dev-1',
+        maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
+      }),
+    );
+  });
+  await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+  expect(h.listOrcaWorkersByLead).not.toHaveBeenCalled();
+});
+
+it('peer 回到在线后恢复轮询', async () => {
+  vi.useFakeTimers();
+  h.peerAvailable = false;
+  const draw = () => root.render(
+    createElement(OrcaWorkerStatusCard as any, {
+      leadSessionId: lead,
+      deviceId: 'dev-1',
+      maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
+    }),
+  );
+  await act(async () => { draw(); });
+  expect(h.listOrcaWorkersByLead).not.toHaveBeenCalled();
+
+  h.listOrcaWorkersByLead.mockResolvedValue([
+    { id: 'a', label: 'w-online', status: 'running', sessionId: 's-a' },
+  ]);
+  h.peerAvailable = true;
+  await act(async () => { draw(); });
+  expect(h.listOrcaWorkersByLead).toHaveBeenCalled();
+  await act(async () => toggle().click());
+  expect(container.textContent).toContain('w-online');
+});
+
+it('availability 未决(null)不阻断探测', async () => {
+  h.peerAvailable = null;
+  await render([{ id: 'a', label: 'w-null', status: 'running', sessionId: 's-a' }]);
+  expect(h.listOrcaWorkersByLead).toHaveBeenCalled();
+  await act(async () => toggle().click());
+  expect(container.textContent).toContain('w-null');
+});
