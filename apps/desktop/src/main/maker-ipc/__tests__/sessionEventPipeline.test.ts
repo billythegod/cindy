@@ -1413,12 +1413,13 @@ describe('Bot adapters in the shared event pipeline', () => {
     const h = harness();
     h.deps.agentInputCoordinatorHolder.getQueueControlSnapshot.mockReturnValue({ pendingQueue: [
       { clientId: 'retry-clone', supersedesUserClientId: 'bot-delegation-interject:task:original' },
+      { clientId: 'auto-clone', retrySourceClientId: 'bot-delegation-interject:task:auto' },
       { clientId: 'direct-input' },
     ] });
     h.emit(event('done', { result: 'prior result' }));
     await microtasks();
     expect(h.deps.botDelegationServiceHolder.settleSession).toHaveBeenCalledWith(expect.objectContaining({
-      pendingInputClientIds: ['retry-clone', 'bot-delegation-interject:task:original', 'direct-input'],
+      pendingInputClientIds: ['retry-clone', 'bot-delegation-interject:task:original', 'auto-clone', 'bot-delegation-interject:task:auto', 'direct-input'],
     }));
     await h.dispose();
   });

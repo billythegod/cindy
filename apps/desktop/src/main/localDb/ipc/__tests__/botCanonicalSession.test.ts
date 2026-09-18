@@ -3549,7 +3549,7 @@ describe('Bot Session task end-to-end runtime', () => {
       onDispatchedUserTurn: async (id, item) => { delegation.confirmQueuedSessionInputDispatched(id, item.clientId); },
       onAcceptedQueuedMessage: async (id, item, restoredFromSnapshot) => {
         await acceptedCallbacks.get(item.clientId)?.();
-        if (options.readSessionExecution) await delegation.acceptQueuedSessionInput(id, item.clientId, item.supersedesUserClientId, restoredFromSnapshot);
+        if (options.readSessionExecution) await delegation.acceptQueuedSessionInput(id, item.clientId, item.supersedesUserClientId, restoredFromSnapshot, item.retrySourceClientId);
       },
     }) : undefined;
     const dispatch = vi.fn(async (params: Parameters<typeof dispatchDirect>[0]) => {
@@ -3618,7 +3618,7 @@ describe('Bot Session task end-to-end runtime', () => {
       closeSession,
       broadcastSessionCreated: vi.fn(),
       resolveInteraction: options.resolveInteraction,
-      readPendingInputClientIds: coordinator ? id => coordinator.getQueueControlSnapshot(id).pendingQueue.flatMap(item => item.supersedesUserClientId ? [item.clientId, item.supersedesUserClientId] : [item.clientId]) : undefined,
+      readPendingInputClientIds: coordinator ? id => coordinator.getQueueControlSnapshot(id).pendingQueue.flatMap(item => [item.clientId, ...(item.supersedesUserClientId ? [item.supersedesUserClientId] : []), ...(item.retrySourceClientId ? [item.retrySourceClientId] : [])]) : undefined,
       hasPendingInput: (sessionId) => coordinator?.hasPendingQueuedWork(sessionId) || pendingTurns.some(
         (turn) => turn.sessionId === sessionId && turn.queued,
       ),
@@ -4400,7 +4400,7 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); vi.useRealTimers(); }
   });
 
-  it.each([false, true])('removes timed-out delegation queue entries without dropping unrelated input (retry clone: %s)', async cloned => {
+  it.each([false, true, 'auto'] as const)('removes timed-out delegation queue entries without dropping unrelated input (retry clone: %s)', async cloned => {
     await seedPair();
     vi.useFakeTimers();
     let execution: { instanceId: string; generation: number } | null = { instanceId: 'native', generation: 1 };
@@ -4416,7 +4416,9 @@ describe('Bot Session task end-to-end runtime', () => {
         const item = runtime.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue[0];
         runtime.coordinator!.remove(task.childSessionId, item.clientId);
         runtime.coordinator!.enqueue(task.childSessionId, {
-          ...item, clientId: 'random-retry-clone', supersedesUserClientId: item.clientId,
+          ...item, clientId: 'random-retry-clone',
+          supersedesUserClientId: cloned === 'auto' ? undefined : item.clientId,
+          retrySourceClientId: cloned === 'auto' ? item.clientId : undefined,
           chatMessage: { ...item.chatMessage, clientId: 'random-retry-clone' },
         });
       }
@@ -4854,6 +4856,28 @@ describe('Bot Session task end-to-end runtime', () => {
       expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
         .toEqual({ status: 'completed', result_summary: 'Supplement result.' });
     } finally { before.dispose(); after?.dispose(); }
+  });
+
+  it.each([false, true])('binds automatic retry provenance without hiding the original input (cold: %s)', async cold => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Retry delegated work.' });
+      if (!task.ok) throw new Error('missing task');
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Supplement', idempotencyKey: 'auto-source' });
+      const source = runtime.dispatch.mock.calls.at(-1)![0].clientId!;
+      execution = { instanceId: 'native', generation: 3 };
+      if (!cold) await expect(runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'unknown-clone', undefined, false,
+        `bot-delegation-interject:${task.delegationId}:not-accepted`)).rejects.toThrow('no accepted delegation receipt');
+      await runtime.delegation.acceptQueuedSessionInput(task.childSessionId, 'auto-clone', undefined, cold, source);
+      runtime.delegation.confirmQueuedSessionInputDispatched(task.childSessionId, 'auto-clone');
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Automatic retry result.', hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Automatic retry result.' });
+    } finally { runtime.dispose(); }
   });
 
   it('binds a cold-restored retry clone through its original delegated input', async () => {

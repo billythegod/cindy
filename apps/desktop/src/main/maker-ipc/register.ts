@@ -9553,7 +9553,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     hasPendingInput: (sessionId) =>
       inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.length > 0,
     readPendingInputClientIds: (sessionId) =>
-      inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.flatMap(item => item.supersedesUserClientId ? [item.clientId, item.supersedesUserClientId] : [item.clientId]),
+      inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.flatMap(item => [item.clientId, ...(item.supersedesUserClientId ? [item.supersedesUserClientId] : []), ...(item.retrySourceClientId ? [item.retrySourceClientId] : [])]),
     collectArtifacts: async (sessionId, inputClientIds) => {
       await waitForTurnChangeSetSeal(sessionId);
       const acceptedInputs = new Set(inputClientIds);
@@ -13754,7 +13754,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // 返回 promise 让 coordinator 在 onPersisted 链路里 await —— worker 运行态与
       // pending auto-bridge 副作用必须先于 turn 启动完成；失败仍吞错落日志，不拦派发。
       await orcaInterAgentDispatcher.runQueuedOrcaInterAgentAcceptedCallback(sessionId, item);
-      await botDelegationServiceHolder?.acceptQueuedSessionInput(sessionId, item.clientId, item.supersedesUserClientId, restoredFromSnapshot);
+      await botDelegationServiceHolder?.acceptQueuedSessionInput(sessionId, item.clientId, item.supersedesUserClientId, restoredFromSnapshot, item.retrySourceClientId);
     },
     onUserMessagePersisting: (sessionId, item) => {
       markQueuedAttachmentPersistenceStarted(sessionId, item.clientId);

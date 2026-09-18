@@ -96,7 +96,8 @@ export async function discardDelegationQueuedInputs(
   await queue.ensureQueueRestored(sessionId);
   for (const item of queue.getQueueControlSnapshot(sessionId).pendingQueue) {
     if (isDelegationQueuedInput(delegationId, item.clientId)
-      || (item.supersedesUserClientId && isDelegationQueuedInput(delegationId, item.supersedesUserClientId))) {
+      || (item.supersedesUserClientId && isDelegationQueuedInput(delegationId, item.supersedesUserClientId))
+      || (item.retrySourceClientId && isDelegationQueuedInput(delegationId, item.retrySourceClientId))) {
       queue.remove(sessionId, item.clientId);
     }
   }
@@ -3437,7 +3438,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
 
   // Only delegation-owned entries from a validated terminal/resume boundary
   // can adopt a new receipt. Ordinary direct Session input remains independent.
-  const acceptQueuedSessionInput = async (childSessionId: string, clientId: string, supersedesClientId?: string, restoredFromSnapshot = false): Promise<void> => {
+  const acceptQueuedSessionInput = async (childSessionId: string, clientId: string, supersedesClientId?: string, restoredFromSnapshot = false, retrySourceClientId?: string): Promise<void> => {
+    supersedesClientId = retrySourceClientId ?? supersedesClientId;
     const validations = pendingBoundaryValidations.get(childSessionId);
     const validationId = validations?.has(clientId) ? clientId : supersedesClientId ?? clientId;
     let validation = validations?.get(validationId);
@@ -3459,9 +3461,10 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       if (validations?.get(validationId) === validation) validations.delete(validationId);
       if (!validations?.size) pendingBoundaryValidations.delete(childSessionId);
     }
-    if (!boundary && restoredFromSnapshot) {
+    if (!boundary && (restoredFromSnapshot || retrySourceClientId)) {
       // Queue restoration can be released by the user before Bot restore runs.
-      // Only the coordinator's cold-snapshot provenance may rebuild this boundary.
+      // A host retry can also rebuild it from an input accepted by this run;
+      // retry lineage is separate from renderer message replacement.
       const [restored] = await getDbClient().drizzle.select().from(botDelegations)
         .where(eq(botDelegations.childSessionId, childSessionId)).limit(1);
       if (!restored || (!isDelegationQueuedInput(restored.id, clientId)
@@ -3472,6 +3475,9 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         || parseRecord(restored.permissionSnapshotJson).taskCancelRequested === true
         || (receipt && receipt.runSequence !== restored.runSequence)) {
         throw new Error('Restored delegated input no longer belongs to an executable run');
+      }
+      if (retrySourceClientId && !readAcceptedInputIds(restored).includes(retrySourceClientId)) {
+        throw new Error('Retry source has no accepted delegation receipt');
       }
       boundary = pendingExecutionInputs.get(childSessionId);
       if (!boundary) {
