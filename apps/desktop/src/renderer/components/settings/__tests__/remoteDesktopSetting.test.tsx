@@ -243,11 +243,13 @@ it('keeps an independent remove action after post-install verification fails', a
     revision: number;
     phase: null;
     error: 'setup' | null;
+    failedEnabled: boolean | null;
     startedAt: number | null;
   } = {
     revision: 1,
     phase: null,
     error: 'setup',
+    failedEnabled: true,
     startedAt: 1,
   };
   const state = vi.fn(async () => ({
@@ -258,7 +260,13 @@ it('keeps an independent remove action after post-install verification fails', a
   }));
   const windowsSupport = vi.fn(async (enabled: boolean) => {
     support = enabled ? 'ready' : 'missing';
-    setup = { revision: setup.revision + 1, phase: null, error: null, startedAt: null };
+    setup = {
+      revision: setup.revision + 1,
+      phase: null,
+      error: null,
+      failedEnabled: null,
+      startedAt: null,
+    };
   });
   Object.assign(window, { electronAPI: { remoteDesktop: { state, windowsSupport } } });
   render(<RemoteDesktopSetting />);
@@ -269,6 +277,47 @@ it('keeps an independent remove action after post-install verification fails', a
   expect(windowsSupport).toHaveBeenCalledExactlyOnceWith(false);
   expect(screen.getByRole('button', { name: 'remoteDesktop.windowsEnable' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'remoteDesktop.windowsDisable' })).toBeNull();
+});
+
+it('retries a failed uninstall instead of reinstalling after the service is already gone', async () => {
+  let support: 'missing' | 'ready' = 'missing';
+  let setup: {
+    revision: number;
+    phase: null;
+    error: 'setup' | null;
+    failedEnabled: boolean | null;
+    startedAt: number | null;
+  } = {
+    revision: 2,
+    phase: null,
+    error: 'setup',
+    failedEnabled: false,
+    startedAt: 2,
+  };
+  const state = vi.fn(async () => ({
+    enabled: true,
+    active: null,
+    windowsSupport: support,
+    windowsSetup: setup,
+  }));
+  const windowsSupport = vi.fn(async (enabled: boolean) => {
+    support = enabled ? 'ready' : 'missing';
+    setup = {
+      revision: setup.revision + 1,
+      phase: null,
+      error: null,
+      failedEnabled: null,
+      startedAt: null,
+    };
+  });
+  Object.assign(window, { electronAPI: { remoteDesktop: { state, windowsSupport } } });
+  render(<RemoteDesktopSetting />);
+  await act(async () => {});
+  expect(screen.getByRole('button', { name: 'remoteDesktop.windowsRetry' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'remoteDesktop.windowsDisable' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'remoteDesktop.windowsRetry' }));
+  await act(async () => {});
+  expect(windowsSupport).toHaveBeenCalledExactlyOnceWith(false);
 });
 
 it('keeps an independent remove action while the authorized service needs an update', async () => {

@@ -46,7 +46,11 @@ describe('Windows setup lifetime', () => {
       });
     const service = new WindowsDesktopSetup({ configure, stopDesktop: vi.fn() });
     await expect(service.run(true)).rejects.toThrow('DESKTOP_NATIVE_BUILD_FAILED');
-    expect(service.read()).toMatchObject({ phase: null, error: 'prepare' });
+    expect(service.read()).toMatchObject({
+      phase: null,
+      error: 'prepare',
+      failedEnabled: true,
+    });
     await service.run(true);
     expect(service.read()).toMatchObject({ phase: null, error: null });
     expect(configure).toHaveBeenCalledTimes(2);
@@ -59,8 +63,21 @@ describe('Windows setup lifetime', () => {
     const configure = vi.fn(async () => {});
     const service = new WindowsDesktopSetup({ configure, stopDesktop });
     await expect(service.run(true)).rejects.toThrow('stop failed');
-    expect(service.read()).toMatchObject({ phase: null, error: 'setup' });
+    expect(service.read()).toMatchObject({ phase: null, error: 'setup', failedEnabled: true });
     await service.run(true);
     expect(configure).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a failed uninstall directed at removal so retry cannot reinstall', async () => {
+    const configure = vi.fn(async () => {
+      throw new Error('ACL restore failed');
+    });
+    const service = new WindowsDesktopSetup({ configure, stopDesktop: vi.fn() });
+    await expect(service.run(false)).rejects.toThrow('ACL restore failed');
+    expect(service.read()).toMatchObject({
+      phase: null,
+      error: 'setup',
+      failedEnabled: false,
+    });
   });
 });

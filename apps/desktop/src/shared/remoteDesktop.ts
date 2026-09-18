@@ -54,6 +54,7 @@ export interface WindowsDesktopSetupState {
   revision: number;
   phase: WindowsDesktopSetupPhase | null;
   error: 'prepare' | 'setup' | null;
+  failedEnabled: boolean | null;
   startedAt: number | null;
 }
 export type DesktopHostReply =

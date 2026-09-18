@@ -18,7 +18,17 @@ fn service_name() -> Result<String> {
 fn pipe_name() -> Result<String> {
     Ok(installation::Installation::current()?.pipe())
 }
+fn isolate_search_path() {
+    unsafe {
+        windows_sys::Win32::System::LibraryLoader::SetDllDirectoryW([0u16].as_ptr());
+        windows_sys::Win32::System::LibraryLoader::SetDefaultDllDirectories(
+            windows_sys::Win32::System::LibraryLoader::LOAD_LIBRARY_SEARCH_SYSTEM32,
+        );
+    }
+}
+
 fn run() -> Result<()> {
+    isolate_search_path();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         #[cfg(feature = "development")]
@@ -69,5 +79,25 @@ fn main() {
     if run().is_err() {
         println!("error");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn elevation_isolates_the_helper_search_path_before_uac() {
+        let source = include_str!("main.rs");
+        assert!(
+            source.find("isolate_search_path()").unwrap()
+                < source.find("std::env::args()").unwrap()
+        );
+        assert!(source.contains("SetDllDirectoryW"));
+        assert!(source.contains("LOAD_LIBRARY_SEARCH_SYSTEM32"));
+        assert!(!source.contains("LOAD_LIBRARY_SEARCH_USER_DIRS"));
+        assert!(include_str!("../build.rs").contains("/DEPENDENTLOADFLAG:0x800"));
+        assert!(
+            source.find("isolate_search_path()").unwrap()
+                < source.find("service::elevate").unwrap()
+        );
     }
 }

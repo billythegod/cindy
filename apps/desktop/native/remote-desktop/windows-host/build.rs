@@ -1,5 +1,6 @@
 fn main() {
     napi_build::setup();
+    println!("cargo:rustc-link-arg=/DEPENDENTLOADFLAG:0x800");
     if std::env::var_os("CARGO_FEATURE_DEVELOPMENT").is_some() {
         for name in ["CINDY_DESKTOP_DEV_APP", "CINDY_DESKTOP_DEV_EXECUTABLE"] {
             println!("cargo:rerun-if-env-changed={name}");

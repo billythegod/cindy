@@ -107,6 +107,12 @@ export function RemoteDesktopSetting() {
       });
   };
   const actionDisabled = busy || setupBusy || windowsSupport === 'installRequired';
+  const retryRemoval = serviceError === 'setup' && setup?.failedEnabled === false;
+  const showRemove =
+    !setupBusy &&
+    (windowsSupport === 'updateRequired' ||
+      windowsSupport === 'unavailable' ||
+      retryRemoval);
   return (
     <section
       aria-label={t('remoteDesktop.allow')}
@@ -175,19 +181,20 @@ export function RemoteDesktopSetting() {
             )}
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-2">
-            {(windowsSupport === 'updateRequired' || windowsSupport === 'unavailable') &&
-              !setupBusy && (
-                <Button
-                  variant="secondary"
-                  disabled={actionDisabled}
-                  onClick={() => configureSupport(false)}
-                >
-                  {t('remoteDesktop.windowsDisable')}
-                </Button>
-              )}
+            {showRemove && (
+              <Button
+                variant="secondary"
+                disabled={actionDisabled}
+                onClick={() => configureSupport(false)}
+              >
+                {t('remoteDesktop.windowsDisable')}
+              </Button>
+            )}
             <Button
               disabled={actionDisabled}
-              onClick={() => configureSupport(windowsSupport !== 'ready')}
+              onClick={() =>
+                configureSupport(retryRemoval ? false : windowsSupport !== 'ready')
+              }
             >
               {t(
                 setupBusy

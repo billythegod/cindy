@@ -10,6 +10,7 @@ export class WindowsDesktopSetup {
     revision: 0,
     phase: null,
     error: null,
+    failedEnabled: null,
     startedAt: null,
   };
   private pending: { enabled: boolean; promise: Promise<void> } | null = null;
@@ -37,6 +38,7 @@ export class WindowsDesktopSetup {
       revision: this.state.revision + 1,
       phase: enabled ? 'preparing' : 'removing',
       error: null,
+      failedEnabled: null,
       startedAt: (this.deps.now ?? Date.now)(),
     };
     const generation = ++this.generation;
@@ -57,6 +59,7 @@ export class WindowsDesktopSetup {
             error instanceof Error && error.message === 'DESKTOP_NATIVE_BUILD_FAILED'
               ? 'prepare'
               : 'setup',
+          failedEnabled: enabled,
         };
         throw error;
       })

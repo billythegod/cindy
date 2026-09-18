@@ -55,7 +55,15 @@ describe('remote desktop state polling', () => {
         remoteDesktop: { state: null },
         permissions: { guideOpen: false },
         readWindowsDesktopSupport,
-        windowsSetup: { read: () => ({ phase: null, error: null, startedAt: null, revision: 0 }) },
+        windowsSetup: {
+          read: () => ({
+            phase: null,
+            error: null,
+            failedEnabled: null,
+            startedAt: null,
+            revision: 0,
+          }),
+        },
         throwIpcError: (code: string) => {
           throw new Error(code);
         },
