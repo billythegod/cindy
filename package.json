@@ -66,7 +66,7 @@
       "expo-image-manipulator@57.0.14": "dependency-patches/expo-image-manipulator@57.0.14.patch",
       "expo-paste-input@0.2.2": "dependency-patches/expo-paste-input@0.2.2.patch",
       "rollup@4.62.2": "dependency-patches/rollup@4.62.2.patch",
-      "@expo/cli@57.0.26": "dependency-patches/@expo__cli@57.0.26.patch"
+      "@expo/cli@57.0.25": "dependency-patches/@expo__cli@57.0.25.patch"
     },
     "allowUnusedPatches": true
   },
