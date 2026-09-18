@@ -3463,7 +3463,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       // Only the coordinator's cold-snapshot provenance may rebuild this boundary.
       const [restored] = await getDbClient().drizzle.select().from(botDelegations)
         .where(eq(botDelegations.childSessionId, childSessionId)).limit(1);
-      if (!restored || !isDelegationQueuedInput(restored.id, clientId)) return;
+      if (!restored || (!isDelegationQueuedInput(restored.id, clientId)
+        && (!supersedesClientId || !isDelegationQueuedInput(restored.id, supersedesClientId)))) return;
       const receipt = parseRecord(restored.permissionSnapshotJson).taskExecution as
         (DelegationExecutionReceipt & { runSequence: number }) | undefined;
       if (!isActiveDelegation(restored.status as DelegationStatus) || readTaskPause(restored)

@@ -4842,6 +4842,29 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { before.dispose(); after?.dispose(); }
   });
 
+  it('binds a cold-restored retry clone through its original delegated input', async () => {
+    await seedPair();
+    const before = createDelegationRuntime({ readSessionExecution: () => ({ instanceId: 'before-restart', generation: 1 }) });
+    let after: ReturnType<typeof createDelegationRuntime> | undefined;
+    try {
+      const task = await before.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Retry saved supplement.' });
+      if (!task.ok) throw new Error('missing task');
+      const originalId = `bot-delegation-interject:${task.delegationId}:retry`;
+      await before.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done',
+        execution: { instanceId: 'before-restart', generation: 1 },
+        hadPendingInputAtTerminal: true, pendingInputClientIds: [originalId] });
+      before.dispose();
+      const execution = { instanceId: 'after-restart', generation: 1 };
+      after = createDelegationRuntime({ readSessionExecution: () => execution });
+      await after.delegation.acceptQueuedSessionInput(task.childSessionId, 'random-retry-clone', originalId, true);
+      after.delegation.confirmQueuedSessionInputDispatched(task.childSessionId, 'random-retry-clone');
+      await after.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Retried supplement completed.', hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Retried supplement completed.' });
+    } finally { before.dispose(); after?.dispose(); }
+  });
+
   it('binds a restored explicit resume queue to the new native execution', async () => {
     await seedPair();
     const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
