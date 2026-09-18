@@ -1409,6 +1409,20 @@ describe('Bot adapters in the shared event pipeline', () => {
     }));
   });
 
+  it('preserves retry ownership in the terminal queue snapshot', async () => {
+    const h = harness();
+    h.deps.agentInputCoordinatorHolder.getQueueControlSnapshot.mockReturnValue({ pendingQueue: [
+      { clientId: 'retry-clone', supersedesUserClientId: 'bot-delegation-interject:task:original' },
+      { clientId: 'direct-input' },
+    ] });
+    h.emit(event('done', { result: 'prior result' }));
+    await microtasks();
+    expect(h.deps.botDelegationServiceHolder.settleSession).toHaveBeenCalledWith(expect.objectContaining({
+      pendingInputClientIds: ['retry-clone', 'bot-delegation-interject:task:original', 'direct-input'],
+    }));
+    await h.dispose();
+  });
+
   it('carries a pending follow-up into task settlement and remembers compact boundaries without rebuilding early', async () => {
     const h = harness();
     h.emit(event('compact_boundary'));

@@ -452,7 +452,7 @@ export function finishSessionTerminalEvent(
     ) {
       // Capture before queue-drain microtasks can promote the follow-up turn.
       const botDelegationPendingInputClientIds =
-        deps.agentInputCoordinatorHolder?.getQueueControlSnapshot(session.id).pendingQueue.map(item => item.clientId) ?? [];
+        deps.agentInputCoordinatorHolder?.getQueueControlSnapshot(session.id).pendingQueue.flatMap(item => item.supersedesUserClientId ? [item.clientId, item.supersedesUserClientId] : [item.clientId]) ?? [];
       void (async () => {
         try {
           const doneData = event.data as { result?: unknown; message?: unknown; reason?: unknown } | null;

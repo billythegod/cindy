@@ -95,7 +95,8 @@ export async function discardDelegationQueuedInputs(
 ): Promise<void> {
   await queue.ensureQueueRestored(sessionId);
   for (const item of queue.getQueueControlSnapshot(sessionId).pendingQueue) {
-    if (isDelegationQueuedInput(delegationId, item.clientId)) {
+    if (isDelegationQueuedInput(delegationId, item.clientId)
+      || (item.supersedesUserClientId && isDelegationQueuedInput(delegationId, item.supersedesUserClientId))) {
       queue.remove(sessionId, item.clientId);
     }
   }

@@ -3618,7 +3618,7 @@ describe('Bot Session task end-to-end runtime', () => {
       closeSession,
       broadcastSessionCreated: vi.fn(),
       resolveInteraction: options.resolveInteraction,
-      readPendingInputClientIds: coordinator ? id => coordinator.getQueueControlSnapshot(id).pendingQueue.map(item => item.clientId) : undefined,
+      readPendingInputClientIds: coordinator ? id => coordinator.getQueueControlSnapshot(id).pendingQueue.flatMap(item => item.supersedesUserClientId ? [item.clientId, item.supersedesUserClientId] : [item.clientId]) : undefined,
       hasPendingInput: (sessionId) => coordinator?.hasPendingQueuedWork(sessionId) || pendingTurns.some(
         (turn) => turn.sessionId === sessionId && turn.queued,
       ),
@@ -4400,7 +4400,7 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); vi.useRealTimers(); }
   });
 
-  it('removes timed-out delegation queue entries without dropping unrelated queued input when native state is absent', async () => {
+  it.each([false, true])('removes timed-out delegation queue entries without dropping unrelated input (retry clone: %s)', async cloned => {
     await seedPair();
     vi.useFakeTimers();
     let execution: { instanceId: string; generation: number } | null = { instanceId: 'native', generation: 1 };
@@ -4412,6 +4412,14 @@ describe('Bot Session task end-to-end runtime', () => {
       await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Delegated follow-up.' });
       await runtime.dispatch({ targetSessionId: task.childSessionId, message: 'Keep direct user input.', clientId: 'direct-user-input' });
       expect(runtime.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue).toHaveLength(2);
+      if (cloned) {
+        const item = runtime.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue[0];
+        runtime.coordinator!.remove(task.childSessionId, item.clientId);
+        runtime.coordinator!.enqueue(task.childSessionId, {
+          ...item, clientId: 'random-retry-clone', supersedesUserClientId: item.clientId,
+          chatMessage: { ...item.chatMessage, clientId: 'random-retry-clone' },
+        });
+      }
       execution = null;
       runtime.advance(1000);
       await vi.advanceTimersByTimeAsync(1000);
@@ -4782,7 +4790,7 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
-  it.each(['missing-terminal', 'saved-terminal', 'expired-saved-terminal', 'user-before-restore', 'edit-before-restore', 'text-before-restore', 'content-before-restore', 'merge-before-restore'] as const)('restores an owned supplement with %s', async scenario => {
+  it.each(['retry-saved-terminal', 'missing-terminal', 'saved-terminal', 'expired-saved-terminal', 'user-before-restore', 'edit-before-restore', 'text-before-restore', 'content-before-restore', 'merge-before-restore'] as const)('restores an owned supplement with %s', async scenario => {
     await seedPair();
     const queueSnapshots = new Map<string, AgentInputQueuedMessage[]>();
     const before = createDelegationRuntime({ taskControl: true, queueSnapshots,
@@ -4791,7 +4799,7 @@ describe('Bot Session task end-to-end runtime', () => {
     try {
       const task = await before.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
       if (!task.ok) throw new Error('missing task');
-      if (scenario === 'saved-terminal' || scenario === 'expired-saved-terminal') {
+      if (scenario === 'retry-saved-terminal' || scenario === 'saved-terminal' || scenario === 'expired-saved-terminal') {
         // The native terminal receipt is durable, but settlement was interrupted.
         h.sqlite!.exec("CREATE TEMP TRIGGER fail_terminal_commit BEFORE UPDATE OF status ON bot_delegations WHEN NEW.status = 'completed' BEGIN SELECT RAISE(FAIL, 'fixture restart'); END");
         await expect(before.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done',
@@ -4803,6 +4811,12 @@ describe('Bot Session task end-to-end runtime', () => {
       if (scenario === 'merge-before-restore') await before.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Second supplement.' });
       h.sqlite!.prepare('UPDATE sessions SET last_turn_ended_at = 10000 WHERE id = ?').run(task.childSessionId);
       before.dispose();
+      if (scenario === 'retry-saved-terminal') {
+        queueSnapshots.set(task.childSessionId, queueSnapshots.get(task.childSessionId)!.map(item => ({
+          ...item, clientId: 'random-retry-clone', supersedesUserClientId: item.clientId,
+          chatMessage: { ...item.chatMessage, clientId: 'random-retry-clone' },
+        })));
+      }
       const execution = { instanceId: 'after-restart', generation: 1 };
       after = createDelegationRuntime({ taskControl: true, queueSnapshots, startTime: scenario === 'expired-saved-terminal' ? 2_000_000 : 11000,
         readSessionExecution: () => execution });

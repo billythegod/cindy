@@ -9553,7 +9553,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     hasPendingInput: (sessionId) =>
       inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.length > 0,
     readPendingInputClientIds: (sessionId) =>
-      inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.map(item => item.clientId),
+      inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.flatMap(item => item.supersedesUserClientId ? [item.clientId, item.supersedesUserClientId] : [item.clientId]),
     collectArtifacts: async (sessionId, inputClientIds) => {
       await waitForTurnChangeSetSeal(sessionId);
       const acceptedInputs = new Set(inputClientIds);
