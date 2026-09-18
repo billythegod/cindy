@@ -29,7 +29,6 @@ import { app, dialog, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 
 import { createBetterSqliteDatabase } from './betterSqliteFactory';
-import { initializeTaskTagPresets } from './taskTagPresets';
 import { ensureCjkFtsTempTriggersInstalled } from './registerCjkSeg';
 import {
   getDrizzleDir,
@@ -351,11 +350,7 @@ export async function ensureReady(userId: string): Promise<EnsureReadyResult> {
           );
         }
       },
-      runMigrations: async () => {
-        const introducingTaskTags = readSchemaVersion(db) < 110;
-        await runMigrations(db, filePath);
-        if (introducingTaskTags) initializeTaskTagPresets(db);
-      },
+      runMigrations: () => runMigrations(db, filePath),
       handleSchemaDrift: () => handleSchemaDrift(filePath),
       cleanupSchemaDdl: () => cleanupStaleOrcaLeadIndex(db),
     });

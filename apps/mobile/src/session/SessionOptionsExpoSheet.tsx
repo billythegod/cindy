@@ -43,7 +43,7 @@ export function SessionOptionsPresenter(props: SessionOptionsProps) {
   );
 }
 
-function NativeTagShortcuts({ state }: { state: TaskTagsCompactState }) {
+export function NativeTagShortcuts({ state }: { state: TaskTagsCompactState }) {
   const { t } = useTranslation();
   const { colors } = useTheme();
   const { width } = useWindowDimensions();
@@ -83,7 +83,6 @@ function NativeTagShortcuts({ state }: { state: TaskTagsCompactState }) {
               onPress={state.onManage}
               modifiers={[
                 buttonStyle('plain'),
-                disabled(state.disabled),
                 accessibilityLabel(t('taskTags.title')),
               ]}
             >

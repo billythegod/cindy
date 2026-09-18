@@ -678,6 +678,7 @@ export function TaskTagsPanel({
       sessionIds: [session.id],
       tagIds: [tag.id],
     });
+  const canManage = !busy && error !== 'unavailable' && (!blocked || hasCatalog);
   // The native shortcut row shares transport, cache and mutations with the editor.
   if (!expanded && renderCompact) {
     const reason = blocked ? 'offline' : error || (!hasCatalog && busy ? 'loading' : '');
@@ -698,7 +699,7 @@ export function TaskTagsPanel({
       disabled: busy || blocked,
       message: reason ? t(`taskTags.${reason}`) : undefined,
       canRetry: !blocked && !busy && Boolean(error) && error !== 'unavailable',
-      canManage: error !== 'unavailable' && (!blocked || hasCatalog),
+      canManage,
       onToggle: (id) => {
         const tag = tags.find((item) => item.id === id);
         if (tag && !busy && !blocked) toggle(tag);
@@ -892,7 +893,7 @@ export function TaskTagsPanel({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={t('taskTags.more')}
-            disabled={(blocked && !hasCatalog) || busy || error === 'unavailable'}
+            disabled={!canManage}
             onPress={() => onExpandedChange(true)}
             style={{
               minHeight: 44,
