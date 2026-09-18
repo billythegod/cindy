@@ -670,56 +670,74 @@ describe("remote desktop controls", () => {
     act(() => button()?.click());
     expect(onFitDisplay).toHaveBeenCalledOnce();
   });
-  it("changes 4K system resolution on a restorable lease without reconnecting", async () => {
-    const original = fixture.invoke.getMockImplementation()!;
-    fixture.invoke.mockImplementation(async (...args) => {
-      const request = args[2][0];
-      if (request.op === "capabilities")
-        return {
-          ...(await original(...args)),
-          viewerDisplay: true,
-          viewerDisplayRestore: true,
-          resolutionRestore: true,
-          videoSettings: true,
-          displayModes: true,
-        };
-      if (request.op === "displayModes")
-        return [{ id: "4k", width: 3840, height: 2160, current: false }];
-      if (request.op === "resolution")
-        return {
-          lease: "lease",
-          display: { id: "display", width: 3840, height: 2160 },
-          controlling: false,
-        };
-      return original(...args);
-    });
-    await connect();
-    act(() => button("operations").click());
-    await act(async () => button("displaySettings").click());
-    act(() => button("resolution").click());
-    const mode = Array.from(
-      host.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((item) => item.textContent === "3840 × 2160")!;
-    expect(mode).toBeDefined();
-    await act(async () => mode.click());
-    expect(requests()).toContainEqual({
-      op: "resolution",
-      lease: "lease",
-      modeId: "4k",
-      temporary: true,
-    });
-    expect(requests().some((request) => request.op === "viewerDisplay")).toBe(
-      false,
-    );
-    expect(requests().some((request) => request.op === "stop")).toBe(false);
-    expect(sent()).toContainEqual(
-      expect.objectContaining({
-        type: "videoSettings",
-        width: 3840,
-        restore: true,
-      }),
-    );
-  });
+  it.each([false, true])(
+    "changes 4K system resolution without reconnecting (rotated monitor: %s)",
+    async (rotated) => {
+      const original = fixture.invoke.getMockImplementation()!;
+      fixture.invoke.mockImplementation(async (...args) => {
+        const request = args[2][0];
+        if (request.op === "start" && rotated)
+          return {
+            ...(await original(...args)),
+            display: {
+              ...display,
+              width: display.height,
+              height: display.width,
+            },
+          };
+        if (request.op === "capabilities")
+          return {
+            ...(await original(...args)),
+            viewerDisplay: true,
+            viewerDisplayRestore: true,
+            resolutionRestore: true,
+            videoSettings: true,
+            displayModes: true,
+          };
+        if (request.op === "displayModes")
+          return [
+            { id: "current", width: 1920, height: 1080, current: true },
+            { id: "4k", width: 3840, height: 2160, current: false },
+            { id: "4:3", width: 1024, height: 768, current: false },
+          ];
+        if (request.op === "resolution")
+          return {
+            lease: "lease",
+            display: { id: "display", width: 3840, height: 2160 },
+            controlling: false,
+          };
+        return original(...args);
+      });
+      await connect();
+      act(() => button("operations").click());
+      await act(async () => button("displaySettings").click());
+      act(() => button("resolution").click());
+      const mode = Array.from(
+        host.querySelectorAll<HTMLButtonElement>("button"),
+      ).find((item) => item.textContent === "3840 × 2160")!;
+      expect(mode).toBeDefined();
+      expect(host.textContent).toContain("1920 × 1080");
+      expect(host.textContent).not.toContain("1024 × 768");
+      await act(async () => mode.click());
+      expect(requests()).toContainEqual({
+        op: "resolution",
+        lease: "lease",
+        modeId: "4k",
+        temporary: true,
+      });
+      expect(requests().some((request) => request.op === "viewerDisplay")).toBe(
+        false,
+      );
+      expect(requests().some((request) => request.op === "stop")).toBe(false);
+      expect(sent()).toContainEqual(
+        expect.objectContaining({
+          type: "videoSettings",
+          width: 3840,
+          restore: true,
+        }),
+      );
+    },
+  );
 
   it.each([
     [false, 390, 760, 658, 1280],

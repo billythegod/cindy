@@ -1568,7 +1568,12 @@ export default function RemoteDesktopScreen() {
       op: "displayModes",
       lease: current.lease,
     });
-    return modes.filter((mode) => matchesViewer(mode, width, height));
+    // CoreGraphics modes keep their own orientation when Electron's display
+    // geometry is rotated. Compare modes in the enumeration's coordinate space.
+    const reference = modes.find((mode) => mode.current) ?? { width, height };
+    return modes.filter((mode) =>
+      matchesViewer(mode, reference.width, reference.height),
+    );
   };
   const changeResolution = async (modeId: string) => {
     const current = active.current;
