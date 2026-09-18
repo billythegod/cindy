@@ -638,8 +638,10 @@ fn existing_install_files_medium_writable(app_dir: &Path, exe_name: &str) -> Opt
 /// binaries, every unpacked file under `resources/app.asar.unpacked`
 /// (Forge unpacks JS such as `node-pty` that production later `require`s),
 /// extraResource natives under `resources/tools` (the Windows desktop host
-/// `.node` is required into the main process), and Forge extraResource
-/// `resources/drizzle` companions that startup `require()`s.
+/// `.node` is required into the main process), Forge extraResource
+/// `resources/drizzle` companions that startup `require()`s, and the
+/// `resources/windows-installation-version.ps1` extraResource that packaged
+/// Windows startup reads and runs through System32 PowerShell.
 pub(crate) fn medium_writable_install_file_candidates(
     app_dir: &Path,
     exe_name: &str,
@@ -647,6 +649,9 @@ pub(crate) fn medium_writable_install_file_candidates(
     let mut candidates = vec![
         app_dir.join(exe_name),
         app_dir.join("resources").join("app.asar"),
+        app_dir
+            .join("resources")
+            .join("windows-installation-version.ps1"),
     ];
     let _ = collect_medium_writable_root_natives(app_dir, &mut candidates);
     let _ = collect_medium_writable_unpacked_files(
@@ -818,6 +823,25 @@ pub(crate) fn install_root_parent_pins_install_writable(
     matches!(delete_child, Some(true))
         || matches!(add_subdirectory, Some(true))
         || acl_control_pins_install_writable(write_dac, write_owner)
+}
+
+/// Directories above `app_dir` that can replace the whole install path.
+/// Immediate parent is not enough: DELETE on `D:\Games` plus
+/// FILE_ADD_SUBDIRECTORY on `D:\` recreates `Games\Cindy` after UAC.
+pub(crate) fn install_root_ancestors(app_dir: &Path) -> Vec<PathBuf> {
+    let mut ancestors = Vec::new();
+    let mut current = match app_dir.parent() {
+        Some(parent) => parent,
+        None => return ancestors,
+    };
+    loop {
+        ancestors.push(current.to_path_buf());
+        match current.parent() {
+            Some(parent) if parent != current => current = parent,
+            _ => break,
+        }
+    }
+    ancestors
 }
 
 /// Directories between a loadable input and `app_dir`, excluding `app_dir`.
@@ -2492,18 +2516,26 @@ fn file_grants_generic_write(path: &Path) -> Option<bool> {
 #[cfg(windows)]
 fn install_root_parent_is_medium_replaceable_windows(app_dir: &Path) -> bool {
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_ADD_SUBDIRECTORY, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS, WRITE_DAC, WRITE_OWNER,
-    };
-    let Some(parent) = app_dir.parent() else {
-        return false;
+        DELETE, FILE_ADD_SUBDIRECTORY, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS, WRITE_DAC,
+        WRITE_OWNER,
     };
     let check = || {
-        install_root_parent_pins_install_writable(
-            path_grants_access(parent, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS),
-            path_grants_access(parent, FILE_ADD_SUBDIRECTORY, FILE_FLAG_BACKUP_SEMANTICS),
-            path_grants_access(parent, WRITE_DAC, FILE_FLAG_BACKUP_SEMANTICS),
-            path_grants_access(parent, WRITE_OWNER, FILE_FLAG_BACKUP_SEMANTICS),
-        )
+        for ancestor in install_root_ancestors(app_dir) {
+            if loadable_input_is_reparse(&ancestor) {
+                return true;
+            }
+            if ancestor_control_pins_install_writable(
+                path_grants_access(&ancestor, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS),
+                None,
+                path_grants_access(&ancestor, WRITE_DAC, FILE_FLAG_BACKUP_SEMANTICS),
+                path_grants_access(&ancestor, WRITE_OWNER, FILE_FLAG_BACKUP_SEMANTICS),
+                path_grants_access(&ancestor, DELETE, FILE_FLAG_BACKUP_SEMANTICS),
+                path_grants_access(&ancestor, FILE_ADD_SUBDIRECTORY, FILE_FLAG_BACKUP_SEMANTICS),
+            ) {
+                return true;
+            }
+        }
+        false
     };
     if process_is_elevated() {
         with_medium_integrity(check).unwrap_or(true)
@@ -4279,6 +4311,19 @@ mod tests {
                 .any(|path| path.ends_with("0031_add_recent_workdirs.ts")),
             "Forge extraResource drizzle companions required at startup must pin writable: {candidates:?}"
         );
+        fs::write(
+            app.join("resources")
+                .join("windows-installation-version.ps1"),
+            b"# sync",
+        )
+        .unwrap();
+        let candidates = super::medium_writable_install_file_candidates(&app, "Cindy.exe");
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.ends_with("windows-installation-version.ps1")),
+            "startup PowerShell version script must pin writable: {candidates:?}"
+        );
         assert_eq!(
             super::file_write_probe_from_os_error(std::io::ErrorKind::PermissionDenied, Some(5)),
             Some(false),
@@ -4469,6 +4514,23 @@ mod tests {
             ),
             "denied parent replace and ACL-control rights do not pin writable"
         );
+        {
+            let nested = probe.0.join("Games").join("Vendor").join("Cindy");
+            fs::create_dir_all(&nested).unwrap();
+            let ancestors = super::install_root_ancestors(&nested);
+            assert!(
+                ancestors.iter().any(|path| path.ends_with("Vendor")),
+                "must check the immediate parent of app_dir: {ancestors:?}"
+            );
+            assert!(
+                ancestors.iter().any(|path| path.ends_with("Games")),
+                "DELETE on a non-immediate ancestor can replace the whole install path: {ancestors:?}"
+            );
+            assert!(
+                !ancestors.iter().any(|path| path == &nested),
+                "app_dir itself is classified separately: {ancestors:?}"
+            );
+        }
         {
             let nested = app
                 .join("resources")
@@ -4683,6 +4745,18 @@ mod tests {
         assert!(
             body.contains("drizzle"),
             "resources/drizzle migration companions must be classification inputs:\n{body}"
+        );
+        assert!(
+            body.contains("windows-installation-version.ps1"),
+            "startup PowerShell version script must be a classification input:\n{body}"
+        );
+        let start = source
+            .find("fn install_root_parent_is_medium_replaceable_windows")
+            .expect("install-root parent probe");
+        let body = &source[start..start + 900];
+        assert!(
+            body.contains("install_root_ancestors"),
+            "a non-immediate ancestor of app_dir must be checked, not only parent():\n{body}"
         );
         let temp = TestDir::new();
         let mut args = test_args();
