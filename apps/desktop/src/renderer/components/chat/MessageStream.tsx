@@ -3181,10 +3181,9 @@ export function MessageStream({
     const previous = lastViewportTopRef.current;
     const container = scrollRef.current;
     if (preserveAligned && previous && container) {
-      const index = visibleRenderItemsRef.current.findIndex((item) => item.key === previous.viewportTopKey);
       const target = previous.messageClientId
         ? queryMessageElement(container, previous.messageClientId)
-        : index >= 0 ? itemsRef.current?.children[index] : null;
+        : findRenderItemElement(itemsRef.current, previous.viewportTopKey);
       const rect = target?.getBoundingClientRect();
       const viewport = container.getBoundingClientRect();
       const offset = previous.messageClientId ? previous.messageOffset ?? 0 : previous.offset;

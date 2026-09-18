@@ -93,7 +93,7 @@ function run({ targetTop = 42, missing = false, loading = false, exact = false, 
 }
 
 describe('history viewport compensation', () => {
-  it('keeps an aligned reading row through native scroll events but accepts user movement', () => {
+  it('keeps an aligned reading row through native scroll events even with null render items', () => {
     let readingTop = 28;
     const estimatedRow = {
       getAttribute: () => 'estimated-row',
@@ -110,8 +110,9 @@ describe('history viewport compensation', () => {
       useCallback: (fn: unknown) => fn,
       scrollRef: { current: { getBoundingClientRect: () => ({ top: 0, bottom: 700 }) } },
       itemsRef: { current: { children: [estimatedRow, readingRow] } },
-      visibleRenderItemsRef: { current: [{ key: 'estimated-row' }, { key: 'reading-row' }] },
+      visibleRenderItemsRef: { current: [{ key: 'null-row' }, { key: 'estimated-row' }, { key: 'reading-row' }] },
       lastViewportTopRef: { current: previous },
+      findRenderItemElement,
       pickIntersectingChildAnchor: () => null,
       readViewportChildAnchorClientId: () => null,
       viewportAnchorCorrection,
