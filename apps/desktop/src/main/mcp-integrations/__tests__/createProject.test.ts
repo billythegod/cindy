@@ -118,18 +118,21 @@ describe('createProject', () => {
   });
   const run = (workingDir: string) => createProject({ callerSessionId: 'caller', workingDir });
 
-  it.each(['EACCES', 'EPERM', 'ENODEV', 'ESTALE', 'ETIMEDOUT'])(
-    'permits unrelated projects when a historical workspace reports %s',
-    async (code) => {
-      const oldRoot = path.join(directory, 'old-dialogues');
-      h.historicalRoots = [oldRoot];
-      h.inaccessibleRoots[oldRoot] = code;
-      expect(await run(oldRoot)).toMatchObject({ errorCode: 'INVALID_ARGS' });
-      expect(await run(path.join(oldRoot, '2026-09-18', 'task'))).toMatchObject({ errorCode: 'INVALID_ARGS' });
-      expect(h.upsert).not.toHaveBeenCalled();
-      expect(await run(directory)).toMatchObject({ ok: true });
-    },
-  );
+  describe.each(['current', 'historical'])('%s workspace', (kind) => {
+    it.each(['EIO', 'ENOTCONN', 'EACCES', 'EPERM', 'ENODEV', 'ESTALE', 'ETIMEDOUT'])(
+      'permits unrelated projects but rejects managed paths when the root reports %s',
+      async (code) => {
+        const root = kind === 'current' ? h.dialogueRoot : path.join(directory, 'old-dialogues');
+        if (kind === 'historical') h.historicalRoots = [root];
+        h.inaccessibleRoots[root] = code;
+        expect(await run(root)).toMatchObject({ errorCode: 'INVALID_ARGS' });
+        expect(await run(path.join(root, '2026-09-18', 'task'))).toMatchObject({ errorCode: 'INVALID_ARGS' });
+        expect(h.upsert).not.toHaveBeenCalled();
+        expect(await run(directory)).toMatchObject({ ok: true });
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+      },
+    );
+  });
 
   it('permits unrelated projects when a historical root ancestor is now a file', async () => {
     const oldLocation = path.join(directory, 'removed-volume');
@@ -150,13 +153,14 @@ describe('createProject', () => {
     expect(h.upsert).not.toHaveBeenCalled();
   });
 
-  it('still rejects failures resolving the current root or the requested project', async () => {
-    h.inaccessibleRoots[h.dialogueRoot] = 'EACCES';
-    expect(await run(directory)).toMatchObject({ errorCode: 'INTERNAL' });
-    h.inaccessibleRoots = { [directory]: 'EACCES' };
-    expect(await run(directory)).toMatchObject({ errorCode: 'INTERNAL' });
-    expect(h.upsert).not.toHaveBeenCalled();
-  });
+  it.each(['EIO', 'ENOTCONN', 'EACCES'])(
+    'still rejects the requested project when its own realpath reports %s',
+    async (code) => {
+      h.inaccessibleRoots = { [h.dialogueRoot]: code, [directory]: code };
+      expect(await run(directory)).toMatchObject({ errorCode: 'INTERNAL' });
+      expect(h.upsert).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects managed dialogue roots, descendants and symlink aliases but permits adjacent projects', async () => {
     const managed = path.join(h.dialogueRoot, '2026-09-18', 'task');

@@ -45,7 +45,6 @@ describe('production credential recovery wiring', () => {
         },
         authCredentialRecovery: { request },
         app: { isPackaged: true },
-        isCindyVersionLaunchPending: () => false,
         noteAuthColdStartState: vi.fn(),
         isCindyVersionLaunchPending: () => false,
         recordDesktopDevAuthStartupResult: vi.fn(),
