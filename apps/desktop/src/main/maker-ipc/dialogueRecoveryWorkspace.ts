@@ -1,9 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ownerScopedUserDataPath } from '../appSessionState.js';
-import { dialogueWorkspaceDayKey } from '../localDb/dialogueWorkspace.js';
 import { dialogueWorkspaceRoots } from '../dialogue-workspace-settings.js';
-import { worktreeConversationFallbackDir } from './workingDirectoryRecovery.js';
+import { dialogueConversationFallbackDir, worktreeConversationFallbackDir } from './workingDirectoryRecovery.js';
 
 /** Saved custom roots remain required after restart and after changing the setting. */
 export function requiredDialogueRecoveryRoot(workingDir: string): string | undefined {
@@ -26,7 +25,7 @@ export async function allocateDialogueRecoveryWorkspace(
   const root = ownerScopedUserDataPath('dialogues');
   const directory = mode === 'unrestored-worktree'
     ? worktreeConversationFallbackDir(root, sessionId, workingDir)
-    : path.join(root, dialogueWorkspaceDayKey(Date.now()), sessionId);
+    : dialogueConversationFallbackDir(root, sessionId, workingDir);
   await fs.mkdir(directory, { recursive: true });
   return directory;
 }

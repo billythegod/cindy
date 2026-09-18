@@ -15,8 +15,16 @@ export function isUnavailableFilesystemError(error: unknown): boolean {
  * Its identity includes the original binding; changing projects cannot reuse it.
  */
 export function worktreeConversationFallbackDir(dialoguesRoot: string, sessionId: string, workingDir: string): string {
-  const key = createHash('sha256').update(JSON.stringify([sessionId, path.resolve(workingDir)])).digest('hex');
-  return path.join(dialoguesRoot, 'worktree-recovery', key);
+  return path.join(dialoguesRoot, 'worktree-recovery', recoveryDirectoryKey(sessionId, workingDir));
+}
+
+/** Ordinary recovery also survives date changes, independently of the original volume. */
+export function dialogueConversationFallbackDir(dialoguesRoot: string, sessionId: string, workingDir: string): string {
+  return path.join(dialoguesRoot, 'dialogue-recovery', recoveryDirectoryKey(sessionId, workingDir));
+}
+
+function recoveryDirectoryKey(sessionId: string, workingDir: string): string {
+  return createHash('sha256').update(JSON.stringify([sessionId, path.resolve(workingDir)])).digest('hex');
 }
 
 /** Local directory recovery; failed Git restores may explicitly request conversation fallback. */

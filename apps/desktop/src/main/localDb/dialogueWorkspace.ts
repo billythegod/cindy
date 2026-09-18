@@ -25,7 +25,12 @@ export function dialogueWorkspaceRootDir(): string {
 }
 
 export function isManagedDialogueWorkspace(workingDir: string): boolean {
-  return dialogueWorkspaceRoots().some((root) => matchDialogueWorkspacePath(workingDir, root) !== null);
+  if (!workingDir) return false;
+  return dialogueWorkspaceRoots().some((root) => {
+    if (matchDialogueWorkspacePath(workingDir, root) !== null) return true;
+    const relative = path.relative(path.join(root, 'dialogue-recovery'), workingDir);
+    return /^[a-f0-9]{64}$/.test(relative);
+  });
 }
 
 /**

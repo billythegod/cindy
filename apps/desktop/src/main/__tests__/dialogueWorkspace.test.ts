@@ -203,6 +203,41 @@ describe('dialogue workspace directory', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe('{broken');
   });
 
+  it('reuses ordinary recovery files across a next-day restart without mixing bindings', async () => {
+    const { writeDialogueWorkspaceDirectory } = await import('../dialogue-workspace-settings');
+    const custom = path.join(userDataDir, 'offline', 'dialogues', 'owner-a');
+    const original = path.join(custom, '2026-09-18', 'task');
+    await writeDialogueWorkspaceDirectory(custom);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(2026, 8, 18, 23, 50));
+      const firstModule = await import('../maker-ipc/dialogueRecoveryWorkspace');
+      const { createWorkingDirectoryRecovery } = await import('../maker-ipc/workingDirectoryRecovery');
+      const first = createWorkingDirectoryRecovery({ ...fs.promises, requiredRoot: firstModule.requiredDialogueRecoveryRoot }, firstModule.allocateDialogueRecoveryWorkspace);
+      expect(await first.recover('task', original)).toBe(true);
+      const fallback = first.resolve('task', original);
+      fs.writeFileSync(path.join(fallback, 'work.txt'), 'recover this');
+      vi.setSystemTime(new Date(2026, 8, 19, 10));
+      vi.resetModules();
+      const restartedModule = await import('../maker-ipc/dialogueRecoveryWorkspace');
+      const restartedRecovery = await import('../maker-ipc/workingDirectoryRecovery');
+      const restarted = restartedRecovery.createWorkingDirectoryRecovery({ ...fs.promises, requiredRoot: restartedModule.requiredDialogueRecoveryRoot }, restartedModule.allocateDialogueRecoveryWorkspace);
+      expect(await restarted.recover('task', original)).toBe(true);
+      expect(restarted.resolve('task', original)).toBe(fallback);
+      expect(fs.readFileSync(path.join(fallback, 'work.txt'), 'utf8')).toBe('recover this');
+      expect(fs.existsSync(custom)).toBe(false);
+      const { isManagedDialogueWorkspace } = await import('../localDb/dialogueWorkspace');
+      expect(isManagedDialogueWorkspace(fallback)).toBe(true);
+      expect(isManagedDialogueWorkspace(path.join(fallback, 'child'))).toBe(false);
+      expect(isManagedDialogueWorkspace(path.join(userDataDir, 'dialogues', 'dialogue-recovery', 'project'))).toBe(false);
+      expect(await restartedModule.allocateDialogueRecoveryWorkspace('other-task', original, 'ordinary')).not.toBe(fallback);
+      expect(await restartedModule.allocateDialogueRecoveryWorkspace('task', original + '-other', 'ordinary')).not.toBe(fallback);
+      expect(await restartedModule.allocateDialogueRecoveryWorkspace('task', original, 'unrestored-worktree')).not.toBe(fallback);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([false, true])('does not recreate a disconnected custom root after restart (historical: %s)', async (historical) => {
     const { writeDialogueWorkspaceDirectory } = await import('../dialogue-workspace-settings');
     const mount = path.join(userDataDir, 'volume');
