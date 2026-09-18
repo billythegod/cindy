@@ -9554,9 +9554,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.length > 0,
     readPendingInputClientIds: (sessionId) =>
       inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.map(item => item.clientId),
-    collectArtifacts: async (sessionId) => {
+    collectArtifacts: async (sessionId, inputClientIds) => {
       await waitForTurnChangeSetSeal(sessionId);
-      const changeSets = await listTurnChangeSets(sessionId);
+      const acceptedInputs = new Set(inputClientIds);
+      const changeSets = (await listTurnChangeSets(sessionId)).filter(changeSet => acceptedInputs.has(changeSet.anchorClientId));
       const byPath = new Map<string, {
         path: string;
         absolutePath: string;

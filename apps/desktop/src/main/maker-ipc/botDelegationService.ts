@@ -165,7 +165,7 @@ export interface BotDelegationServiceDeps {
    */
   resolveInteraction?: (requestId: string, decision: InteractionDecision) => boolean;
   /** 子任务这一路改过的文件;缺省不采集交付物。 */
-  collectArtifacts?: (sessionId: string) => Promise<BotDelegationArtifact[]>;
+  collectArtifacts?: (sessionId: string, inputClientIds: string[]) => Promise<BotDelegationArtifact[]>;
   /** Pending follow-up input must run before this Session task can become terminal. */
   hasPendingInput?: (sessionId: string) => boolean;
   readPendingInputClientIds?: (sessionId: string) => string[];
@@ -459,30 +459,40 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
 
   // Store only a native turn actually accepted for this delegation run. A later
   // direct Session turn must never replace this receipt merely by becoming live.
-  const executionSnapshot = (row: DelegationRow, clientId?: string) => {
-    const execution = row.childSessionId && deps.readSessionExecution?.(row.childSessionId);
-    return execution
+  const executionSnapshot = (row: DelegationRow, clientId?: string,
+    execution = row.childSessionId && deps.readSessionExecution?.(row.childSessionId), originalClientId = clientId) => {
+    const snapshot = execution
       ? sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskExecution', json(${JSON.stringify({ ...execution, runSequence: row.runSequence, ...(clientId ? { clientId } : {}) })}))`
       : botDelegations.permissionSnapshotJson;
+    if (!clientId) return snapshot;
+    const inputIds = sql`json_insert(COALESCE(json_extract(${botDelegations.permissionSnapshotJson}, '$.taskAcceptedInputIds'), '[]'), '$[#]', ${clientId})`;
+    const withAlias = originalClientId && originalClientId !== clientId
+      ? sql`json_insert(${inputIds}, '$[#]', ${originalClientId})` : inputIds;
+    return sql`json_set(${snapshot}, '$.taskAcceptedInputIds', ${withAlias})`;
   };
 
-  const acceptExecution = async (row: DelegationRow, clientId?: string): Promise<void> => {
+  const acceptExecution = async (row: DelegationRow, clientId?: string, originalClientId = clientId): Promise<void> => {
     if (!deps.readSessionExecution) return;
     const [accepted] = await getDbClient().drizzle.update(botDelegations).set({
-      permissionSnapshotJson: executionSnapshot(row, clientId),
+      permissionSnapshotJson: executionSnapshot(row, clientId, undefined, originalClientId),
     }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
       inArray(botDelegations.status, ['queued', 'running', 'waiting'])))
       .returning({ id: botDelegations.id });
     if (!accepted) throw new Error('Delegated execution receipt was not committed');
   };
 
-  // Message persistence precedes native acceptance. A recovery prompt needs its
-  // own receipt; the interrupted turn's receipt cannot prove it was delivered.
-  const dispatchRecoveryInput = async (
+  const readAcceptedInputIds = (row: DelegationRow): string[] => {
+    const ids = parseRecord(row.permissionSnapshotJson).taskAcceptedInputIds;
+    return Array.isArray(ids) ? [...new Set(ids.filter((id): id is string => typeof id === 'string'))] : [];
+  };
+
+  // Message persistence precedes native acceptance. Each task input needs its
+  // own receipt; another turn's receipt cannot prove it was delivered.
+  const dispatchTrackedInput = async (
     row: DelegationRow,
-    input: { clientId: string; message: string; persistedContent?: string },
+    input: { clientId: string; message: string; persistedContent?: string; dispatcherSessionId?: string },
     retryAttempt = false,
-  ): Promise<{ result: DispatchResult; row: DelegationRow }> => {
+  ): Promise<{ result: DispatchResult; row: DelegationRow; clientId: string }> => {
     const db = getDbClient().drizzle;
     const retry = parseRecord(row.permissionSnapshotJson).taskRecoveryRetry as
       { runSequence: number; originalClientId: string; clientId: string } | undefined;
@@ -493,7 +503,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const result = await deps.dispatch({ ...input, clientId, targetSessionId: row.childSessionId!,
       onAccepted: async persisted => {
         if (persisted) { replayed = true; return; }
-        await acceptExecution(row, clientId);
+        await acceptExecution(row, clientId, input.clientId);
         acceptedThisAttempt = true;
       },
     });
@@ -501,24 +511,28 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       // Native acceptance may still be cancelled before vendor dispatch. Only
       // undo this input's receipt; never replace a later run or another input.
       const previous = parseRecord(row.permissionSnapshotJson).taskExecution;
+      const restored = previous
+        ? sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskExecution', json(${JSON.stringify(previous)}))`
+        : sql`json_remove(${botDelegations.permissionSnapshotJson}, '$.taskExecution')`;
       await db.update(botDelegations).set({
-        permissionSnapshotJson: previous
-          ? sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskExecution', json(${JSON.stringify(previous)}))`
-          : sql`json_remove(${botDelegations.permissionSnapshotJson}, '$.taskExecution')`,
+        permissionSnapshotJson: sql`json_set(${restored}, '$.taskAcceptedInputIds',
+          (SELECT json_group_array(value) FROM json_each(COALESCE(json_extract(${botDelegations.permissionSnapshotJson}, '$.taskAcceptedInputIds'), '[]'))
+            WHERE value NOT IN (${clientId}, ${input.clientId})))`,
       }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
         sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.clientId') = ${clientId}`,
         inArray(botDelegations.status, [...ACTIVE_DELEGATION_STATUSES])));
     }
     const [current] = await db.select().from(botDelegations).where(eq(botDelegations.id, row.id)).limit(1);
     if (!current || current.runSequence !== row.runSequence || !isActiveDelegation(current.status as DelegationStatus)) {
-      return { row, result: { ok: false, errorCode: 'TASK_CHANGED', message: 'Task changed during recovery' } };
+      return { clientId, row, result: { ok: false, errorCode: 'TASK_CHANGED', message: 'Task changed during recovery' } };
     }
-    if (!result.ok || !replayed) return { result, row: current };
+    if (!result.ok || !replayed) return { clientId, result, row: current };
     const receipt = parseRecord(current.permissionSnapshotJson).taskExecution as
       (DelegationExecutionReceipt & { runSequence: number; clientId?: string }) | undefined;
-    if (receipt?.runSequence === row.runSequence && receipt.clientId === clientId) return { result, row: current };
+    if (readAcceptedInputIds(current).includes(input.clientId) || readAcceptedInputIds(current).includes(clientId)
+      || (receipt?.runSequence === row.runSequence && receipt.clientId === clientId)) return { clientId, result, row: current };
     if (current.permissionSnapshotJson !== row.permissionSnapshotJson) {
-      return { row: current, result: { ok: false, errorCode: 'TASK_CHANGED', message: 'Recovery state changed before retry' } };
+      return { clientId, row: current, result: { ok: false, errorCode: 'TASK_CHANGED', message: 'Recovery state changed before retry' } };
     }
     const next = { runSequence: row.runSequence, originalClientId: input.clientId, clientId: `${input.clientId}:retry:${createId()}` };
     const [saved] = await db.update(botDelegations).set({
@@ -526,11 +540,11 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
       eq(botDelegations.permissionSnapshotJson, current.permissionSnapshotJson),
       inArray(botDelegations.status, [...ACTIVE_DELEGATION_STATUSES]))).returning();
-    if (!saved) return { row: current, result: { ok: false, errorCode: 'TASK_CHANGED', message: 'Task changed before recovery retry' } };
-    if (retryAttempt) return { row: saved, result: { ok: false, errorCode: 'TEMPORARILY_UNAVAILABLE', message: 'Recovery input has not reached native acceptance' } };
+    if (!saved) return { clientId, row: current, result: { ok: false, errorCode: 'TASK_CHANGED', message: 'Task changed before recovery retry' } };
+    if (retryAttempt) return { clientId, row: saved, result: { ok: false, errorCode: 'TEMPORARILY_UNAVAILABLE', message: 'Recovery input has not reached native acceptance' } };
     const validation = await validateDispatchPlan(saved);
-    if (!validation.ok) return { row: saved, result: validation };
-    return dispatchRecoveryInput(saved, input, true);
+    if (!validation.ok) return { clientId, row: saved, result: validation };
+    return dispatchTrackedInput(saved, input, true);
   };
 
   const cleanupChildSession = async (
@@ -1489,7 +1503,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         const [accepted] = await db
           .update(botDelegations)
           .set({ status: 'running', acceptedAt, lastError: null, updatedAt: acceptedAt,
-            permissionSnapshotJson: executionSnapshot(row) })
+            permissionSnapshotJson: executionSnapshot(row, clientId) })
           .where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence), eq(botDelegations.status, 'queued')))
           .returning({
             id: botDelegations.id,
@@ -1730,7 +1744,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       `Task ID: ${row.id}`,
       `Objective:\n${row.objective}`,
     ].join('\n\n');
-    const recovered = await dispatchRecoveryInput(row, {
+    const recovered = await dispatchTrackedInput(row, {
       message,
       persistedContent: row.objective,
       clientId,
@@ -1747,7 +1761,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         .update(botDelegations)
         .set({
           status: 'running',
-          permissionSnapshotJson: sql`json_patch(${effectiveSnapshot}, json_object('taskExecution', json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution'), 'taskRecoveryRetry', json_extract(${botDelegations.permissionSnapshotJson}, '$.taskRecoveryRetry')))`,
+          permissionSnapshotJson: sql`json_patch(${effectiveSnapshot}, json_object('taskExecution', json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution'), 'taskRecoveryRetry', json_extract(${botDelegations.permissionSnapshotJson}, '$.taskRecoveryRetry'), 'taskAcceptedInputIds', json_extract(${botDelegations.permissionSnapshotJson}, '$.taskAcceptedInputIds')))`,
           pendingInteractionJson: null,
           lastError: null,
           updatedAt: resumedAt,
@@ -2475,14 +2489,13 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const token = (idempotencyToken ?? createId()).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
       || createId();
     const requesterName = await requesterDisplayName(caller.botId);
-    const dispatched = await deps.dispatch({
-      targetSessionId: row.childSessionId,
+    const recovered = await dispatchTrackedInput(row, {
       dispatcherSessionId: callerSessionId,
       message: [`[来自 ${requesterName} 的补充]`, trimmed].join('\n\n'),
       persistedContent: [`[来自 ${requesterName} 的补充]`, trimmed].join('\n\n'),
-      clientId: BOT_DELEGATION_CLIENT_ID.interjection(delegationId, token),
-      onAccepted: replayed => replayed ? undefined : acceptExecution(row),
+      clientId: BOT_DELEGATION_CLIENT_ID.interjection(delegationId, row.runSequence > 1 ? `${row.runSequence}:${token}` : token),
     });
+    const dispatched = recovered.result;
     if (!dispatched?.ok) {
       return {
         ok: false,
@@ -2518,7 +2531,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       delegationId,
       childSessionId: row.childSessionId,
       queued: dispatched.wakeKind === 'queued',
-      queuedMessageId: BOT_DELEGATION_CLIENT_ID.interjection(delegationId, token),
+      queuedMessageId: recovered.clientId,
     };
   };
 
@@ -2625,7 +2638,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         parentSessionId: callerSessionId,
         childSessionId,
         objective: continuationObjective,
-        permissionSnapshotJson: JSON.stringify(nextPlan),
+        permissionSnapshotJson: JSON.stringify({ ...nextPlan, taskAcceptedInputIds: [] }),
         targetBotId: null,
         targetProfileVersion: null,
         session: {
@@ -2678,7 +2691,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         parentSessionId: callerSessionId,
         childSessionId,
         objective: continuationObjective,
-        permissionSnapshotJson: JSON.stringify(nextPlan),
+        permissionSnapshotJson: JSON.stringify({ ...nextPlan, taskAcceptedInputIds: [] }),
         createdAt: reopenedAt,
       };
       if (reopened.previousParentSessionId !== callerSessionId) {
@@ -3023,9 +3036,13 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         const dispatched = await attemptDispatch(row.id, 0, undefined, true);
         if (!dispatched.ok) throw new Error('Initial task dispatch has not been accepted');
         status = dispatched.status === 'running' ? 'running' : 'queued';
+        const [acceptedRow] = await getDbClient().drizzle.select().from(botDelegations)
+          .where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence))).limit(1);
+        if (!acceptedRow || readTaskPause(acceptedRow)?.token !== pause.token) throw new Error('Task changed during initial acceptance');
+        row = acceptedRow;
       }
       if (!pending && (text || (pause.previousStatus !== 'queued' && !hasPendingDelegationInput(row)))) {
-        const recovered = await dispatchRecoveryInput(row, {
+        const recovered = await dispatchTrackedInput(row, {
           message: text?.trim() || 'Continue from the existing task history after the requested pause. Check what has already completed; do not replay the original request or repeat completed actions.',
           clientId: `bot-delegation-unpause:${row.id}:${pause.token}`,
         });
@@ -3299,7 +3316,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         : '');
     const resultSummary = recoveredText.slice(0, MAX_RESULT_CHARS) || null;
     const artifacts = params.outcome === 'done' && deps.collectArtifacts
-      ? (await deps.collectArtifacts(params.childSessionId).catch((error) => {
+      ? (await deps.collectArtifacts(params.childSessionId, readAcceptedInputIds(row)).catch((error) => {
           log.warn('failed to collect Session task artifacts', {
             delegationId: row.id,
             childSessionId: params.childSessionId,
@@ -3505,7 +3522,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
           sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution.generation') = ${boundary.execution.generation}`)
         : sql`json_extract(${botDelegations.permissionSnapshotJson}, '$.taskExecution') IS NULL`;
       const [accepted] = await db.update(botDelegations).set({
-        permissionSnapshotJson: sql`json_set(${botDelegations.permissionSnapshotJson}, '$.taskExecution', json(${JSON.stringify({ ...execution, runSequence: row.runSequence })}))`,
+        permissionSnapshotJson: executionSnapshot(row, clientId, execution),
       }).where(and(eq(botDelegations.id, row.id), eq(botDelegations.runSequence, row.runSequence),
         receiptGuard,
         inArray(botDelegations.status, ['running', 'waiting'])))

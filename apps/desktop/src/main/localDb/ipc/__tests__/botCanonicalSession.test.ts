@@ -4151,6 +4151,52 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { after.dispose(); }
   });
 
+  it('retries a rejected supplement without replacing its previous execution receipt', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    let reject = false;
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution,
+      rejectAfterNativeAcceptance: () => reject });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
+      if (!task.ok) throw new Error('missing task');
+      const input = { kind: 'message' as const, text: 'Add a conclusion.', idempotencyKey: 'rejected-supplement' };
+      execution = { instanceId: 'native', generation: 2 };
+      reject = true;
+      expect(await runtime.delegation.messageSessionTask('session-1', task.delegationId, input)).toMatchObject({ ok: false });
+      const saved = JSON.parse(h.sqlite!.prepare('SELECT permission_snapshot_json FROM bot_delegations WHERE id = ?').pluck().get(task.delegationId) as string);
+      expect(saved.taskExecution).toMatchObject({ instanceId: 'native', generation: 1 });
+      reject = false;
+      expect(await runtime.delegation.messageSessionTask('session-1', task.delegationId, input)).toMatchObject({ ok: true });
+      expect(runtime.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(2);
+      // A later accepted supplement cannot erase the first one's idempotency receipt.
+      execution = { instanceId: 'native', generation: 3 };
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { ...input, idempotencyKey: 'later-supplement' });
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, input);
+      expect(runtime.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(3);
+    } finally { runtime.dispose(); }
+  });
+
+  it('collects artifacts using only inputs accepted in the reopened run', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    const collectArtifacts = vi.fn(async () => []);
+    const runtime = createDelegationRuntime({ readSessionExecution: () => execution, collectArtifacts });
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Initial work.' });
+      if (!task.ok) throw new Error('missing task');
+      const firstId = runtime.dispatch.mock.calls.find(([p]) => p.targetSessionId === task.childSessionId)![0].clientId!;
+      await runtime.settleChild(task.childSessionId, 'First result.', execution);
+      expect(collectArtifacts).toHaveBeenLastCalledWith(task.childSessionId, [firstId]);
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Continue.' });
+      const nextId = runtime.dispatch.mock.calls.filter(([p]) => p.targetSessionId === task.childSessionId).at(-1)![0].clientId!;
+      await runtime.settleChild(task.childSessionId, 'Next result.', execution);
+      expect(nextId).not.toBe(firstId);
+      expect(collectArtifacts).toHaveBeenLastCalledWith(task.childSessionId, [nextId]);
+    } finally { runtime.dispose(); }
+  });
+
   it('does not rebind an idempotent supplement replay to a later direct turn', async () => {
     await seedPair();
     let execution = { instanceId: 'native', generation: 1 };
@@ -4198,15 +4244,15 @@ describe('Bot Session task end-to-end runtime', () => {
       expect(runtime.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue.map(item => item.clientId))
         .toContain(`bot-delegation-start:${task.delegationId}:2`);
       const read = () => h.sqlite!.prepare("SELECT status, json_extract(permission_snapshot_json, '$.taskExecution') AS receipt FROM bot_delegations WHERE id = ?").get(task.delegationId);
-      expect(read()).toEqual({ status: 'queued', receipt: JSON.stringify({ ...initialReceipt, runSequence: 1 }) });
+      expect(read()).toEqual({ status: 'queued', receipt: JSON.stringify({ ...initialReceipt, runSequence: 1, clientId: `bot-delegation-start:${task.delegationId}` }) });
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution: directReceipt, resultText: 'Unrelated direct result.',
         pendingInputClientIds: [`bot-delegation-start:${task.delegationId}:2`], hadPendingInputAtTerminal: true });
-      expect(read()).toEqual({ status: 'queued', receipt: JSON.stringify({ ...initialReceipt, runSequence: 1 }) });
+      expect(read()).toEqual({ status: 'queued', receipt: JSON.stringify({ ...initialReceipt, runSequence: 1, clientId: `bot-delegation-start:${task.delegationId}` }) });
       if (cold) receipts.delete(task.childSessionId);
       runtime.coordinator!.setExecutionPaused(task.childSessionId, false);
       runtime.coordinator!.resume(task.childSessionId);
       await vi.waitFor(() => expect(runtime.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(3));
-      expect(read()).toEqual({ status: 'running', receipt: JSON.stringify({ ...receipts.get(task.childSessionId), runSequence: 2 }) });
+      expect(read()).toEqual({ status: 'running', receipt: JSON.stringify({ ...receipts.get(task.childSessionId), runSequence: 2, clientId: `bot-delegation-start:${task.delegationId}:2` }) });
       await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution: directReceipt, resultText: 'Late direct result.' });
       expect((read() as { status: string }).status).toBe('running');
       await runtime.settleChild(task.childSessionId, 'Continuation result.', receipts.get(task.childSessionId));
