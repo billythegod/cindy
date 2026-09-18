@@ -122,7 +122,7 @@ export function createWorkingDirectoryRecovery(io: {
     isFallback(sessionId: string, workingDir: string): boolean {
       return !!entryFor(sessionId, workingDir)?.fallback;
     },
-    async recover(sessionId: string, workingDir: string, similarPath?: string | null | (() => Promise<string | null>), candidates: { id: string; workingDir: string }[] = [], mode: 'ordinary' | 'unrestored-worktree' = 'ordinary'): Promise<boolean> {
+    async recover(sessionId: string, workingDir: string, similarPath?: string | null | (() => Promise<string | null>), candidates: { id: string; workingDir: string }[] = [], mode: 'ordinary' | 'unrestored-worktree' = 'ordinary', options?: { existingFallbackOnly?: boolean }): Promise<boolean> {
       entryFor(sessionId, workingDir);
       const sessions = new Map(candidates.map((session) => [session.id, session.workingDir]));
       sessions.set(sessionId, workingDir);
@@ -205,6 +205,9 @@ export function createWorkingDirectoryRecovery(io: {
         stage = 'fallback-lookup';
         const selectedFallback = await io.findFallback?.(sessionId, workingDir);
         if (selectedFallback) return await useFallback(selectedFallback);
+        // Preflight can restore a saved selection before touching the original
+        // path, without allocating storage or bypassing the caller's DB repair.
+        if (options?.existingFallbackOnly) return pending.get(sessionId) === own;
         stage = 'mount-check';
         if (own && allocateFallback && await mountUnavailable(workingDir, own, (details) => {
           log?.warn('workdir recovery unavailable', { ...context, ...details });

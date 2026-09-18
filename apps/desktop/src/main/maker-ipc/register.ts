@@ -18117,7 +18117,7 @@ async function materializeCodexImage(
  */
 async function checkWorkDirExists(
   sessionId: string,
-  workingDir: string | undefined | null,
+  requestedWorkingDir: string | undefined | null,
   agentKind: AgentKind | undefined,
   remoteHostId?: string | null,
   opts?: { suppressMissingBroadcast?: boolean },
@@ -18127,10 +18127,10 @@ async function checkWorkDirExists(
   // 场景, 远端走自己的 probe (StartRemoteSessionPanel 创建前 stat-remote-path,
   // 或者 agent 真跑起来时由远端 codex 自己报 ENOENT)。这里直接放行。
   if (remoteHostId) return true;
-  if (!workingDir?.trim()) return true;
-  const cindyMakeWorkspace = isCindyMakeManagedWorktreePath(app.getPath('userData'), workingDir);
+  if (!requestedWorkingDir?.trim()) return true;
+  const cindyMakeWorkspace = isCindyMakeManagedWorktreePath(app.getPath('userData'), requestedWorkingDir);
   if (cindyMakeWorkspace) workingDirectoryRecovery.discard(sessionId);
-  workingDir = workingDirectoryRecovery.resolve(sessionId, workingDir);
+  let workingDir = workingDirectoryRecovery.resolve(sessionId, requestedWorkingDir);
   const source: AgentKind = agentKind === 'codex' || agentKind === 'pi' ? agentKind : 'claude-code';
   // suppressMissingBroadcast: 调用方(SEND 事务)手里还有 DB 权威值可兜底时,
   // 首检失败只记日志不广播错误横幅——兜底成功的话用户不该看到假错误。
@@ -18143,6 +18143,17 @@ async function checkWorkDirExists(
   };
   try {
     if (cindyMakeWorkspace) await assertCindyMakeWorkspace(app.getPath('userData'), workingDir);
+    // Resume the previously selected ordinary workspace before probing a path
+    // that may now be inaccessible or a file. Do not allocate a new fallback here.
+    if (!cindyMakeWorkspace &&
+      !workingDirectoryRecovery.isFallback(sessionId, workingDir) &&
+      getManagedWorktreeBasePath(path.resolve(workingDir).replace(/\\/g, '/')) === null) {
+      if (!await workingDirectoryRecovery.recover(sessionId, workingDir, undefined, [], 'ordinary', { existingFallbackOnly: true })) {
+        workdirLog.warn('workdir preflight rejected', { ...diagnosticContext, reason: 'saved-recovery-lookup-failed' });
+        return false;
+      }
+      workingDir = workingDirectoryRecovery.resolve(sessionId, workingDir);
+    }
     const stat = await statWorkingDirectory(workingDir);
     if (!stat.isDirectory()) {
       workdirLog.warn('workdir preflight rejected', { ...diagnosticContext, reason: 'not-directory' });
