@@ -1,6 +1,6 @@
 # Remote desktop native helpers
 
-## Windows capture and current-account password setup
+## Windows capture
 
 On a DWM-composited desktop, capture uses SRCCOPY without CAPTUREBLT. The latter
 can cause physical cursor hide/redraw flicker during rapid GDI capture (see
@@ -10,12 +10,9 @@ small owned no-activate layered window and verifies its known pixel remains in
 the capture, without saving desktop content. Driver-specific cursor appearance
 still requires real remote-session verification.
 
-Automatic-unlock setup resolves the current Windows account with GetUserNameExW,
-pre-fills a native CredUI password dialog and locks the username with
-CREDUI_FLAGS_KEEP_USERNAME. The dialog cannot persist credentials itself; only
-the existing SID-verified Credential Manager path may save the password. It
-never requests a username from the phone or exposes a password to JavaScript.
-
+Cindy does not save a Windows password or register a credential provider.
+Unlocking a locked session uses the existing remote keyboard on the Windows
+logon desktop.
 
 ## Windows input desktop access
 

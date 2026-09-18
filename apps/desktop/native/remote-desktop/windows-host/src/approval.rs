@@ -3,7 +3,7 @@
 //! code and the originally approved Windows user, including after service restart.
 use crate::{
     installation::{self, Installation},
-    security,
+    legacy_cleanup, security,
     win::*,
 };
 use std::{
@@ -285,6 +285,10 @@ pub fn install(pid: u32) -> Result<()> {
         &approval.encode(),
     )?;
     crate::service::install()?;
+    // Best-effort removal of credentials/provider entries left by the
+    // withdrawn automatic-unlock experiment. Failure must not undo a
+    // successful service install.
+    let _ = legacy_cleanup::cleanup_current_installation();
     if let Some((_, _, _, captured)) = snapshot.as_mut() {
         captured.commit();
     }
@@ -294,10 +298,15 @@ pub fn install(pid: u32) -> Result<()> {
 pub fn remove() -> Result<()> {
     let installation = Installation::current()?;
     crate::service::uninstall()?;
+    // Unelevated NSIS can still delete this user's leftover GENERIC vault
+    // entries. Provider HKLM keys wait for the elevated path below.
+    let _ = legacy_cleanup::remove_saved_credentials();
     if !installation.directory.exists() {
+        let _ = legacy_cleanup::remove_provider_registration(&installation.name);
         return Ok(());
     }
     security::require_elevated()?;
+    let _ = legacy_cleanup::remove_provider_registration(&installation.name);
     let ancestors = security::pin_ancestors(&installation.directory)?;
     security::check_paths(vec![installation.directory.clone()])?;
     let application = Approval::read().ok().map(|approval| approval.application);

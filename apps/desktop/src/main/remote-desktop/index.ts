@@ -220,8 +220,10 @@ async function offer(
     let source: DesktopCapturerSource | null = null;
     let nativeAvailable = process.platform === 'darwin';
     {
-      nativeAvailable ||=
-        process.platform === 'win32' && (await readWindowsDesktopSupport()) === 'ready';
+      if (process.platform === 'win32') {
+        const windowsSupport = await readWindowsDesktopSupport();
+        nativeAvailable ||= windowsSupport === 'ready' || windowsSupport === 'updateRequired';
+      }
       try {
         const available = await sources(
           false,

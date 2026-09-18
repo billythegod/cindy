@@ -645,6 +645,27 @@ it.each(['darwin', 'win32'])(
   },
 );
 
+it('keeps Windows native capture when the authorized service needs an update', async () => {
+  vi.stubGlobal('process', { ...process, platform: 'win32' });
+  const { readWindowsDesktopSupport } = await import('../windowsHost');
+  vi.mocked(readWindowsDesktopSupport).mockResolvedValue('updateRequired');
+  expect((await h.deps.capabilities()).cursorOverlay).toBe(true);
+  const pending = h.deps.offer(
+    { lease: h.lease, display: { id: '1' } },
+    'sdp',
+    undefined,
+    true,
+    'attempt',
+  );
+  h.handlers.get(DESKTOP_LOCAL.REGISTER)(event());
+  await flush();
+  const command = h.owner.send.mock.calls[0][1];
+  expect(command.cursorOverlay).toBe(true);
+  expect(command.nativeCapture).toBe(true);
+  h.handlers.get(DESKTOP_LOCAL.REPLY)(event(), command.id, 'answer');
+  await pending;
+});
+
 it('does not advertise or select Windows overlays without a ready native service', async () => {
   vi.stubGlobal('process', { ...process, platform: 'win32' });
   const { readWindowsDesktopSupport } = await import('../windowsHost');

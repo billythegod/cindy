@@ -5,6 +5,7 @@ mod cursor;
 #[cfg(feature = "development")]
 mod development;
 mod installation;
+mod legacy_cleanup;
 mod pipe;
 mod security;
 mod service;
