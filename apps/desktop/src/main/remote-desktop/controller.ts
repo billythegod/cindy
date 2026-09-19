@@ -658,7 +658,16 @@ export class RemoteDesktopController {
           active.controlling = false;
           this.controlGeneration++;
           this.deps.changed();
-          return { lease: active.lease, display, controlling: false };
+          return {
+            lease: active.lease,
+            display,
+            controlling: false,
+            ...(request.op === 'viewerDisplay'
+              ? {
+                  viewerDisplayRequest: { width: request.width, height: request.height },
+                }
+              : {}),
+          };
         } catch (error) {
           if (this.active === active) this.stop(peer);
           throw error;
