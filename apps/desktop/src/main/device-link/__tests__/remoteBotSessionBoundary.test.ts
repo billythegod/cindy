@@ -86,3 +86,34 @@ it.each(['get', 'attach', 'detach'])('checks normalized task IDs for tag %s', as
     ),
   ).rejects.toThrow('[NOT_FOUND]');
 });
+
+it.each([
+  undefined, [], [''], ['   '], [123], ['x'.repeat(129)],
+  Array.from({ length: 101 }, () => 'same'),
+  Array.from({ length: 10000 }, (_, i) => `session-${i}`),
+])('rejects malformed tag targets before any authorization lookup (%#)', async (sessionIds) => {
+  const lookup = vi.fn(async () => 'ordinary' as const);
+  setRemoteBotSessionLookup(lookup);
+  await expect(assertRemoteBotInvocationAllowed(
+    [{ action: 'get', sessionIds }], 'local-db:task-tags:execute',
+  )).rejects.toThrow('[INVALID_PARAMS]');
+  expect(lookup).not.toHaveBeenCalled();
+});
+
+it('bounds normalized tag authorization and ignores unrelated object references', async () => {
+  const lookup = vi.fn(async () => 'ordinary' as const);
+  setRemoteBotSessionLookup(lookup);
+  const sessionIds = Array.from({ length: 100 }, (_, i) => ` ${String(i).padStart(128, 'x')} `);
+  await assertRemoteBotInvocationAllowed(
+    [{ action: 'get', sessionIds, sessionId: 'unused', session: { id: 'unused' } }],
+    'local-db:task-tags:execute',
+  );
+  expect(lookup).toHaveBeenCalledTimes(100);
+  expect(lookup).toHaveBeenNthCalledWith(1, sessionIds[0].trim(), 'session');
+  lookup.mockClear();
+  await assertRemoteBotInvocationAllowed(
+    [{ action: 'attach', sessionIds: [' task ', 'task'], tagIds: ['label'] }],
+    'local-db:task-tags:execute',
+  );
+  expect(lookup).toHaveBeenCalledTimes(1);
+});

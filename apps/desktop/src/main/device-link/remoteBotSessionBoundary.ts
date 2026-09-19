@@ -24,6 +24,27 @@ function sessionIds(value: unknown): string[] {
 
 /** Resolve channel-specific Bot IDs before checking generic Session references. */
 export async function assertRemoteBotInvocationAllowed(args: unknown[], channel = ''): Promise<void> {
+  if (channel === 'local-db:task-tags:execute') {
+    const request = record(args[0]);
+    const targets = request?.sessionIds;
+    // Match taskTagsTx's ids(..., 100) / text(..., 128) before any DB lookup.
+    // Only sessionIds is consumed by this channel; unrelated object fields must
+    // not manufacture additional authorization queries.
+    if (!request || args.length !== 1 || (
+      targets !== undefined && (
+        !Array.isArray(targets) || !targets.length || targets.length > 100 ||
+        targets.some((id) => typeof id !== 'string' || !id.trim() || id.trim().length > 128)
+      )
+    ) || (['get', 'attach', 'detach'].includes(String(request.action)) && targets === undefined)) {
+      throw new Error('[INVALID_PARAMS] Invalid task tag session IDs');
+    }
+    if (lookup && Array.isArray(targets)) {
+      for (const id of new Set(targets.map((id: string) => id.trim()))) {
+        if (await lookup(id, 'session') === 'hidden') throw new Error('[NOT_FOUND] Session does not exist');
+      }
+    }
+    return;
+  }
   if (!lookup) return;
   if (channel === 'maker:bot-direct-message-thread:get') {
     // The first argument is an opaque thread ID, not a Session. The local service
@@ -39,11 +60,8 @@ export async function assertRemoteBotInvocationAllowed(args: unknown[], channel 
     ...(index === 0 && typeof arg === 'string' ? [arg] : []), ...sessionIds(arg),
   ]));
   for (const id of ids) {
-    // Tag transactions trim IDs before resolving them; authorization must inspect
-    // that same identity rather than treating whitespace as a missing task.
-    const targetId = channel === 'local-db:task-tags:execute' ? id.trim() : id;
     if (
-      (await lookup(targetId, channel.startsWith('local-db:bots:') ? 'bot' : 'session')) === 'hidden') throw new Error('[NOT_FOUND] Session does not exist');
+      (await lookup(id, channel.startsWith('local-db:bots:') ? 'bot' : 'session')) === 'hidden') throw new Error('[NOT_FOUND] Session does not exist');
   }
   for (const arg of args) {
     const row = record(arg);
