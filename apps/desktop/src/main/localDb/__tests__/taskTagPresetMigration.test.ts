@@ -70,11 +70,22 @@ it('rolls back schema and catalog if first preset initialization fails, then ret
     { seq: 111 },
     { seq: 112 },
   ]);
-  expect(db.prepare('SELECT id FROM task_tags ORDER BY sort_order').all()).toEqual(
-    ['important', 'follow-up', 'work', 'life', 'ideas', 'reference'].map((id) => ({
+  expect(db.prepare('SELECT id FROM task_tags ORDER BY sort_order').all()).toEqual([
+    ...['red', 'orange', 'yellow', 'green', 'blue', 'purple'].map((id) => ({
+      id: `default:${id}`,
+    })),
+    ...['important', 'follow-up', 'work', 'life', 'ideas', 'reference'].map((id) => ({
       id: `preset:${id}`,
     })),
+  ]);
+  expect(
+    db.prepare('SELECT sort_order, favorite_order FROM task_tags ORDER BY sort_order').all(),
+  ).toEqual(
+    Array.from({ length: 12 }, (_, index) => ({ sort_order: index, favorite_order: index })),
   );
+  db.prepare("DELETE FROM task_tags WHERE id='default:red'").run();
+  await runMigrations(db, path.join(dir, 'test.db'));
+  expect(db.prepare('SELECT count(*) AS n FROM task_tags').get()).toEqual({ n: 11 });
 });
 it('preserves an existing tag catalog when upgrading from the tag schema', async () => {
   runMigrationReplay(db, { drizzleDir: path.join(dir, 'drizzle'), currentVersion: 109 });

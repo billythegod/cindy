@@ -116,6 +116,7 @@ describeMigrationReplay('migration replay', () => {
       expect(
         db.prepare("SELECT count(*) FROM task_tags WHERE id LIKE 'preset:%'").pluck().get(),
       ).toBe(6);
+      expect(db.prepare('SELECT count(*) FROM task_tags').pluck().get()).toBe(12);
     } finally {
       cleanup();
     }

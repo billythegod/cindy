@@ -15,7 +15,7 @@ export function initializeTaskTagPresets(db: Database.Database): void {
       sort_order: number | null;
     }>;
     const originalColors = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray'];
-    // Only replace the exact untouched seed from migration 0110. Never replace
+    // Only adjust the exact untouched seed from migration 0110. Never replace
     // a user directory, even when it happens to contain seven labels.
     if (
       rows.length !== originalColors.length ||
@@ -34,10 +34,14 @@ export function initializeTaskTagPresets(db: Database.Database): void {
     )
       return;
     if (db.prepare('SELECT 1 FROM session_task_tags LIMIT 1').get()) return;
-    db.prepare('DELETE FROM task_tags').run();
+    // Keep the first six color labels, then append the six semantic labels.
+    // Gray remains available as a color and is used by the Reference preset.
+    db.prepare("DELETE FROM task_tags WHERE id='default:gray'").run();
     const insert = db.prepare(
       'INSERT INTO task_tags(id,name,color,favorite_order,sort_order) VALUES(?,?,?,?,?)',
     );
-    TASK_TAG_PRESETS.forEach((tag, index) => insert.run(tag.id, tag.name, tag.color, index, index));
+    TASK_TAG_PRESETS.forEach((tag, index) =>
+      insert.run(tag.id, tag.name, tag.color, index + 6, index + 6),
+    );
   })();
 }
