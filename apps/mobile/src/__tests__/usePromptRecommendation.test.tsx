@@ -33,28 +33,30 @@ it('historical navigation only requests a cached host result', async () => {
   expect(value.prompt).toBe('Suggested next step');
 });
 
-it('defers prediction for an empty queue edit and hides retained results until it ends', async () => {
-  await render({ queueEditing: true }); await advance();
+it.each(['queueEditing', 'hasAttachments', 'voiceIsBusy'] as const)(
+  'defers prediction and hides retained results while %s is active', async (blocker) => {
+  await render({ [blocker]: true }); await advance();
   expect(request).not.toHaveBeenCalled();
   expect(value.prompt).toBeNull();
-  await render({ queueEditing: false }); await advance();
+  await render({ [blocker]: false }); await advance();
   expect(request).toHaveBeenCalledTimes(1);
   expect(value.prompt).toBe('Suggested next step');
-  await render({ queueEditing: true }); await advance();
+  await render({ [blocker]: true }); await advance();
   expect(value.prompt).toBeNull();
-  await render({ queueEditing: false }); await advance();
+  await render({ [blocker]: false }); await advance();
   expect(value.prompt).toBe('Suggested next step');
   expect(request).toHaveBeenCalledTimes(1);
 });
 
-it('hides a prediction that resolves after queue editing begins', async () => {
+it.each(['queueEditing', 'hasAttachments', 'voiceIsBusy'] as const)(
+  'hides a prediction that resolves after %s begins', async (blocker) => {
   let resolve!: (result: { prompt: string }) => void;
   request.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
   await render(); await advance();
-  await render({ queueEditing: true });
+  await render({ [blocker]: true });
   await act(async () => resolve({ prompt: 'Late suggestion' }));
   expect(value.prompt).toBeNull();
-  await render({ queueEditing: false });
+  await render({ [blocker]: false });
   expect(value.prompt).toBe('Late suggestion');
   expect(request).toHaveBeenCalledTimes(1);
 });
@@ -250,6 +252,7 @@ it('retains the same recommendation through typing, clearing and attachment chan
   await act(async () => composerSource.setDocument(textComposerDocument('My draft')));
   expect(value.prompt).toBe('Suggested next step'); // Presentation owns temporary hiding.
   await render({ hasAttachments: true });
+  expect(value.prompt).toBeNull();
   await render({ hasAttachments: false });
   await act(async () => composerSource.setDocument(textComposerDocument('')));
   await advance();
