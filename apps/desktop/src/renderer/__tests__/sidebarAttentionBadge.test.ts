@@ -20,6 +20,8 @@ import {
   resolveSidebarRightStatus,
 } from '../features/cc-agent/sidebar/sidebarRightStatus';
 import { SessionStatusIcon } from '../features/cc-agent/sidebar/SessionStatusIcon';
+import { AttentionDot } from '@/components/sidebar/AttentionDot';
+import { SidebarRightStatusIndicator } from '../features/cc-agent/sidebar/SidebarRightStatusIndicator';
 
 const sidebarState = vi.hoisted(() => ({
   hasDraft: false,
@@ -69,17 +71,26 @@ function attentionDot(container: HTMLElement): Element | undefined {
 }
 
 describe('sidebar right status priority', () => {
-  it('keeps error/awaiting above running and running above unread-done', () => {
+  it('renders no error dot in either sidebar indicator', () => {
+    for (const isActive of [false, true]) {
+      const view = render(createElement(SidebarRightStatusIndicator, { kind: 'error', isActive }));
+      expect(view.container.firstChild).toBeNull();
+      view.unmount();
+    }
+    const view = render(createElement(AttentionDot, { tone: 'error' }));
+    expect(view.container.firstChild).toBeNull();
+  });
+  it('hides errors while preserving running, awaiting and unread results', () => {
     const resolve = (input: Parameters<typeof projectSidebarSessionActivity>[0]) =>
       resolveSidebarRightStatus(projectSidebarSessionActivity(input));
-    // error(chat 侧错误终止)压过 running 与其它一切
+    // 错误不再显示红点；当前运行仍显示 spinner
     expect(resolve({
       sessionId: 'session-1',
       attentionKind: 'error',
       isUrgentFromContext: false,
       isRunning: true,
       hasAttentionNotification: true,
-    })).toBe('error');
+    })).toBe('running');
     const runningWithStaleError = projectSidebarSessionActivity({
       sessionId: 'session-1',
       attentionKind: 'error',
@@ -92,7 +103,7 @@ describe('sidebar right status priority', () => {
       attention: true,
       currentTurnActive: true,
     });
-    expect(resolveSidebarRightStatus(runningWithStaleError)).toBe('error');
+    expect(resolveSidebarRightStatus(runningWithStaleError)).toBe('running');
     // device-link 镜像可以同时保留 stale error 与新一轮运行 facet；本地
     // isRunning 对远程会话恒 false，仍须让左侧 vendor mark 保持呼吸。
     const remoteRunningWithStaleError = projectSidebarSessionActivity({
@@ -112,7 +123,7 @@ describe('sidebar right status priority', () => {
       attention: true,
       currentTurnActive: true,
     });
-    expect(resolveSidebarRightStatus(remoteRunningWithStaleError)).toBe('error');
+    expect(resolveSidebarRightStatus(remoteRunningWithStaleError)).toBe('running');
     // 定时任务失败未读(attentionKind 缺失,由 urgency context 注入)同样是 error 档
     expect(resolve({
       sessionId: 'session-1',
@@ -120,7 +131,7 @@ describe('sidebar right status priority', () => {
       isUrgentFromContext: true,
       isRunning: true,
       hasAttentionNotification: true,
-    })).toBe('error');
+    })).toBe('running');
     expect(projectSidebarSessionActivity({
       sessionId: 'session-1',
       liveActivity: { phase: 'running' },
@@ -134,21 +145,21 @@ describe('sidebar right status priority', () => {
       currentTurnActive: true,
     });
     // automation failure urgency is durable outside the notification store:
-    // after restart, unread expiry or acknowledgement it must still stay red.
+    // the activity retains the error, but the sidebar does not display a red dot.
     expect(resolve({
       sessionId: 'session-1',
       attentionKind: undefined,
       isUrgentFromContext: true,
       isRunning: false,
       hasAttentionNotification: false,
-    })).toBe('error');
+    })).toBe('time');
     expect(resolve({
       sessionId: 'session-1',
       attentionKind: 'done',
       isUrgentFromContext: true,
       isRunning: false,
       hasAttentionNotification: false,
-    })).toBe('error');
+    })).toBe('time');
     // awaiting(ask-user / 权限 / 计划审阅)压过 running,但低于 error
     expect(resolve({
       sessionId: 'session-1',

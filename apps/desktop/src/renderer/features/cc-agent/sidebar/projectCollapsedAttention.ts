@@ -28,21 +28,15 @@ export interface CollapsedAttentionSummary {
   /** 折叠容器右侧状态槽要显示的档位;两者都没有则 null(回落时间文字)。 */
   tone: CollapsedAttentionTone | null;
   /**
-   * 贡献红点的子任务 id —— **未处理告警**的集合。
-   *
-   * ⚠️ 这个列表存在的理由:折叠容器一旦汇总出红点,用户必须能找到那条子任务。
-   * 项目行展开后子任务各自成行,天然可达;定时任务分组收起时子行整片不渲染,
-   * 组头此前只代表「最新一条」运行,于是「组里第 3 新的运行有未处理告警」会变成
-   * 「项目折叠头亮红点、展开却哪儿都找不到」(实测:一条被 App 重启打断、turn 从未
-   * 收尾的定时任务运行)。分组收起态据此把告警行提上来,与本函数的 tone 同源,
-   * 不可能再出现「汇总说有、列表没有」。
+   * 未处理错误的子任务 id。保留收起态下错误条目的可达性，
+   * 但不再据此显示红点或遮住其它子任务的成功未读提示。
    */
   errorSessionIds: readonly string[];
 }
 
 /**
- * 折叠容器(项目行 / 定时任务分组头)汇总子任务实际可见的红/绿状态点。等待回复(蓝)
- * 与运行态不在此处升格;若红绿同时存在,错误红点优先。
+ * 折叠容器汇总成功未读绿点，并保留错误子任务的可达性。
+ * 错误不显示红点；等待回复与运行态不在此处升格。
  *
  * 这是折叠态「什么算告警」的**唯一**判据:项目折叠头取 tone,定时任务分组头同时取
  * tone 与 errorSessionIds(见该字段注释)。要改语义就只改这里,别在消费侧另写一份。
@@ -92,7 +86,8 @@ export function resolveCollapsedAttention({
   }
 
   return {
-    tone: errorSessionIds.length > 0 ? 'error' : hasDone ? 'done' : null,
+    // Keep failed children discoverable, but no longer advertise failures with a dot.
+    tone: hasDone ? 'done' : null,
     errorSessionIds,
   };
 }
@@ -118,8 +113,7 @@ export function resolveCollapsedProjectAttentionTone(
 export { resolveCollapsedGroupRightStatus } from '@cindy/maker-shared/session-activity';
 
 /**
- * 组头点击打开哪一条。展开态仍打开最新一条;收起且整组是红时,
- * 打开贡献红点的那条,避免点红进到后来成功的巡检。
+ * 组头点击打开哪一条。展开态仍打开最新一条；收起态保留错误条目的打开入口。
  */
 export function resolveCollapsedGroupHeaderSessionId({
   collapsed,
@@ -130,7 +124,7 @@ export function resolveCollapsedGroupHeaderSessionId({
   latestSessionId: string | undefined;
   attention: Pick<CollapsedAttentionSummary, 'tone' | 'errorSessionIds'>;
 }): string | undefined {
-  if (collapsed && attention.tone === 'error' && attention.errorSessionIds[0]) {
+  if (collapsed && attention.errorSessionIds[0]) {
     return attention.errorSessionIds[0];
   }
   return latestSessionId;

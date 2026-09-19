@@ -9,7 +9,7 @@
  * 收尾的定时任务运行)既不上组头、也不成行,而项目折叠头是按**全部**子任务汇总的。
  *
  * 本测试钉住修复后的两条:
- *   1. 收起态组头按整组汇总点红(不是只看最新一条);
+ *   1. 收起态组头不再显示错误红点;
  *   2. 收起态把带告警的那条运行提上来单独成行,用户能直接点开处置。
  * 都从同一份判据(resolveCollapsedAttention)出发,所以不可能再「汇总说有、列表没有」。
  */
@@ -196,12 +196,12 @@ describe('AutomationSessionGroupItem — 收起态的未处理告警', () => {
     expect(screen.queryByLabelText('Failed — click to view')).toBeNull();
   });
 
-  it('组内非最新一条留下告警时,组头点红且该条被提上来成行', () => {
+  it('组内非最新一条留下告警时,组头不点红但该条仍被提上来成行', () => {
     // run-2 = 「第 3 新、turn 从未收尾」的那条;组头代表的是 run-0。
     addSessionAttention('run-2', 'error');
     const { container } = renderGroup({ notifications: ['run-2'] });
 
-    expect(screen.getByLabelText('Failed — click to view')).toBeTruthy();
+    expect(screen.queryByLabelText('Failed — click to view')).toBeNull();
     expect(childRunIds(container)).toEqual(['run-2']);
   });
 
@@ -211,7 +211,7 @@ describe('AutomationSessionGroupItem — 收起态的未处理告警', () => {
       urgentSessionIds: new Set(['run-3']),
     });
 
-    expect(screen.getByLabelText('Failed — click to view')).toBeTruthy();
+    expect(screen.queryByLabelText('Failed — click to view')).toBeNull();
     expect(screen.queryByLabelText('Completed — click to view')).toBeNull();
     expect(childRunIds(container)).toEqual(['run-3']);
   });
@@ -225,7 +225,7 @@ describe('AutomationSessionGroupItem — 收起态的未处理告警', () => {
     expect(childRunIds(container)).toEqual([]);
   });
 
-  it('收起且整组是红时,点组头打开告警那条而不是最新一条', () => {
+  it('收起且存在错误时,点组头仍打开错误条目', () => {
     const onSessionClick = vi.fn();
     renderGroup({
       urgentSessionIds: new Set(['run-3']),

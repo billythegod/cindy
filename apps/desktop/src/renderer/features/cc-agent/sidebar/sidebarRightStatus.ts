@@ -1,12 +1,17 @@
 import {
   projectSessionActivity,
+  resolveSessionRightStatus,
   type SessionActivitySnapshot,
   type SessionInterruptionState,
 } from '@cindy/maker-shared/session-activity';
 
 import type { AttentionKind } from '@/lib/sessionAttentionStore';
 
-export { resolveSessionRightStatus as resolveSidebarRightStatus } from '@cindy/maker-shared/session-activity';
+/** Errors stay in the task; the sidebar only signals running, input and unread results. */
+export function resolveSidebarRightStatus(activity: SessionActivitySnapshot) {
+  if (activity.phase === 'error') return activity.currentTurnActive ? 'running' : 'time';
+  return resolveSessionRightStatus(activity);
+}
 export type { SessionRightStatus as SidebarRightStatusKind } from '@cindy/maker-shared/session-activity';
 
 export interface SidebarRightStatusInput {
@@ -69,7 +74,8 @@ export function projectSidebarSessionActivity({
     interactionKind: liveActivity?.interactionKind,
     // Automation failure urgency intentionally lives outside the regular
     // attention-notification store. Preserve it in the canonical projection so
-    // restart/expiry/acknowledgement cannot erase the existing red error state.
+    // restart/expiry/acknowledgement cannot erase the error itself. The sidebar
+    // status resolver hides its dot without changing this activity projection.
     attention: liveActivity?.attention === true || hasAttentionNotification || isUrgentFromContext,
   });
 }

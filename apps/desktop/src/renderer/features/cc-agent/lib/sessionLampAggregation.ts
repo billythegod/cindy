@@ -1,10 +1,10 @@
 /**
  * sessionLampAggregation — 会话「灯语」聚合的唯一事实源
  * ---------------------------------------------------------------------------
- * 灯语 = running(呼吸橙)+ 未读点 tone(红 error > 蓝 awaiting > 绿 done,
+ * 灯语 = running(呼吸橙)+ 未读点 tone(蓝 awaiting > 绿 done,
  * AttentionDot 色表)。聚合口径:
  *   - 本地链路:runningSessionIds / notifications + attentionKinds + urgent
- *     (定时任务失败未读按 error 提升,与 SessionItem.isUrgentFromContext 同语义);
+ *     (普通错误与定时任务失败未读均不显示提醒点);
  *   - device-link 远程镜像(remoteLampOf):本地链路对被控端后台会话是盲区,
  *     必须并入,否则「行亮而入口不亮」(codex review,rail 聚合灯先例)。
  *
@@ -34,7 +34,7 @@ export function remoteLampOf(id: string, deviceId: string | null | undefined): {
   return {
     running: false,
     tone:
-      remote.phase === 'error' ? 'error' : remote.phase === 'needs-interaction' ? 'awaiting' : 'done',
+      remote.phase === 'error' ? null : remote.phase === 'needs-interaction' ? 'awaiting' : 'done',
   };
 }
 
@@ -47,7 +47,7 @@ export function dotToneOf(
 ): AttentionKind | null {
   if (!notifications.has(id)) return null;
   const kind = attentionKinds.get(id);
-  if (kind === 'error' || urgentSessionIds.has(id)) return 'error';
+  if (kind === 'error' || urgentSessionIds.has(id)) return null;
   if (kind === 'awaiting') return 'awaiting';
   return 'done';
 }

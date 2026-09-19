@@ -88,15 +88,15 @@ describe('collapsed project attention tone', () => {
     expect(resolve({ remotePhases: [['session-1', 'completed']] })).toBe('done');
   });
 
-  it('shows red for local errors, urgent schedules, and remote errors', () => {
+  it('does not show dots for local errors, urgent schedules, or remote errors', () => {
     expect(
       resolve({ notifications: ['session-1'], attentionKinds: [['session-1', 'error']] }),
-    ).toBe('error');
-    expect(resolve({ urgent: ['session-1'] })).toBe('error');
-    expect(resolve({ remotePhases: [['session-1', 'error']] })).toBe('error');
+    ).toBe(null);
+    expect(resolve({ urgent: ['session-1'] })).toBe(null);
+    expect(resolve({ remotePhases: [['session-1', 'error']] })).toBe(null);
   });
 
-  it('gives red priority when red and green children coexist', () => {
+  it('keeps successful unread results visible alongside errors', () => {
     expect(
       resolve({
         ids: ['done', 'error'],
@@ -106,7 +106,7 @@ describe('collapsed project attention tone', () => {
           ['error', 'error'],
         ],
       }),
-    ).toBe('error');
+    ).toBe('done');
   });
 
   it('treats a remote running state as authoritative over stale local attention', () => {
@@ -131,7 +131,7 @@ describe('collapsed project attention tone', () => {
 });
 
 describe('collapsed attention alert ids', () => {
-  it('names every child that contributes the red dot, across all three sources', () => {
+  it('keeps failed children discoverable without a red dot', () => {
     const summary = summarize({
       ids: ['local-error', 'urgent-schedule', 'remote-error', 'done-child', 'idle-child'],
       notifications: ['local-error', 'done-child'],
@@ -142,7 +142,7 @@ describe('collapsed attention alert ids', () => {
       urgent: ['urgent-schedule'],
       remotePhases: [['remote-error', 'error']],
     });
-    expect(summary.tone).toBe('error');
+    expect(summary.tone).toBe('done');
     expect([...summary.errorSessionIds]).toEqual([
       'local-error',
       'urgent-schedule',

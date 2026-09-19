@@ -40,9 +40,9 @@ describe('dotToneOf', () => {
     expect(dotToneOf('a', c.notifications, c.attentionKinds, c.urgentSessionIds)).toBeNull();
   });
 
-  it('urgent 会话提升为 error(定时任务失败未读兜底)', () => {
+  it('失败的自动运行不显示提醒点', () => {
     const c = ctx({ notifications: ['a'], urgent: ['a'] });
-    expect(dotToneOf('a', c.notifications, c.attentionKinds, c.urgentSessionIds)).toBe('error');
+    expect(dotToneOf('a', c.notifications, c.attentionKinds, c.urgentSessionIds)).toBeNull();
   });
 
   it('kind 缺失的未读回落绿 done', () => {
@@ -56,14 +56,14 @@ describe('aggregateSessionLamps', () => {
     expect(aggregateSessionLamps([], ctx({}))).toEqual({ running: false, dotTone: null });
   });
 
-  it('tone 取聚合最高档:done < awaiting < error', () => {
+  it('错误不遮住等待回复与成功未读提醒', () => {
     const c = ctx({
       notifications: ['a', 'b', 'c'],
       kinds: { b: 'awaiting', c: 'error' },
     });
     expect(aggregateSessionLamps([{ id: 'a' }], c).dotTone).toBe('done');
     expect(aggregateSessionLamps([{ id: 'a' }, { id: 'b' }], c).dotTone).toBe('awaiting');
-    expect(aggregateSessionLamps([{ id: 'a' }, { id: 'b' }, { id: 'c' }], c).dotTone).toBe('error');
+    expect(aggregateSessionLamps([{ id: 'a' }, { id: 'b' }, { id: 'c' }], c).dotTone).toBe('awaiting');
   });
 
   it('running 与未读点相互独立,可同时成立', () => {
@@ -86,7 +86,7 @@ describe('aggregateSessionLamps', () => {
     expect(agg).toEqual({ running: true, dotTone: 'awaiting' });
   });
 
-  it('远程完成未读(attention 存续期条目)记绿 done;本地 error 仍压过它', () => {
+  it('远程成功未读仍显示绿点，不被本地错误遮住', () => {
     applyRemoteSessionActivity('device-1', {
       sessionId: 'remote-done',
       phase: 'completed',
@@ -95,12 +95,12 @@ describe('aggregateSessionLamps', () => {
     });
     expect(aggregateSessionLamps([{ id: 'remote-done', deviceLinkDeviceId: 'device-1' }], ctx({})).dotTone).toBe('done');
     const c = ctx({ notifications: ['local-err'], kinds: { 'local-err': 'error' } });
-    expect(aggregateSessionLamps([{ id: 'remote-done', deviceLinkDeviceId: 'device-1' }, { id: 'local-err' }], c).dotTone).toBe('error');
+    expect(aggregateSessionLamps([{ id: 'remote-done', deviceLinkDeviceId: 'device-1' }, { id: 'local-err' }], c).dotTone).toBe('done');
   });
 });
 
 describe('remoteLampOf', () => {
-  it('无镜像条目 → null;error phase → error tone', () => {
+  it('无镜像与远程错误均不显示提醒点', () => {
     expect(remoteLampOf('nope', undefined)).toBeNull();
     applyRemoteSessionActivity('device-1', {
       sessionId: 'remote-err',
@@ -108,7 +108,7 @@ describe('remoteLampOf', () => {
       attention: true,
       compactDetail: '',
     });
-    expect(remoteLampOf('remote-err', 'device-1')).toEqual({ running: false, tone: 'error' });
+    expect(remoteLampOf('remote-err', 'device-1')).toEqual({ running: false, tone: null });
   });
 });
 
