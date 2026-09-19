@@ -59,6 +59,7 @@ interface ProbeEntry {
   reject: (error: Error) => void;
   queueTimer?: ReturnType<typeof setTimeout>;
   probeTimer?: ReturnType<typeof setTimeout>;
+  inFlightPromise?: Promise<WorkdirProbeResult>;
   settled?: boolean;
 }
 
@@ -123,9 +124,8 @@ export class MainProcessWorkdirProbeClient {
       this.queue.push(entry);
       this.armQueueTimer(entry);
       this.drain();
-    }).finally(() => {
-      if (this.inFlightByPath.get(dedupeKey) === promise) this.inFlightByPath.delete(dedupeKey);
     });
+    entry.inFlightPromise = promise;
     this.inFlightByPath.set(dedupeKey, promise);
     return promise;
   }
@@ -219,6 +219,9 @@ export class MainProcessWorkdirProbeClient {
 
   private finishActive(entry: ProbeEntry): void {
     this.activeEntries.delete(entry);
+    if (entry.inFlightPromise && this.inFlightByPath.get(entry.key) === entry.inFlightPromise) {
+      this.inFlightByPath.delete(entry.key);
+    }
     this.release();
   }
 
@@ -273,6 +276,11 @@ export class MainProcessWorkdirProbeClient {
       code: workdirDiagnosticErrorCode(error),
     });
     entry.reject(error);
+    if (!this.activeEntries.has(entry) && entry.inFlightPromise) {
+      if (this.inFlightByPath.get(entry.key) === entry.inFlightPromise) {
+        this.inFlightByPath.delete(entry.key);
+      }
+    }
   }
 
   private diagnostics(entry: ProbeEntry) {

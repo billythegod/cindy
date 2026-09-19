@@ -81,6 +81,45 @@ describe('MainProcessWorkdirProbeClient', () => {
     client.dispose();
   });
 
+  it('keeps a timed-out path single-flighted until its filesystem operation settles', async () => {
+    vi.useFakeTimers();
+    let resolveSlow!: (value: { isDirectory(): boolean }) => void;
+    let calls = 0;
+    const slow = new Promise<{ isDirectory(): boolean }>((resolve) => {
+      resolveSlow = resolve;
+    });
+    const fsMock: MainProcessWorkdirProbeFs = {
+      stat: async () => {
+        calls += 1;
+        return slow;
+      },
+      mkdir: async () => undefined,
+      realpath: async (dir) => dir,
+      readdir: async () => [],
+    };
+    const client = new MainProcessWorkdirProbeClient({ log, fs: fsMock });
+    const first = client.probe('/slow', '/slow', 20);
+    const firstError = first.catch((error) => error);
+
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(firstError).resolves.toMatchObject({ code: 'WORKDIR_PROBE_TIMEOUT' });
+    const retryWhileIoPending = client.probe('/slow', '/slow', 100);
+    const retryWhileIoPendingError = retryWhileIoPending.catch((error) => error);
+    expect(retryWhileIoPending).toBe(first);
+    expect(calls).toBe(1);
+    await expect(retryWhileIoPendingError).resolves.toMatchObject({
+      code: 'WORKDIR_PROBE_TIMEOUT',
+    });
+
+    resolveSlow({ isDirectory: () => true });
+    await vi.runAllTimersAsync();
+    const retryAfterIoSettles = client.probe('/slow', '/slow', 100);
+    expect(retryAfterIoSettles).not.toBe(first);
+    expect(calls).toBe(2);
+    await expect(retryAfterIoSettles).resolves.toMatchObject({ ok: true, isDirectory: true });
+    client.dispose();
+  });
+
   it('rejects active probes immediately when disposed while letting I/O settle', async () => {
     let resolveSlow!: (value: { isDirectory(): boolean }) => void;
     const slow = new Promise<{ isDirectory(): boolean }>((resolve) => {

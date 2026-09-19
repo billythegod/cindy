@@ -1,6 +1,7 @@
 /** Electron wiring for bounded asynchronous main-process directory probes. */
 
 import { app } from 'electron';
+import path from 'node:path';
 
 import { createLogger } from '../logger.js';
 import { MainProcessWorkdirProbeClient } from './MainProcessWorkdirProbeClient.js';
@@ -12,7 +13,7 @@ export const workdirProbeHostClient = new MainProcessWorkdirProbeClient({ log })
 
 /** Bounded filesystem identity probe for local cwd recovery; never expose paths to a controller. */
 async function directoryOperation(dir: string, kind: WorkdirProbeRequest['kind']) {
-  const result = await workdirProbeHostClient.probe(dir, dir, 5_000, kind);
+  const result = await workdirProbeHostClient.probe(dir, path.resolve(dir), 5_000, kind);
   if (!result.ok)
     throw Object.assign(new Error('Working directory probe failed'), { code: result.code });
   return result;
