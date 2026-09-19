@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   reduceMotion: false as boolean | null,
   timings: [] as Array<{ duration: number }>,
   x: null as { value: number } | null,
+  deferAnimation: false,
+  pendingAnimation: null as ((finished: boolean) => void) | null,
 }));
 vi.mock('react-native', async () => {
   const { createElement } = await import('react');
@@ -42,7 +44,11 @@ vi.mock('react-native-reanimated', async () => {
   return {
     default: { View: (props: any) => createElement('div', {}, props.children) },
     Easing: { bezier: () => undefined },
-    cancelAnimation: vi.fn(),
+    cancelAnimation: vi.fn(() => {
+      const pending = mocks.pendingAnimation;
+      mocks.pendingAnimation = null;
+      pending?.(false);
+    }),
     useAnimatedStyle: (fn: () => any) => fn(),
     useSharedValue: (initial: any) => {
       const ref = useRef({ value: initial });
@@ -50,7 +56,10 @@ vi.mock('react-native-reanimated', async () => {
       return ref.current;
     },
     withTiming: (value: number, config: { duration: number }, done?: (finished: boolean) => void) => {
-      mocks.timings.push(config); done?.(true); return value;
+      mocks.timings.push(config);
+      if (mocks.deferAnimation) mocks.pendingAnimation = done ?? null;
+      else done?.(true);
+      return value;
     },
   };
 });
@@ -75,6 +84,7 @@ async function render() {
 }
 beforeEach(() => {
   vi.clearAllMocks(); mocks.x = null; mocks.timings = []; mocks.reduceMotion = false;
+  mocks.deferAnimation = false; mocks.pendingAnimation = null;
   container = document.createElement('div'); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); });
@@ -98,6 +108,16 @@ it.each([-1, 1])('dismisses a long swipe in direction %s and ignores a following
   expect(onDismiss).toHaveBeenCalledOnce();
   expect(mocks.x!.value).toBe(direction * 390);
   mocks.button.onPress(); expect(onAccept).not.toHaveBeenCalled();
+});
+
+it('preserves a committed swipe when hiding cancels the exit animation', async () => {
+  mocks.deferAnimation = true;
+  await render(); swipe(110, 0);
+  expect(onDismiss).not.toHaveBeenCalled();
+  await act(async () => root.render(null));
+  expect(onDismiss).toHaveBeenCalledOnce();
+  await render();
+  expect(onDismiss).toHaveBeenCalledOnce();
 });
 
 it('accepts a short fast flick but returns a short slow swipe and a cancelled drag', async () => {

@@ -205,6 +205,11 @@ async function visualMockInvoke<T = unknown>(
         return realDataSession(realData, String(args[0] ?? realData.selectedSessionId ?? '')) as T;
       case 'local-db:messages:list':
         return (realData.messagesBySession[String(args[0] ?? realData.selectedSessionId ?? '')] ?? []) as T;
+      case 'local-db:messages:view': {
+        const sessionId = String(args[0] ?? realData.selectedSessionId ?? '');
+        return { version: 1, items: projectHistoryView(realData.messagesBySession[sessionId] ?? [], false),
+          hasMore: false, nextCursor: null } as T;
+      }
       case 'maker:get-pending-interactions':
         return (realData.pendingInteractionsBySession?.[String(args[0] ?? realData.selectedSessionId ?? '')] ?? []) as T;
       case 'maker:input:get-projection':

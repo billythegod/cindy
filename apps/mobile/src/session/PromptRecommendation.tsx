@@ -46,10 +46,11 @@ export function PromptRecommendation({ prompt, onAccept, onDismiss }: {
         || (Math.abs(distance) > 24 && Math.abs(event.velocityX) > 550 && distance * event.velocityX > 0);
       if (dismiss) {
         dismissing.value = true;
+        // The swipe is committed even if hiding/unmounting cancels its exit.
         translation.value = withTiming(Math.sign(distance) * width, {
           duration: reduceMotion === false ? motionDuration.fast : 0,
           easing: Easing.bezier(...motionEasing.in),
-        }, (finished) => { if (finished) scheduleOnRN(onDismiss); });
+        }, () => { scheduleOnRN(onDismiss); });
       }
     })
     .onFinalize(() => {
