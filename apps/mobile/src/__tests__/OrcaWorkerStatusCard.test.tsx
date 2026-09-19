@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   listOrcaWorkersByLead: vi.fn(),
   connectionEpoch: 0,
   peerAvailable: true as boolean | null,
+  linkStatus: 'online' as string,
   colors: {
     surface: 'SURFACE',
     border: 'BORDER',
@@ -43,6 +44,7 @@ vi.mock('@/components/AppText', () => ({
 vi.mock('@/theme', () => ({ useTheme: () => ({ colors: h.colors }) }));
 vi.mock('@/device-link/DeviceLinkContext', () => ({
   useDeviceLink: () => ({
+    status: h.linkStatus,
     connectionEpoch: h.connectionEpoch,
     getPresenceAvailability: () => h.peerAvailable,
   }),
@@ -68,6 +70,7 @@ beforeEach(() => {
   h.listOrcaWorkersByLead.mockReset();
   h.connectionEpoch = 0;
   h.peerAvailable = true;
+  h.linkStatus = 'online';
   leadSeq += 1;
   lead = `lead-${leadSeq}`;
   container = document.createElement('div');
@@ -456,4 +459,46 @@ it('label 与 role 都缺失时,兜底名走 i18n catalog 而非硬编码', asyn
     'session.presentation.collaboration.workerFallbackName',
   );
   expect(container.textContent).not.toContain('Worker 1');
+});
+
+it('relay 掉线时暂停轮询,即便逐设备 availability 仍停在 true', async () => {
+  vi.useFakeTimers();
+  // 正是 review 描述的场景:上一代的 per-peer verdict 还是 true,但 relay 已不在线。
+  h.peerAvailable = true;
+  h.linkStatus = 'connecting';
+  h.listOrcaWorkersByLead.mockRejectedValue(new Error('should not be called'));
+  await act(async () => {
+    root.render(
+      createElement(OrcaWorkerStatusCard as any, {
+        leadSessionId: lead,
+        deviceId: 'dev-1',
+        maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
+      }),
+    );
+  });
+  await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+  expect(h.listOrcaWorkersByLead).not.toHaveBeenCalled();
+});
+
+it('relay 恢复在线后继续轮询', async () => {
+  vi.useFakeTimers();
+  h.linkStatus = 'connecting';
+  const draw = () => root.render(
+    createElement(OrcaWorkerStatusCard as any, {
+      leadSessionId: lead,
+      deviceId: 'dev-1',
+      maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
+    }),
+  );
+  await act(async () => { draw(); });
+  expect(h.listOrcaWorkersByLead).not.toHaveBeenCalled();
+
+  h.listOrcaWorkersByLead.mockResolvedValue([
+    { id: 'a', label: 'w-relay-back', status: 'running', sessionId: 's-a' },
+  ]);
+  h.linkStatus = 'online';
+  await act(async () => { draw(); });
+  expect(h.listOrcaWorkersByLead).toHaveBeenCalled();
+  await act(async () => toggle().click());
+  expect(container.textContent).toContain('w-relay-back');
 });

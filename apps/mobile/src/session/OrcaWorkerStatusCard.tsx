@@ -139,10 +139,16 @@ export function OrcaWorkerStatusCard({ leadSessionId, deviceId, maker, onOpenWor
   //    getPresenceAvailability 是「当前 relay 连接代内的逐设备 availability」,
   //    peer 掉线再上线必然翻转,正是所需的 peer 代次。
   // 失焦再聚焦不在其中:那不产生新的连接代,不该重探。
-  const { connectionEpoch, getPresenceAvailability } = useDeviceLink();
-  // null = 本代尚无权威 verdict。只把**确定离线**(false)当作不可达:verdict 迟迟不来
-  // 时仍允许探测,否则面板会因为一个未决状态被永久关掉。
-  const peerReachable = getPresenceAvailability(deviceId) !== false;
+  const { status, connectionEpoch, getPresenceAvailability } = useDeviceLink();
+  // 可达 = relay 在线 **且** 该 peer 未被判定离线。两者缺一不可:
+  //  - 逐设备 availability 是「上一代内」的结论,relay 掉线后它可能仍停在 true,
+  //    只看它会继续发请求,每轮在 ensureOnlineForRequest 上白等再失败。
+  //  - 只看 relay 又会漏掉「relay 在线但目标被控端离线」。
+  // 与本屏既有写法同构([sessionId] 的 remoteHistoryAvailable 也是两者并用)。
+  // availability 的 null = 本代尚无权威 verdict,不是离线:只把确定的 false 当不可达,
+  // 否则 verdict 迟迟不来会把面板永久关掉。
+  const relayOnline = status === 'online';
+  const peerReachable = relayOnline && getPresenceAvailability(deviceId) !== false;
   const [unsupported, setUnsupported] = useState(false);
   useEffect(() => {
     // peer 确定离线时不复位:此刻重探只会立刻撞 DEVICE_OFFLINE。等它回来再说。
