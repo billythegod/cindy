@@ -191,7 +191,7 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
                   }}
                 >
                   <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full border-[0.5px] border-[var(--border-default)] transition-transform duration-100 motion-reduce:transition-none group-hover/tag:scale-150 group-focus-visible/tag:scale-150 ${tag.color === 'none' || tag.color === 'white' ? 'text-[var(--task-tag-white-check)]' : 'text-[var(--text-primary-on-dark)]'}`}
+                    className={`flex h-4 w-4 items-center justify-center rounded-full border-[0.5px] border-[var(--border-default)] transition-transform duration-[var(--motion-instant)] ease-[var(--motion-ease-move)] motion-reduce:transition-none group-hover/tag:scale-150 group-focus-visible/tag:scale-150 ${tag.color === 'none' || tag.color === 'white' ? 'text-[var(--task-tag-white-check)]' : 'text-[var(--text-primary-on-dark)]'}`}
                     style={swatch(tag)}
                   >
                     {checked ? (
@@ -221,7 +221,7 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
             disabled={blocked || error === 'unavailable'}
             onClick={onMore}
           >
-            <span className="flex h-4 w-4 items-center justify-center rounded-full border-[0.5px] border-[var(--border-default)] text-[var(--text-secondary)] transition-transform duration-100 motion-reduce:transition-none group-hover/tag:scale-150 group-focus-visible/tag:scale-150">
+            <span className="flex h-4 w-4 items-center justify-center rounded-full border-[0.5px] border-[var(--border-default)] text-[var(--text-secondary)] transition-transform duration-[var(--motion-instant)] ease-[var(--motion-ease-move)] motion-reduce:transition-none group-hover/tag:scale-150 group-focus-visible/tag:scale-150">
               <MoreHorizontal size={12} aria-hidden />
             </span>
           </button>
@@ -301,10 +301,13 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
       if (previousTop === undefined) continue;
       const delta = previousTop - row.getBoundingClientRect().top;
       if (Math.abs(delta) < 0.5) continue;
+      const motionStyle = getComputedStyle(row);
+      const durationToken = motionStyle.getPropertyValue('--motion-fast').trim();
+      const duration = parseFloat(durationToken) * (durationToken.endsWith('ms') ? 1 : 1000);
       dropAnimations.current.push(
         row.animate([{ transform: `translateY(${delta}px)` }, { transform: 'translateY(0px)' }], {
-          duration: 140,
-          easing: 'cubic-bezier(0.2, 0, 0, 1)',
+          duration: Number.isFinite(duration) ? duration : 0,
+          easing: motionStyle.getPropertyValue('--motion-ease-move').trim() || 'linear',
         }),
       );
     }
@@ -528,7 +531,7 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
                     transform: `translateY(${tagRowOffset(index)}px)`,
                     zIndex: draggedId === tag.id ? 1 : undefined,
                   }}
-                  className={`relative group/tagrow flex items-center gap-2 min-h-11 rounded-lg ${draggedId === tag.id ? 'bg-[var(--surface-hover)] outline outline-1 outline-[var(--border-default)] cursor-grabbing' : `hover:bg-[var(--surface-hover)] ${dropPositions.current ? '' : 'transition-transform duration-150 ease-out motion-reduce:transition-none'}`}`}
+                  className={`relative group/tagrow flex items-center gap-2 min-h-11 rounded-lg ${draggedId === tag.id ? 'bg-[var(--surface-hover)] outline outline-1 outline-[var(--border-default)] cursor-grabbing' : `hover:bg-[var(--surface-hover)] ${dropPositions.current ? '' : 'transition-transform duration-[var(--motion-fast)] ease-[var(--motion-ease-move)] motion-reduce:transition-none'}`}`}
                 >
                   <button
                     type="button"

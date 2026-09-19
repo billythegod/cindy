@@ -22,6 +22,7 @@ import Animated, {
   withTiming,
   cancelAnimation,
   ReduceMotion,
+  Easing,
   type SharedValue,
 } from 'react-native-reanimated';
 import { GripVertical, Pencil, MoreHorizontal, ArrowLeft } from 'lucide-react-native';
@@ -42,7 +43,7 @@ import {
 import { Text, TextInput } from '@/components/AppText';
 import { useDeviceLink, subscribeRemoteTaskTagsChanged } from '@/device-link/DeviceLinkContext';
 import { useTheme, type ThemeColors } from '@/theme';
-import { radius, spacing, typeScale, iconSize, fontWeight, lineHeight } from '@/theme/tokens';
+import { radius, spacing, typeScale, iconSize, fontWeight, lineHeight, motionDuration, motionEasing } from '@/theme/tokens';
 import { remoteSessionStore, useRemoteSessions } from './remoteSessionStore';
 import { projectDraftSessionTitle } from '@cindy/maker-shared/session-title';
 import { useAuth } from '@/auth/AuthContext';
@@ -618,7 +619,7 @@ export function TaskTagsPanel({
     // Snap visually before committing the reordered array, so release never jumps back.
     dragY.value = withTiming(
       (active.to - active.from) * 44 - dragScroll.value,
-      { duration: 120, reduceMotion: ReduceMotion.System },
+      { duration: motionDuration.fast, easing: Easing.bezier(...motionEasing.move), reduceMotion: ReduceMotion.System },
       (finished) => {
         if (finished) runOnJS(commitDrop)(active.id, active.to, active.expectedOrder);
       },
@@ -1450,7 +1451,8 @@ function TagSortRow({
             index === from
               ? offset
               : withTiming(shift, {
-                  duration: 120,
+                  duration: motionDuration.fast,
+                  easing: Easing.bezier(...motionEasing.move),
                   reduceMotion: ReduceMotion.System,
                 }),
         },
