@@ -194,5 +194,77 @@ describe('Dev Windows desktop components', () => {
     expect(await later.resolve()).toBeNull();
     expect(await later.installed()).toEqual(prepared);
   });
+
+  it('reuses a helper prepared in the shared Dev profile after switching to an isolated sandbox', async () => {
+    const parent = path.join(root, 'AppData-shared');
+    const sharedProfile = path.join(parent, 'Cindy');
+    const isolatedProfile = path.join(parent, 'Cindy-dev2-feature');
+    const { run } = fixture('unused');
+    const shared = createWindowsDevelopmentAssets({
+      application,
+      executable,
+      userData: sharedProfile,
+      arch: 'x64',
+      run,
+    });
+    const prepared = await shared.resolve(true);
+    const isolated = createWindowsDevelopmentAssets({
+      application,
+      executable,
+      userData: isolatedProfile,
+      arch: 'x64',
+      run,
+    });
+    expect(await isolated.resolve()).toBeNull();
+    expect(await isolated.installed()).toEqual(prepared);
+  });
+
+  it('reuses a helper prepared in an isolated sandbox after switching to the shared Dev profile', async () => {
+    const parent = path.join(root, 'AppData-isolated');
+    const isolatedProfile = path.join(parent, 'Cindy-dev2');
+    const sharedProfile = path.join(parent, 'Cindy');
+    const { run } = fixture('unused');
+    const isolated = createWindowsDevelopmentAssets({
+      application,
+      executable,
+      userData: isolatedProfile,
+      arch: 'x64',
+      run,
+    });
+    const prepared = await isolated.resolve(true);
+    const shared = createWindowsDevelopmentAssets({
+      application,
+      executable,
+      userData: sharedProfile,
+      arch: 'x64',
+      run,
+    });
+    expect(await shared.resolve()).toBeNull();
+    expect(await shared.installed()).toEqual(prepared);
+  });
+
+  it('reuses a helper prepared in another region shared profile for the same checkout', async () => {
+    const parent = path.join(root, 'AppData-region');
+    const globalProfile = path.join(parent, 'CindyGlobal');
+    const isolatedProfile = path.join(parent, 'Cindy-dev2');
+    const { run } = fixture('unused');
+    const global = createWindowsDevelopmentAssets({
+      application,
+      executable,
+      userData: globalProfile,
+      arch: 'x64',
+      run,
+    });
+    const prepared = await global.resolve(true);
+    const isolated = createWindowsDevelopmentAssets({
+      application,
+      executable,
+      userData: isolatedProfile,
+      arch: 'x64',
+      run,
+    });
+    expect(await isolated.resolve()).toBeNull();
+    expect(await isolated.installed()).toEqual(prepared);
+  });
 });
 

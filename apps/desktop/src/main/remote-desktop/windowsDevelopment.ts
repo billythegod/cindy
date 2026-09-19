@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { WindowsDesktopSetupPhase } from '../../shared/remoteDesktop';
+import { OFFICIAL_USER_DATA_DIR_NAMES } from '../devCliFlags';
 import { createLogger } from '../logger';
 
 const exec = promisify(execFile);
@@ -23,29 +24,43 @@ function cacheRoot(userData: string): string {
 }
 
 /** Isolated Dev profiles are `<region>-dev2` or `<region>-dev2-<name>`.
- * The SYSTEM service name is checkout-global, so uninstall must still find
- * a previously compiled helper after switching `--isolated` sandboxes. */
-function isolatedDevPrefix(userData: string): string | null {
+ * Shared Dev uses the official region profile (`Cindy` / `CindyGlobal` /
+ * `CindyDev`). The SYSTEM service name is checkout-global, so uninstall must
+ * still find a previously compiled helper after switching `--isolated` and
+ * shared userData. */
+function relatedDevPrefixes(userData: string): string[] {
   const base = path.basename(userData);
+  const prefixes = new Set<string>();
   const match = /^(.*)-dev2(?:-.+)?$/.exec(base);
-  return match ? `${match[1]}-dev2` : null;
+  prefixes.add(`${match ? match[1] : base}-dev2`);
+  for (const name of OFFICIAL_USER_DATA_DIR_NAMES) prefixes.add(`${name}-dev2`);
+  return [...prefixes];
 }
 
 async function relatedUserDataProfiles(userData: string): Promise<string[]> {
   const current = path.resolve(userData);
   const profiles = [current];
-  const prefix = isolatedDevPrefix(current);
-  if (!prefix) return profiles;
   const parent = path.dirname(current);
+  const base = path.basename(current);
+  const family = /^(.*)-dev2(?:-.+)?$/.exec(base)?.[1] ?? base;
   try {
     const currentReal = await fs.realpath(current).catch(() => current);
-    for (const name of await fs.readdir(parent)) {
-      if (name !== prefix && !name.startsWith(`${prefix}-`)) continue;
-      const candidate = path.join(parent, name);
-      if (candidate === current) continue;
+    const seen = new Set([currentReal]);
+    const add = async (candidate: string) => {
+      if (candidate === current) return;
       const candidateReal = await fs.realpath(candidate).catch(() => candidate);
-      if (candidateReal === currentReal) continue;
+      if (seen.has(candidateReal)) return;
+      seen.add(candidateReal);
       profiles.push(candidate);
+    };
+    await add(path.join(parent, family));
+    for (const name of OFFICIAL_USER_DATA_DIR_NAMES) {
+      await add(path.join(parent, name));
+    }
+    const prefixes = relatedDevPrefixes(current);
+    for (const name of await fs.readdir(parent)) {
+      if (!prefixes.some((prefix) => name === prefix || name.startsWith(`${prefix}-`))) continue;
+      await add(path.join(parent, name));
     }
   } catch {
     /* A missing AppData parent is not an installed helper. */

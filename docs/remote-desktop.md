@@ -597,10 +597,11 @@ invalidates the cache without restarting Desktop. Uninstall and the ready-path p
 use the last prepared helper for this checkout and Electron executable, so a
 compiler failure or deleted current cache does not block removing that
 checkout's auto-start SYSTEM service. Isolated Dev profiles
-(`<region>-dev2` / `<region>-dev2-<name>`) share that checkout-global service
-name; status and uninstall therefore also look in sibling sandboxes for a
-matching helper, rather than reporting `missing` after switching
-`--isolated` profiles. Status reports `updateRequired` when that
+(`<region>-dev2` / `<region>-dev2-<name>`) and the matching shared region
+profile (`Cindy` / `CindyGlobal` / `CindyDev`) share that checkout-global
+service name; status and uninstall therefore also look in the shared profile
+and sibling sandboxes for a matching helper, rather than reporting `missing`
+after switching `--isolated` and shared userData. Status reports `updateRequired` when that
 fallback helper is current but the Dev fingerprint has changed, so settings
 offers Update rather than Remove. Shared userData cannot pick a newer
 helper from another checkout. Changed native service
