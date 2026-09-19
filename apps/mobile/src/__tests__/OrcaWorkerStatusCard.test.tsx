@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   linkStatus: 'online' as string,
   colors: {
     surface: 'SURFACE',
+    surfaceElevated: 'SURFACE_ELEVATED',
     border: 'BORDER',
     textPrimary: 'TEXT_PRIMARY',
     textSecondary: 'TEXT_SECONDARY',
@@ -501,4 +502,35 @@ it('relay 恢复在线后继续轮询', async () => {
   expect(h.listOrcaWorkersByLead).toHaveBeenCalled();
   await act(async () => toggle().click());
   expect(container.textContent).toContain('w-relay-back');
+});
+
+it('error 未读在 worker 转回 running 后仍显示错误色,不退化成绿色 Done', async () => {
+  vi.useFakeTimers();
+  h.listOrcaWorkersByLead.mockResolvedValue([
+    { id: 'a', label: 'w', status: 'error', sessionId: 's-a' },
+  ]);
+  await act(async () => {
+    root.render(
+      createElement(OrcaWorkerStatusCard as any, {
+        leadSessionId: lead,
+        deviceId: 'dev-1',
+        maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
+      }),
+    );
+  });
+  expect(backgroundColorOf(attentionDot())).toBe('ERROR');
+
+  // worker 重新跑起来:未读仍在(结果没被看过),提示色必须仍来自 error。
+  h.listOrcaWorkersByLead.mockResolvedValue([
+    { id: 'a', label: 'w', status: 'running', sessionId: 's-a' },
+  ]);
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(attentionDot()).not.toBeNull();
+  expect(backgroundColorOf(attentionDot())).toBe('ERROR');
+});
+
+it('卡片使用抬层背景 surfaceElevated,而非页面级 surface', async () => {
+  await render([{ id: 'a', label: 'w', status: 'running', sessionId: 's-a' }]);
+  const card = container.querySelector('div[data-style]');
+  expect(backgroundColorOf(card)).toBe('SURFACE_ELEVATED');
 });

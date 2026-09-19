@@ -48,7 +48,10 @@ function workerKey(worker: Worker, index: number): string {
  * 重新标记;而同一轮 done 期间的反复切换不产生新边沿。
  * 以 module 作用域承载 = 桌面 workerAttentionStore 在手机端的等价物。
  */
-const unreadWorkers = new Set<string>();
+// value = 触发未读的那个终态。不能只存 key:worker 从 error 转回 running/idle 后
+// 未读仍然成立(结果还没被看过),但若此时按**当前**状态推断提示色,会把一次 error
+// 显示成绿色 Done。记下产生未读的状态,提示语义才跟着来源走。
+const unreadWorkers = new Map<string, string>();
 const lastWorkerStatus = new Map<string, string>();
 
 function attentionKey(leadSessionId: string, key: string): string {
@@ -66,7 +69,7 @@ function applyWorkerAttentionEdges(leadSessionId: string, workers: Worker[]): bo
     if (previous === status) return;
     // 跳变进终态才标未读;离开终态自然不再是未读来源。
     if (attentionStatuses.has(status) && !unreadWorkers.has(key)) {
-      unreadWorkers.add(key);
+      unreadWorkers.set(key, status);
       changed = true;
     }
   });
@@ -199,12 +202,14 @@ export function OrcaWorkerStatusCard({ leadSessionId, deviceId, maker, onOpenWor
   const title = i18n.t('session.presentation.collaboration.workersTitle', { n: workers.length });
   // 与桌面 useOrcaWorkerAttentionWatcher:44-49 一致:done 在被查看前同样算未读;
   // 查看过就不再提示,直到该 Worker 的状态再次变动。
-  const pending = workers.filter((worker, index) =>
-    unreadWorkers.has(attentionKey(leadSessionId, workerKey(worker, index))));
-  const needsAttention = pending.length > 0;
-  const attentionStatus = pending.some((worker) => worker.status === 'error') ? 'error' : 'done';
+  // 取未读**产生时**的状态,而不是 worker 的当前状态。
+  const pendingStatuses = workers
+    .map((worker, index) => unreadWorkers.get(attentionKey(leadSessionId, workerKey(worker, index))))
+    .filter((status): status is string => status !== undefined);
+  const needsAttention = pendingStatuses.length > 0;
+  const attentionStatus = pendingStatuses.includes('error') ? 'error' : 'done';
   const Chevron = expanded ? ChevronDown : ChevronRight;
-  return <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+  return <View style={[styles.card, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ expanded }}
