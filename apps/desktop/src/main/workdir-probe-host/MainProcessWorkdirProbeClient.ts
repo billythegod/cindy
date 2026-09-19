@@ -79,6 +79,7 @@ export class MainProcessWorkdirProbeClient {
   private readonly maxQueued: number;
   private readonly fs: MainProcessWorkdirProbeFs;
   private readonly queue: ProbeEntry[] = [];
+  private readonly activeEntries = new Set<ProbeEntry>();
   private readonly inFlightByPath = new Map<string, Promise<WorkdirProbeResult>>();
   private active = 0;
   private nextId = 1;
@@ -96,12 +97,12 @@ export class MainProcessWorkdirProbeClient {
     timeoutMs: number,
     kind: WorkdirProbeRequest['kind'] = 'probe',
   ): Promise<WorkdirProbeResult> {
-    const dedupeKey = `${kind}:${key}`;
-    const existing = this.inFlightByPath.get(dedupeKey);
-    if (existing) return existing;
     if (this.disposed) {
       return Promise.reject(this.unavailable('probe host is disposed', dir, kind, 'disposed'));
     }
+    const dedupeKey = `${kind}:${key}`;
+    const existing = this.inFlightByPath.get(dedupeKey);
+    if (existing) return existing;
     if (this.queue.length >= this.maxQueued) {
       return Promise.reject(this.unavailable('probe queue is full', dir, kind, 'queue-full'));
     }
@@ -137,6 +138,9 @@ export class MainProcessWorkdirProbeClient {
       if (entry.queueTimer) clearTimeout(entry.queueTimer);
       this.rejectEntry(entry, error, 'disposed');
     }
+    for (const entry of this.activeEntries) {
+      this.rejectEntry(entry, error, 'disposed');
+    }
   }
 
   private drain(): void {
@@ -168,6 +172,7 @@ export class MainProcessWorkdirProbeClient {
 
   private start(entry: ProbeEntry): void {
     this.active += 1;
+    this.activeEntries.add(entry);
     entry.startedAt = Date.now();
     const remainingMs = this.remainingMs(entry);
     entry.probeTimer = setTimeout(() => {
@@ -190,7 +195,7 @@ export class MainProcessWorkdirProbeClient {
           entry.settled = true;
           entry.resolve(result);
         }
-        this.release();
+        this.finishActive(entry);
       },
       (error) => {
         if (!entry.settled) {
@@ -207,9 +212,14 @@ export class MainProcessWorkdirProbeClient {
             'filesystem-failure',
           );
         }
-        this.release();
+        this.finishActive(entry);
       },
     );
+  }
+
+  private finishActive(entry: ProbeEntry): void {
+    this.activeEntries.delete(entry);
+    this.release();
   }
 
   private async execute(

@@ -80,4 +80,29 @@ describe('MainProcessWorkdirProbeClient', () => {
     expect(maxActive).toBe(1);
     client.dispose();
   });
+
+  it('rejects active probes immediately when disposed while letting I/O settle', async () => {
+    let resolveSlow!: (value: { isDirectory(): boolean }) => void;
+    const slow = new Promise<{ isDirectory(): boolean }>((resolve) => {
+      resolveSlow = resolve;
+    });
+    const fsMock: MainProcessWorkdirProbeFs = {
+      stat: async () => slow,
+      mkdir: async () => undefined,
+      realpath: async (dir) => dir,
+      readdir: async () => [],
+    };
+    const client = new MainProcessWorkdirProbeClient({ log, fs: fsMock });
+    const probe = client.probe('/slow', '/slow', 5_000).catch((error) => error);
+
+    await Promise.resolve();
+    client.dispose();
+    await expect(probe).resolves.toMatchObject({ code: 'WORKDIR_PROBE_UNAVAILABLE' });
+    await expect(client.probe('/slow', '/slow', 5_000)).rejects.toMatchObject({
+      code: 'WORKDIR_PROBE_UNAVAILABLE',
+    });
+
+    resolveSlow({ isDirectory: () => true });
+    await Promise.resolve();
+  });
 });
