@@ -138,11 +138,11 @@ mod tests {
             .split("pub fn install(")
             .nth(1)
             .unwrap()
-            .split("pub fn remove()")
+            .split("pub fn remove(")
             .next()
             .unwrap();
         let uninstall = include_str!("approval.rs")
-            .split("pub fn remove()")
+            .split("pub fn remove(")
             .nth(1)
             .unwrap()
             .split("#[cfg(test)]")
@@ -152,5 +152,14 @@ mod tests {
             assert!(!source.contains("let _ = legacy_cleanup::remove_saved_credentials"));
             assert!(!source.contains("let _ = legacy_cleanup::cleanup_current_installation"));
         }
+        assert!(elevate_uninstall.contains("--uninstall --skip-vault-cleanup"));
+        let run = include_str!("main.rs")
+            .split("fn run()")
+            .nth(1)
+            .unwrap()
+            .split("fn main()")
+            .next()
+            .unwrap();
+        assert!(run.contains("approval::remove(false)"));
     }
 }

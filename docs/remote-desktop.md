@@ -575,9 +575,13 @@ registered but stopped or crashed service reports `unavailable`, not
 service before the replacement started (`missing` plus `failedEnabled: true`)
 also keeps Remove, rather than only Retry. Original-user leftover GENERIC
 vault entries from the withdrawn automatic-unlock experiment are deleted
-before UAC; a vault error blocks install and uninstall instead of completing
-with the password still stored. HKLM credential-provider keys are removed
-after a successful elevated install or during elevated uninstall. Compiler
+before UAC; a vault error blocks install and the original-user uninstall
+instead of completing with the password still stored. The elevated
+`--uninstall` child skips vault cleanup so over-the-shoulder UAC cannot
+delete the approving administrator's leftover entries or let an admin
+vault error block this installation's service removal. HKLM
+credential-provider keys are removed after a successful elevated install
+or during elevated uninstall. Compiler
 diagnostics retain only phase, exit/OS code and an optional Rust error number;
 paths, compiler output, environment variables and input are not logged. Generated binaries
 are cached under userData by native source/runtime fingerprint, so a loaded Node

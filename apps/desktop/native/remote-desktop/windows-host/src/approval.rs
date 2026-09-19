@@ -313,14 +313,17 @@ pub fn install(pid: u32) -> Result<()> {
     Ok(())
 }
 
-pub fn remove() -> Result<()> {
+pub fn remove(clean_vault: bool) -> Result<()> {
     let installation = Installation::current()?;
-    // Delete this user's leftover GENERIC vault entries before SCM uninstall.
-    // Unelevated `--uninstall` and the unelevated half of `--elevate-uninstall`
-    // both reach here in the original user; waiting until after uninstall()
-    // would skip cleanup when a standard user cannot stop the service. A
-    // vault error must surface: the new build has no password UI to retry.
-    legacy_cleanup::remove_saved_credentials()?;
+    // Vault cleanup belongs to the original user. Direct `--uninstall`
+    // (installer / same-user admin) still enumerates that user's GENERIC
+    // leftovers. The elevated half of `--elevate-uninstall` must skip this:
+    // over-the-shoulder UAC would otherwise delete the approving
+    // administrator's Cindy/RemoteDesktop entries, and a transient admin
+    // vault error would block this installation's service removal.
+    if clean_vault {
+        legacy_cleanup::remove_saved_credentials()?;
+    }
     crate::service::uninstall()?;
     if !installation.directory.exists() {
         let _ = legacy_cleanup::remove_provider_registration(&installation.name);
@@ -439,7 +442,7 @@ mod tests {
             .split("pub fn install(")
             .nth(1)
             .unwrap()
-            .split("pub fn remove()")
+            .split("pub fn remove(")
             .next()
             .unwrap();
         assert!(
@@ -454,12 +457,12 @@ mod tests {
     #[test]
     fn leftover_credentials_are_removed_before_service_uninstall() {
         let remove = include_str!("approval.rs")
-            .split("pub fn remove()")
+            .split("pub fn remove(")
             .nth(1)
             .unwrap();
+        assert!(remove.contains("if clean_vault"));
         assert!(
-            remove.find("remove_saved_credentials").unwrap()
-                < remove.find("service::uninstall").unwrap()
+            remove.find("if clean_vault").unwrap() < remove.find("service::uninstall").unwrap()
         );
         assert!(
             !remove.contains("let _ = legacy_cleanup::remove_saved_credentials"),
@@ -476,7 +479,20 @@ mod tests {
             elevate_uninstall.find("remove_saved_credentials").unwrap()
                 < elevate_uninstall.find("service::elevate").unwrap()
         );
+        assert!(elevate_uninstall.contains("--uninstall --skip-vault-cleanup"));
         assert!(!elevate_uninstall.contains("let _ = legacy_cleanup::remove_saved_credentials"));
+        let run = include_str!("main.rs")
+            .split("fn run()")
+            .nth(1)
+            .unwrap()
+            .split("fn main()")
+            .next()
+            .unwrap();
+        assert!(run.contains("approval::remove(false)"));
+        assert!(
+            run.find("approval::remove(true)").unwrap()
+                < run.find("approval::remove(false)").unwrap()
+        );
         let elevate_install = include_str!("main.rs")
             .split("Some(\"--elevate-install\")")
             .nth(1)
@@ -493,7 +509,7 @@ mod tests {
             .split("pub fn install(")
             .nth(1)
             .unwrap()
-            .split("pub fn remove()")
+            .split("pub fn remove(")
             .next()
             .unwrap();
         assert!(!install.contains("cleanup_current_installation"));
