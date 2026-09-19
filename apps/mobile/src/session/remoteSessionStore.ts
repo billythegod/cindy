@@ -4255,9 +4255,9 @@ export const remoteSessionStore = {
       return;
     }
     if (channel === 'local-db:task-tags:changed' && isRecord(payload)) {
+      bumpDeviceSessionListMutationEpoch(deviceId);
       const shard = shards.get(deviceId);
       if (!shard) return;
-      bumpDeviceSessionListMutationEpoch(deviceId);
       const catalog = normalizeTaskTags(payload.tags, 256);
       shard.sessions = shard.sessions.map((session) => ({
         ...session,

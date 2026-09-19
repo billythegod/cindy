@@ -6471,6 +6471,15 @@ describe('device-clock live row clamp (applyRemoteTextEvent createdAt, cross-clo
 
 describe('task tag source isolation', () => {
   beforeEach(() => remoteSessionStore.clear());
+  it('invalidates a first list response before a shard exists, only for the source device', () => {
+    const epoch = remoteSessionStore.captureDeviceSessionListMutationEpoch('dev-a');
+    const otherEpoch = remoteSessionStore.captureDeviceSessionListMutationEpoch('dev-b');
+    remoteSessionStore.applyRemotePush('dev-a', 'local-db:task-tags:changed', { tags: [] });
+    expect(remoteSessionStore.isDeviceSessionListMutationEpochCurrent('dev-a', epoch)).toBe(false);
+    expect(remoteSessionStore.isDeviceSessionListMutationEpochCurrent('dev-b', otherEpoch)).toBe(true);
+    const replacementEpoch = remoteSessionStore.captureDeviceSessionListMutationEpoch('dev-a');
+    expect(remoteSessionStore.isDeviceSessionListMutationEpochCurrent('dev-a', replacementEpoch)).toBe(true);
+  });
   it('projects rename and deletion only into the source computer task memberships', () => {
     const tag = {
       id: 'default:red',

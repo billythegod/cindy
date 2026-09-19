@@ -634,13 +634,21 @@ const actions = {
    */
   applyTagCatalog(deviceId: string, tags: unknown): void {
     const shard = shards.get(deviceId);
+    // A catalog push can precede the first active or archived snapshot.
+    // Fence both buckets, and replace any first read we just invalidated.
+    for (const status of ['active', 'archived'] as const) {
+      actions.nextSnapshotEpoch(deviceId, status);
+      if (!shard?.loadedStatuses.has(status) &&
+          (actions.isSessionStatusLoading(deviceId, status) || (!shard && status === 'active'))) {
+        requestRemoteReseed(deviceId, status);
+      }
+    }
     if (!shard) return;
     const catalog = normalizeTaskTags(tags, 256);
     shard.sessions = shard.sessions.map((session) => ({
       ...session,
       tags: reconcileTaskTags(session.tags, catalog),
     }));
-    for (const status of shard.loadedStatuses) actions.nextSnapshotEpoch(deviceId, status);
     recompute();
   },
   applyPatch(deviceId: string, sessionId: string, patch: Record<string, unknown>): void {

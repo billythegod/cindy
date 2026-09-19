@@ -279,6 +279,7 @@ function DeviceDetailScreenContent() {
     setLoading(true);
     setError(null);
     try {
+      const mutationEpoch = remoteSessionStore.captureDeviceSessionListMutationEpoch(deviceId);
       const list = await withTransientRemoteRetry(async () => {
         await subscribe(`device:${deviceId}`, deviceId, ['sessions']);
         return invoke<RemoteSession[]>(deviceId, 'local-db:sessions:list', [
@@ -290,6 +291,11 @@ function DeviceDetailScreenContent() {
           { includePinned: true, fresh: true },
         ]);
       });
+      if (!remoteSessionStore.isDeviceSessionListMutationEpochCurrent(deviceId, mutationEpoch)) {
+        // The existing sync runner queues one follow-up after this stale read.
+        remoteSessionStore.requestReseed(deviceId);
+        return;
+      }
       remoteSessionStore.setDeviceSessions(deviceId, deviceName, Array.isArray(list) ? list : []);
       // A successful sessions:list is authoritative reachability evidence even when relay
       // presence was not replayed. Retire both offline caches before the schedule reload.
