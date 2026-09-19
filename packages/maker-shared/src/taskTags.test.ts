@@ -3,6 +3,8 @@ import {
   normalizeTaskTags,
   reconcileTaskTags,
   taskTagEditRevision,
+  taskTagNameKey,
+  TASK_TAG_PRESETS,
   type TaskTag,
 } from './taskTags';
 const tag = (
@@ -10,6 +12,23 @@ const tag = (
   color: TaskTag['color'] = 'red',
   favoriteOrder: number | null = null,
 ): TaskTag => ({ id, name: id, color, favoriteOrder, revision: 1 });
+
+it('keeps default names localized after recoloring without translating custom names', () => {
+  for (const color of ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray']) {
+    const original = {
+      ...tag(`default:${color}`, 'white'),
+      name: color[0].toUpperCase() + color.slice(1),
+    };
+    expect(taskTagNameKey(original)).toBe(`taskTags.${color}`);
+    expect(taskTagNameKey({ ...original, name: 'My label' })).toBeNull();
+    expect(taskTagNameKey({ ...original, id: 'custom' })).toBeNull();
+  }
+  for (const preset of TASK_TAG_PRESETS) {
+    expect(taskTagNameKey({ ...tag(preset.id, 'blue'), name: preset.name })).toBe(
+      `taskTags.${preset.key}`,
+    );
+  }
+});
 
 it('advances edit revisions only while the editable baseline remains unchanged', () => {
   const editing = { ...tag('a'), revision: 3 };

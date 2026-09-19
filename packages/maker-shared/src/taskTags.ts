@@ -51,9 +51,9 @@ export const TASK_TAG_PRESETS = [
 export function taskTagNameKey(tag: TaskTag): string | null {
   const preset = TASK_TAG_PRESETS.find((item) => item.id === tag.id && item.name === tag.name);
   if (preset) return `taskTags.${preset.key}`;
-  return tag.id === `default:${tag.color}` &&
-    tag.name === tag.color[0].toUpperCase() + tag.color.slice(1)
-    ? `taskTags.${tag.color}`
+  const originalColor = TASK_TAG_COLORS.find((color) => tag.id === `default:${color}`);
+  return originalColor && tag.name === originalColor[0].toUpperCase() + originalColor.slice(1)
+    ? `taskTags.${originalColor}`
     : null;
 }
 
