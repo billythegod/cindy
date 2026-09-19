@@ -32,7 +32,7 @@ export function createWorkingDirectoryPreflight(deps: WorkingDirectoryPreflightD
   } = deps;
   return async function checkWorkDirExists(
     sessionId: string,
-    workingDir: string | undefined | null,
+    requestedWorkingDir: string | undefined | null,
     agentKind: AgentKind | undefined,
     remoteHostId?: string | null,
     opts?: { suppressMissingBroadcast?: boolean },
@@ -42,10 +42,10 @@ export function createWorkingDirectoryPreflight(deps: WorkingDirectoryPreflightD
     // 场景, 远端走自己的 probe (StartRemoteSessionPanel 创建前 stat-remote-path,
     // 或者 agent 真跑起来时由远端 codex 自己报 ENOENT)。这里直接放行。
     if (remoteHostId) return true;
-    if (!workingDir?.trim()) return true;
-    const cindyMakeWorkspace = isCindyMakeWorktreePath(getUserDataPath(), workingDir);
+    if (!requestedWorkingDir?.trim()) return true;
+    const cindyMakeWorkspace = isCindyMakeWorktreePath(getUserDataPath(), requestedWorkingDir);
     if (cindyMakeWorkspace) workingDirectoryRecovery.discard(sessionId);
-    workingDir = workingDirectoryRecovery.resolve(sessionId, workingDir);
+    let workingDir = workingDirectoryRecovery.resolve(sessionId, requestedWorkingDir);
     const source: AgentKind = agentKind === 'codex' || agentKind === 'pi' ? agentKind : 'claude-code';
     // suppressMissingBroadcast: 调用方(SEND 事务)手里还有 DB 权威值可兜底时,
     // 首检失败只记日志不广播错误横幅——兜底成功的话用户不该看到假错误。
@@ -69,6 +69,25 @@ export function createWorkingDirectoryPreflight(deps: WorkingDirectoryPreflightD
         }
         workingDir = workingDirectoryRecovery.resolve(sessionId, workingDir);
       }
+      const normalizedWorkingDir = path.resolve(workingDir).replace(/\\/g, '/');
+      const managedWorktree = getManagedWorktreeBasePath(normalizedWorkingDir) !== null;
+      const ensureManagedWorktreeReady = async (allowRecovery: boolean): Promise<boolean> => {
+        if (!managedWorktree) return true;
+        const ready = await getManagedWorktreeReadinessForSession(sessionId, workingDir);
+        if (ready === 'ready') return true;
+        if (allowRecovery && ready === 'gone' && !suppress &&
+          await workingDirectoryRecovery.recover(sessionId, workingDir, undefined, [], 'unrestored-worktree')) return true;
+        (suppress ? workdirLog.debug : workdirLog.warn)('workdir preflight rejected', { ...diagnosticContext, reason: 'managed-worktree-not-ready' });
+        if (suppress) {
+          log.debug('send: managed worktree not ready (broadcast suppressed, caller has fallback)', {
+            sessionId,
+            workingDir,
+          });
+        } else {
+          emitWorkDirMissingError(sessionId, workingDir, source, 'not-exist');
+        }
+        return false;
+      };
       const probe = await probeSessionWorkingDirectory(workingDir, {
         stat: statWorkingDirectory,
         readBoundWorkingDir: async () => {
@@ -77,6 +96,7 @@ export function createWorkingDirectoryPreflight(deps: WorkingDirectoryPreflightD
         },
       });
       if (probe.kind === 'bound-timeout') {
+        if (!await ensureManagedWorktreeReady(false)) return false;
         workingDirectoryRecovery.deferObservationUntilNextProbe(sessionId, workingDir);
         workdirLog.debug('workdir preflight timeout tolerated for bound session', {
           ...diagnosticContext, code: 'WORKDIR_PROBE_TIMEOUT', reason: 'bound-directory',
@@ -100,23 +120,7 @@ export function createWorkingDirectoryPreflight(deps: WorkingDirectoryPreflightD
       // Managed worktrees need a stronger readiness check than directory existence: another send
       // may observe `git worktree add` before snapshot apply finishes, and a previous apply conflict
       // deliberately leaves the directory present while keeping the session blocked.
-      const normalizedWorkingDir = path.resolve(workingDir).replace(/\\/g, '/');
-      if (getManagedWorktreeBasePath(normalizedWorkingDir) !== null) {
-        const ready = await getManagedWorktreeReadinessForSession(sessionId, workingDir);
-        if (ready !== 'ready') {
-          if (ready === 'gone' && !suppress && await workingDirectoryRecovery.recover(sessionId, workingDir, undefined, [], 'unrestored-worktree')) return true;
-          (suppress ? workdirLog.debug : workdirLog.warn)('workdir preflight rejected', { ...diagnosticContext, reason: 'managed-worktree-not-ready' });
-          if (suppress) {
-            log.debug('send: managed worktree not ready (broadcast suppressed, caller has fallback)', {
-              sessionId,
-              workingDir,
-            });
-          } else {
-            emitWorkDirMissingError(sessionId, workingDir, source, 'not-exist');
-          }
-          return false;
-        }
-      }
+      if (!await ensureManagedWorktreeReady(true)) return false;
       if (!cindyMakeWorkspace && getManagedWorktreeBasePath(normalizedWorkingDir) === null) {
         if (!await workingDirectoryRecovery.recover(sessionId, workingDir)) {
           (suppress ? workdirLog.debug : workdirLog.warn)('workdir preflight rejected', { ...diagnosticContext, reason: 'recovery-failed-after-stat' });
@@ -143,6 +147,20 @@ export function createWorkingDirectoryPreflight(deps: WorkingDirectoryPreflightD
           return false;
         }
         throw error;
+      }
+      // ENOTDIR proves that a path component is not a directory, while other
+      // permission, I/O and transport failures must keep their original error.
+      if (errorCode === 'ENOTDIR') {
+        (suppress ? workdirLog.debug : workdirLog.warn)('workdir preflight rejected', { ...diagnosticContext, reason: 'not-directory' });
+        if (suppress) {
+          log.debug('send: workdir not a directory (broadcast suppressed, caller has fallback)', {
+            sessionId,
+            workingDir,
+          });
+        } else {
+          emitWorkDirMissingError(sessionId, workingDir, source, 'not-dir');
+        }
+        return false;
       }
       // Only ENOENT proves that a directory is absent. Permission, I/O and
       // transport failures must keep their original error instead of becoming a

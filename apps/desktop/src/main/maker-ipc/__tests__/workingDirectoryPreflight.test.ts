@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createWorkingDirectoryPreflight } from '../workingDirectoryPreflight';
 import { createPreflightHarness, filesystemError } from './helpers/workingDirectoryPreflightHarness';
 
@@ -73,6 +73,26 @@ describe('working directory send preflight', () => {
     await expect(h.check('s', h.dir, 'codex')).resolves.toBe(false);
     expect(h.emitMissing).toHaveBeenCalledWith('s', h.dir, 'codex', 'not-dir');
     expect(h.recover).toHaveBeenCalledWith('s', h.dir, undefined, [], 'ordinary', { existingFallbackOnly: true });
+  });
+
+  it('treats ENOTDIR as a non-directory result without entering missing recovery', async () => {
+    const h = createPreflightHarness();
+    h.io.stat.mockRejectedValue(filesystemError('ENOTDIR'));
+    await expect(h.check('s', h.dir, 'codex')).resolves.toBe(false);
+    expect(h.emitMissing).toHaveBeenCalledWith('s', h.dir, 'codex', 'not-dir');
+    expect(h.recover).toHaveBeenCalledWith('s', h.dir, undefined, [], 'ordinary', { existingFallbackOnly: true });
+  });
+
+  it('checks managed worktree readiness before allowing a bound timeout', async () => {
+    const h = createPreflightHarness();
+    h.deps.getManagedWorktreeBasePath = vi.fn(() => h.dir);
+    h.deps.getManagedWorktreeReadinessForSession = vi.fn(async () => 'retry' as const);
+    h.io.stat.mockRejectedValue(filesystemError('WORKDIR_PROBE_TIMEOUT'));
+    const check = createWorkingDirectoryPreflight(h.deps);
+    await expect(check('s', h.dir, 'codex')).resolves.toBe(false);
+    expect(h.deps.getManagedWorktreeReadinessForSession).toHaveBeenCalledWith('s', h.dir);
+    expect(h.emitMissing).toHaveBeenCalledWith('s', h.dir, 'codex', 'not-exist');
+    expect(h.recovery.peek('s', h.dir)).toBeNull();
   });
 
   it('does not probe SSH paths on the local host', async () => {
