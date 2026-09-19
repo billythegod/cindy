@@ -216,7 +216,10 @@ export function OrcaWorkerStatusCard({ leadSessionId, deviceId, maker, onOpenWor
     {/* 桌面 Worker 上限为 20(register.ts COLLABORATION_WORKER_LIMIT_MAX),按 44pt 行高
         展开后可达 880pt,会把消息视口挤没。这里限高滚动,卡片高度恒定可控。 */}
     {expanded ? <ScrollView style={styles.rows} nestedScrollEnabled>{workers.map((worker, index) => {
-      const name = worker.label ?? worker.role ?? `Worker ${index + 1}`;
+      // 兜底名同样走 catalog:GLOSSARY:58 裁决的是「Worker 五语保留英文」这一译法,
+      // 不是「可以不进词条」—— 硬编码会绕过 i18n 门禁与未来的排版调整。
+      const name = worker.label ?? worker.role
+        ?? i18n.t('session.presentation.collaboration.workerFallbackName', { n: index + 1 });
       const workerSessionId = worker.sessionId;
       const body = <>
         <View style={[styles.dot, { backgroundColor: statusDotColor(worker.status, colors) }]} />

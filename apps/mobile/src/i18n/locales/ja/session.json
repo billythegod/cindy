@@ -42,6 +42,7 @@
       "readOnlyReason": "モバイル版の初期バージョンではコラボレーションは読み取り専用です。確認、キュー編集、セッション変更はコンピューターで行ってください。",
       "composerReadOnlyReason": "このコラボレーションのサブタスクはモバイルでは読み取り専用です。メッセージはコンピューターから送信してください。",
       "workersTitle": "Worker（{{n}}）",
+      "workerFallbackName": "Worker {{n}}",
       "workerStatus": {
         "unknown": "不明",
         "running": "実行中",

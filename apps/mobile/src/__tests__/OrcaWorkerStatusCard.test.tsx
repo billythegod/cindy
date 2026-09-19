@@ -447,3 +447,13 @@ it('availability 未决(null)不阻断探测', async () => {
   await act(async () => toggle().click());
   expect(container.textContent).toContain('w-null');
 });
+
+it('label 与 role 都缺失时,兜底名走 i18n catalog 而非硬编码', async () => {
+  await render([{ id: 'a', status: 'running', sessionId: 's-a' }]);
+  await act(async () => toggle().click());
+  // mock 的 i18n.t 直接回 key:命中说明走了 catalog,没有硬编码 "Worker 1"。
+  expect(container.textContent).toContain(
+    'session.presentation.collaboration.workerFallbackName',
+  );
+  expect(container.textContent).not.toContain('Worker 1');
+});

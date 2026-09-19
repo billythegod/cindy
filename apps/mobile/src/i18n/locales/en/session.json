@@ -42,6 +42,7 @@
       "readOnlyReason": "Collaboration is read-only on the first mobile version. Handle confirmations, queue edits, and session changes on your computer.",
       "composerReadOnlyReason": "This collaboration subtask is read-only on mobile. Send messages from your computer.",
       "workersTitle": "Workers ({{n}})",
+      "workerFallbackName": "Worker {{n}}",
       "workerStatus": {
         "unknown": "Unknown",
         "running": "Running",

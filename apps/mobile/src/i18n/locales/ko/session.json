@@ -42,6 +42,7 @@
       "readOnlyReason": "모바일 첫 버전에서 협업 모드는 읽기 전용입니다. 확인 처리, 대기열 편집 및 세션 변경은 컴퓨터에서 진행하세요.",
       "composerReadOnlyReason": "이 협업 하위 작업은 모바일에서 읽기 전용입니다. 컴퓨터에서 메시지를 보내세요.",
       "workersTitle": "Worker {{n}}개",
+      "workerFallbackName": "Worker {{n}}",
       "workerStatus": {
         "unknown": "알 수 없음",
         "running": "실행 중",
