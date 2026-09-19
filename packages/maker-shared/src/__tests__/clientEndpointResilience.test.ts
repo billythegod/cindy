@@ -206,7 +206,136 @@ describe('regional endpoint resilience', () => {
         fetchText,
         mirrorUrls: ['https://backup.example.com/cn/endpoint.json'],
       }),
-    ).toEqual({ ok: false, reason: 'untrusted-mirror-endpoints' });
+    ).toMatchObject({ ok: true, source: 'bundled', text: manifest('cn') });
+  });
+
+  it.each(['cn', 'global'] as const)(
+    'only persists restorable %s snapshots from custom sources',
+    async (region) => {
+      const customSource = 'https://custom.example.com/endpoint.json';
+      const text = manifest(region, {
+        authApiBaseUrl: 'https://auth.custom.example.com',
+      });
+      const writeCache = vi.fn();
+      expect(
+        await resolveResilientEndpointManifest({
+          region,
+          sourceUrl: customSource,
+          writeCache,
+          fetchText: async () => ({ ok: true, text }),
+        }),
+      ).toMatchObject({ ok: true, source: 'network', text });
+      expect(writeCache).not.toHaveBeenCalled();
+      // Even a legacy entry must not make custom domains trusted offline.
+      expect(
+        await resolveResilientEndpointManifest({
+          region,
+          sourceUrl: customSource,
+          fetchText: fail,
+          readCache: () => ({
+            ...entry(region),
+            sourceUrl: customSource,
+            manifestText: text,
+          }),
+        }),
+      ).toMatchObject({ ok: false });
+      const trustedText = manifest(region);
+      await resolveResilientEndpointManifest({
+        region,
+        sourceUrl: customSource,
+        writeCache,
+        fetchText: async () => ({ ok: true, text: trustedText }),
+      });
+      expect(writeCache).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceUrl: customSource,
+          manifestText: trustedText,
+        }),
+      );
+      expect(
+        await resolveResilientEndpointManifest({
+          region,
+          sourceUrl: customSource,
+          fetchText: fail,
+          readCache: () => writeCache.mock.calls[0][0],
+        }),
+      ).toMatchObject({ ok: true, source: 'cache', text: trustedText });
+    },
+  );
+
+  it.each([
+    ['JSON', { ok: true, text: '{' }],
+    ['schema', { ok: true, text: manifest('cn', { schemaVersion: 99 }) }],
+    ['region', { ok: true, text: manifest('cn', { region: 'global' }) }],
+    [
+      'domain',
+      {
+        ok: true,
+        text: manifest('cn', { authApiBaseUrl: 'https://auth.future.example' }),
+      },
+    ],
+    [
+      'protocol',
+      {
+        ok: true,
+        text: manifest('cn', { authApiBaseUrl: 'http://auth.cindy.com.cn' }),
+      },
+    ],
+    ['404', { ok: false, detail: 'http-404' }],
+  ] as const)(
+    'skips incompatible mirror %s without caching it',
+    async (_kind, response) => {
+      for (const cached of [
+        undefined,
+        entry('cn', { authApiBaseUrl: 'https://cached.cindy.com.cn' }),
+      ]) {
+        const writeCache = vi.fn();
+        const fetchText = vi
+          .fn()
+          .mockImplementationOnce(fail)
+          .mockResolvedValueOnce(response);
+        expect(
+          await resolveResilientEndpointManifest({
+            region: 'cn',
+            sourceUrl: sourceUrl('cn'),
+            fetchText,
+            writeCache,
+            readCache: () => cached,
+          }),
+        ).toMatchObject({
+          ok: true,
+          source: cached ? 'cache' : 'bundled',
+          text: cached?.manifestText ?? manifest('cn'),
+        });
+        expect(fetchText).toHaveBeenCalledTimes(2);
+        expect(writeCache).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each([
+    'invalid',
+    'http://backup.example.com/endpoint.json',
+    'https://user:pass@backup.example.com/endpoint.json',
+  ])('skips invalid mirror URL %s without requesting it', async (url) => {
+    const fetchText = vi.fn(fail);
+    expect(
+      await resolveResilientEndpointManifest({
+        region: 'cn',
+        sourceUrl: sourceUrl('cn'),
+        fetchText,
+        mirrorUrls: [url],
+      }),
+    ).toMatchObject({ ok: true, source: 'bundled' });
+    expect(fetchText).toHaveBeenCalledTimes(1);
+    expect(
+      await resolveResilientEndpointManifest({
+        region: 'cn',
+        sourceUrl: url,
+        fetchText,
+      }),
+    ).toEqual({ ok: false, reason: 'invalid-manifest-url' });
+    expect(fetchText).toHaveBeenCalledTimes(1);
   });
 
   it('never switches a custom environment to official services', async () => {

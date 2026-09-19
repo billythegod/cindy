@@ -154,7 +154,7 @@ export interface ResilientEndpointDeps {
   bundledText?: string | null;
 }
 
-/** One complete snapshot per resolution. Only transport failures allow fallback. */
+/** One complete snapshot per resolution. Primary configuration errors remain fatal. */
 export async function resolveResilientEndpointManifest(
   deps: ResilientEndpointDeps,
 ): Promise<ResilientEndpointResult> {
@@ -171,10 +171,14 @@ export async function resolveResilientEndpointManifest(
     try {
       address = new URL(url);
     } catch {
-      return { ok: false, reason: 'invalid-manifest-url' };
+      reason = 'invalid-manifest-url';
+      if (index === 0) return { ok: false, reason };
+      continue;
     }
     if (address.protocol !== 'https:' || address.username || address.password) {
-      return { ok: false, reason: 'invalid-manifest-url' };
+      reason = 'invalid-manifest-url';
+      if (index === 0) return { ok: false, reason };
+      continue;
     }
     const fetched = await bounded<EndpointManifestFetchResult>(
       async () => {
@@ -196,24 +200,32 @@ export async function resolveResilientEndpointManifest(
     );
     if (fetched.ok) {
       const parsed = parseForRegion(fetched.text, deps.region);
-      if (!parsed.ok) return parsed;
-      // A mirror cannot redirect authentication to another region, even on old region-less manifests.
-      if (
-        index > 0 &&
-        !parseTrustedEndpointSnapshot(fetched.text, deps.region)
-      ) {
-        return { ok: false, reason: 'untrusted-mirror-endpoints' };
+      if (!parsed.ok) {
+        if (index === 0) return parsed;
+        reason = parsed.reason;
+        continue;
       }
-      await bounded(
-        () =>
-          deps.writeCache?.({
-            savedAt: new Date().toISOString(),
-            sourceUrl: deps.sourceUrl,
-            manifestText: fetched.text,
-          }),
-        STORAGE_TIMEOUT_MS,
-        undefined,
+      const restorable = parseTrustedEndpointSnapshot(
+        fetched.text,
+        deps.region,
       );
+      // A mirror cannot redirect authentication to another region, even on old region-less manifests.
+      if (index > 0 && !restorable) {
+        reason = 'untrusted-mirror-endpoints';
+        continue;
+      }
+      // Do not persist custom endpoint domains that the offline reader cannot trust.
+      if (restorable)
+        await bounded(
+          () =>
+            deps.writeCache?.({
+              savedAt: new Date().toISOString(),
+              sourceUrl: deps.sourceUrl,
+              manifestText: fetched.text,
+            }),
+          STORAGE_TIMEOUT_MS,
+          undefined,
+        );
       return {
         ok: true,
         parsed,
@@ -222,7 +234,7 @@ export async function resolveResilientEndpointManifest(
       };
     }
     reason = `fetch-failed:${fetched.detail}`;
-    if (classifyEndpointManifestFailure(reason) !== 'network')
+    if (index === 0 && classifyEndpointManifestFailure(reason) !== 'network')
       return { ok: false, reason };
   }
   const cached = readTrustedEndpointCache(

@@ -1,5 +1,5 @@
 /** Startup discovery uses the same regional cache/bundle policy as session recovery.
- * Online configuration errors remain blocking; no fields are merged across snapshots.
+ * Primary configuration errors remain blocking; no fields are merged across snapshots.
  */
 
 import {
