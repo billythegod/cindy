@@ -22,6 +22,37 @@ function cacheRoot(userData: string): string {
   return path.join(userData, 'remote-desktop', 'windows-development');
 }
 
+/** Isolated Dev profiles are `<region>-dev2` or `<region>-dev2-<name>`.
+ * The SYSTEM service name is checkout-global, so uninstall must still find
+ * a previously compiled helper after switching `--isolated` sandboxes. */
+function isolatedDevPrefix(userData: string): string | null {
+  const base = path.basename(userData);
+  const match = /^(.*)-dev2(?:-.+)?$/.exec(base);
+  return match ? `${match[1]}-dev2` : null;
+}
+
+async function relatedUserDataProfiles(userData: string): Promise<string[]> {
+  const current = path.resolve(userData);
+  const profiles = [current];
+  const prefix = isolatedDevPrefix(current);
+  if (!prefix) return profiles;
+  const parent = path.dirname(current);
+  try {
+    const currentReal = await fs.realpath(current).catch(() => current);
+    for (const name of await fs.readdir(parent)) {
+      if (name !== prefix && !name.startsWith(`${prefix}-`)) continue;
+      const candidate = path.join(parent, name);
+      if (candidate === current) continue;
+      const candidateReal = await fs.realpath(candidate).catch(() => candidate);
+      if (candidateReal === currentReal) continue;
+      profiles.push(candidate);
+    }
+  } catch {
+    /* A missing AppData parent is not an installed helper. */
+  }
+  return profiles;
+}
+
 function encodeReceipt(application: string, executable: string, fingerprint: string): string {
   return JSON.stringify({ application, executable, fingerprint });
 }
@@ -57,11 +88,11 @@ function receiptMatchesCheckout(
   return fingerprint !== undefined && text === fingerprint;
 }
 
-async function latestInstalledAssets(
+async function latestInstalledAssetsIn(
   userData: string,
   application: string,
   executable: string,
-): Promise<WindowsDesktopAssets | null> {
+): Promise<{ binary: string; addon: string; mtime: number } | null> {
   const root = cacheRoot(userData);
   let entries: string[];
   try {
@@ -90,6 +121,19 @@ async function latestInstalledAssets(
     } catch {
       /* Incomplete cache entries are not an installed helper. */
     }
+  }
+  return latest;
+}
+
+async function latestInstalledAssets(
+  userData: string,
+  application: string,
+  executable: string,
+): Promise<WindowsDesktopAssets | null> {
+  let latest: { binary: string; addon: string; mtime: number } | null = null;
+  for (const profile of await relatedUserDataProfiles(userData)) {
+    const found = await latestInstalledAssetsIn(profile, application, executable);
+    if (found && (!latest || found.mtime > latest.mtime)) latest = found;
   }
   return latest ? { binary: latest.binary, addon: latest.addon } : null;
 }

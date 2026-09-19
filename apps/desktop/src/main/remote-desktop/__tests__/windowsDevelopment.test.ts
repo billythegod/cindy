@@ -170,4 +170,29 @@ describe('Dev Windows desktop components', () => {
     expect(await first.installed()).toEqual(mine);
     expect(await later.installed()).toEqual(other);
   });
+
+  it('reuses a helper prepared in another isolated Dev sandbox for the same checkout', async () => {
+    const parent = path.join(root, 'AppData');
+    const firstProfile = path.join(parent, 'Cindy-dev2');
+    const otherProfile = path.join(parent, 'Cindy-dev2-feature');
+    const { run } = fixture('unused');
+    const first = createWindowsDevelopmentAssets({
+      application,
+      executable,
+      userData: firstProfile,
+      arch: 'x64',
+      run,
+    });
+    const prepared = await first.resolve(true);
+    const later = createWindowsDevelopmentAssets({
+      application,
+      executable,
+      userData: otherProfile,
+      arch: 'x64',
+      run,
+    });
+    expect(await later.resolve()).toBeNull();
+    expect(await later.installed()).toEqual(prepared);
+  });
 });
+
