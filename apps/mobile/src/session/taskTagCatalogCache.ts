@@ -4,11 +4,13 @@ import { normalizeTaskTags, type TaskTag, type TaskTagColor } from '@cindy/maker
 // A disconnect retains display data; revocation and account changes clear it.
 type Catalog = { tags: TaskTag[]; supportedColors?: readonly TaskTagColor[] };
 const catalogs = new Map<string, Catalog>();
+// Account resets invalidate every request; peer eviction affects only that peer.
 let generation = 0;
+const deviceGenerations = new Map<string, number>();
 const keyFor = (owner: string, device: string) => JSON.stringify([owner, device]);
 
-export function taskTagCacheGeneration() {
-  return generation;
+export function taskTagCacheGeneration(device: string) {
+  return `${generation}:${deviceGenerations.get(device) ?? 0}`;
 }
 
 export function readTaskTagCatalog(
@@ -56,7 +58,7 @@ export function writeTaskTagCatalog(
 }
 
 export function evictTaskTagCatalog(device: string) {
-  generation++;
+  deviceGenerations.set(device, (deviceGenerations.get(device) ?? 0) + 1);
   for (const key of catalogs.keys()) {
     if (JSON.parse(key)[1] === device) catalogs.delete(key);
   }
@@ -64,5 +66,6 @@ export function evictTaskTagCatalog(device: string) {
 
 export function resetTaskTagCatalogCache() {
   generation++;
+  deviceGenerations.clear();
   catalogs.clear();
 }

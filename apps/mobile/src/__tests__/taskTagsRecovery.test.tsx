@@ -140,7 +140,11 @@ vi.mock("@/session/remoteSessionStore", () => ({
 }));
 import { TaskTagsPanel, TaskTagDots } from "@/session/TaskTags";
 import { NativeTagShortcuts } from "@/session/SessionOptionsExpoSheet";
-import { resetTaskTagCatalogCache } from "@/session/taskTagCatalogCache";
+import {
+  evictTaskTagCatalog,
+  readTaskTagCatalog,
+  resetTaskTagCatalogCache,
+} from "@/session/taskTagCatalogCache";
 const tag = {
   id: "tag",
   name: "Work",
@@ -178,6 +182,50 @@ beforeEach(() => {
   root = createRoot(node);
 });
 afterEach(() => act(() => root.unmount()));
+it.each(["other", "host", "account"])(
+  "scopes in-flight catalog invalidation to %s",
+  async (scope) => {
+    let finish!: (value: any) => void;
+    h.invoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render();
+    if (scope === "account") resetTaskTagCatalogCache();
+    else evictTaskTagCatalog(scope);
+    await act(async () => finish({ tags: [tag], sessions: [] }));
+    expect(h.compact.tags.map((item: any) => item.id)).toEqual(
+      scope === "other" ? [tag.id] : [],
+    );
+    expect(readTaskTagCatalog("owner", "host")?.tags).toEqual(
+      scope === "other" ? [tag] : undefined,
+    );
+    h.context.connectionEpoch++;
+    await render();
+    expect(h.compact.tags.map((item: any) => item.id)).toEqual([tag.id]);
+  },
+);
+it.each(["other", "host", "account"])(
+  "scopes late catalog errors to %s",
+  async (scope) => {
+    let fail!: (error: Error) => void;
+    h.invoke.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          fail = reject;
+        }),
+    );
+    await render();
+    if (scope === "account") resetTaskTagCatalogCache();
+    else evictTaskTagCatalog(scope);
+    await act(async () => fail(new Error("OFFLINE")));
+    expect(h.compact.message).toBe(
+      scope === "other" ? "taskTags.offline" : undefined,
+    );
+  },
+);
 it.each([false, true])(
   "preserves drafts across catalog pushes (external recolor: %s)",
   async (recolored) => {

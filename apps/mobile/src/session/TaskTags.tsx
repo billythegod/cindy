@@ -405,7 +405,11 @@ export function TaskTagsPanel({
     const generation = ++requestGeneration.current;
     const catalogAtStart = catalogGeneration.current;
     const selectionAtStart = selectionGeneration.current;
-    const cacheAtStart = taskTagCacheGeneration();
+    const cacheAtStart = taskTagCacheGeneration(target);
+    const isCurrent = () =>
+      alive.current &&
+      generation === requestGeneration.current &&
+      cacheAtStart === taskTagCacheGeneration(target);
     if (!background) setBusy(true);
     setError('');
     try {
@@ -415,12 +419,7 @@ export function TaskTagsPanel({
             throw new Error('OFFLINE');
         },
       });
-      if (
-        !alive.current ||
-        generation !== requestGeneration.current ||
-        cacheAtStart !== taskTagCacheGeneration()
-      )
-        return null;
+      if (!isCurrent()) return null;
       if (catalogAtStart === catalogGeneration.current) {
         latestCatalog.current = r.tags;
         writeTaskTagCatalog(
@@ -443,7 +442,7 @@ export function TaskTagsPanel({
       }
       return r;
     } catch (e) {
-      if (!alive.current || generation !== requestGeneration.current) return null;
+      if (!isCurrent()) return null;
       setError(taskTagErrorKey(e, request.action));
       return null;
     } finally {
