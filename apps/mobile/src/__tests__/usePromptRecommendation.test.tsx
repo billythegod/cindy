@@ -33,6 +33,32 @@ it('historical navigation only requests a cached host result', async () => {
   expect(value.prompt).toBe('Suggested next step');
 });
 
+it('defers prediction for an empty queue edit and hides retained results until it ends', async () => {
+  await render({ queueEditing: true }); await advance();
+  expect(request).not.toHaveBeenCalled();
+  expect(value.prompt).toBeNull();
+  await render({ queueEditing: false }); await advance();
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(value.prompt).toBe('Suggested next step');
+  await render({ queueEditing: true }); await advance();
+  expect(value.prompt).toBeNull();
+  await render({ queueEditing: false }); await advance();
+  expect(value.prompt).toBe('Suggested next step');
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+it('hides a prediction that resolves after queue editing begins', async () => {
+  let resolve!: (result: { prompt: string }) => void;
+  request.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  await render(); await advance();
+  await render({ queueEditing: true });
+  await act(async () => resolve({ prompt: 'Late suggestion' }));
+  expect(value.prompt).toBeNull();
+  await render({ queueEditing: false });
+  expect(value.prompt).toBe('Late suggestion');
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
 it('waits for the new completion revision even when stopped arrives first', async () => {
   await render({ running: true }); await advance();
   expect(request).not.toHaveBeenCalled();

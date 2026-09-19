@@ -1384,6 +1384,8 @@ export default function SessionScreen() {
       }
     };
   }, [sessionId, removePendingUpload]);
+  // 排队编辑复用 composer；推荐只属于用户的普通草稿。
+  const [queueEditing, setQueueEditing] = useState<QueueEditingState | null>(null);
   const [voiceStartPending, setVoiceStartPending] = useState(false);
   const voiceStartPendingSeqRef = useRef(0);
   const voiceStartedOnPressInRef = useRef(false);
@@ -1393,6 +1395,7 @@ export default function SessionScreen() {
     agentKind: recommendationSession ? agentKindForSession(recommendationSession) : null,
     revision: recommendationSession?.lastTurnEndedAt, running: remoteSessionRunning,
     composerSource: composerDraftSource,
+    queueEditing: queueEditing !== null,
     hasAttachments: attachments.length > 0 || pendingUploads.length > 0 || pastePlaceholderCount > 0,
     hasTerminalError: remoteSessionRunStatus.hasTerminalError === true,
     voiceIsBusy: voiceStartPending || voiceState === 'listening'
@@ -1423,7 +1426,6 @@ export default function SessionScreen() {
   // 排队消息「复用 composer 编辑」态:进入时把队列条目的文本/附件载入 composer,
   // 暂存(stash)用户原本的草稿与附件托盘,退出(保存/放弃/条目消失)时恢复。
   // ref 镜像供 send() 等异步闭包读最新值。
-  const [queueEditing, setQueueEditing] = useState<QueueEditingState | null>(null);
   const queueEditingRef = useRef<QueueEditingState | null>(null);
   // 会话切换 cleanup(声明在前)引用组件后段的回收函数,经 ref 断开声明顺序依赖。
   const discardQueueEditTransientAttachmentResourcesRef = useRef<

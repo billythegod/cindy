@@ -9,7 +9,7 @@ const subscribeEmptyComposer = () => () => {};
 const CACHE_RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
 
 export function usePromptRecommendation({ ownerId, deviceId, sessionId, agentKind, revision, running, maker,
-  composerSource, hasAttachments = false, hasTerminalError = false, voiceIsBusy = false }: {
+  composerSource, hasAttachments = false, hasTerminalError = false, voiceIsBusy = false, queueEditing = false }: {
   ownerId?: string;
   deviceId: string;
   sessionId: string;
@@ -20,6 +20,7 @@ export function usePromptRecommendation({ ownerId, deviceId, sessionId, agentKin
   hasAttachments?: boolean;
   hasTerminalError?: boolean;
   voiceIsBusy?: boolean;
+  queueEditing?: boolean;
   maker: Pick<MobileMakerTransport, 'predictNextPrompt'>;
 }) {
   const scope = JSON.stringify([ownerId, deviceId, sessionId]);
@@ -28,7 +29,7 @@ export function usePromptRecommendation({ ownerId, deviceId, sessionId, agentKin
     const snapshot = composerSource?.getSnapshot();
     return !!snapshot && (!!snapshot.draft.trim() || composerDocumentQuotes(snapshot.document).length > 0);
   });
-  const blocked = hasComposerContent || hasAttachments || hasTerminalError || voiceIsBusy;
+  const blocked = hasComposerContent || hasAttachments || hasTerminalError || voiceIsBusy || queueEditing;
   const [result, setResult] = useState<{ scope: string; revision: number; prompt: string } | null>(null);
   // The transport is recreated when the device-link context refreshes. Keep the
   // latest callable without treating that refresh as a new recommendation run.
@@ -136,7 +137,7 @@ export function usePromptRecommendation({ ownerId, deviceId, sessionId, agentKin
   }, [scope, deviceId, sessionId, agentKind, revision, running, blocked, hasTerminalError, result]);
 
   return {
-    prompt: !running && !hasTerminalError && result?.scope === scope && result.revision === revision
+    prompt: !running && !hasTerminalError && !queueEditing && result?.scope === scope && result.revision === revision
       && consumedRevisions.get(scope) !== revision ? result.prompt : null,
     dismiss,
   };
