@@ -225,16 +225,18 @@ describe('AutomationSessionGroupItem — 收起态的未处理告警', () => {
     expect(childRunIds(container)).toEqual([]);
   });
 
-  it('收起且存在错误时,点组头仍打开错误条目', () => {
+  it.each(['done', 'awaiting'] as const)('最新运行为 %s 且存在旧错误时，组头仍打开最新运行', (kind) => {
+    addSessionAttention('run-0', kind);
     const onSessionClick = vi.fn();
     renderGroup({
       urgentSessionIds: new Set(['run-3']),
+      notifications: ['run-0'],
       onSessionClick,
     });
 
     fireEvent.click(screen.getByText('产品决策巡检'));
-    expect(onSessionClick).toHaveBeenCalledWith('run-3');
-    expect(onSessionClick).not.toHaveBeenCalledWith('run-0');
+    expect(onSessionClick).toHaveBeenCalledWith('run-0');
+    expect(onSessionClick).not.toHaveBeenCalledWith('run-3');
   });
 
   it('等待回复的旧运行单独成行,组头仍代表最新运行', () => {

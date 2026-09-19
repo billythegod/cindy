@@ -7,7 +7,6 @@ import type { AttentionKind } from '@/lib/sessionAttentionStore';
 import type { RemoteSessionActivityPhase } from '@/features/device-link/remoteSessionActivityStore';
 import {
   resolveCollapsedAttention,
-  resolveCollapsedGroupHeaderSessionId,
   resolveCollapsedGroupRightStatus,
   resolveCollapsedProjectAttentionTone,
 } from '../features/cc-agent/sidebar/projectCollapsedAttention';
@@ -232,11 +231,9 @@ describe('collapsed project attention wiring', () => {
   });
 
   it('feeds the automation group header and its collapsed rows from the same summary', () => {
-    // 组头红点与收起态提上来的告警行必须同源 —— 判据分家就会重演「项目行有红点、
-    // 展开后哪一行都没有」。
+    // 汇总仅补完成绿点；错误子行仍由同一份汇总记录决定。
     expect(automationGroupSource).toContain('resolveCollapsedAttention({');
     expect(automationGroupSource).toContain('resolveCollapsedGroupRightStatus({');
-    expect(automationGroupSource).toContain('resolveCollapsedGroupHeaderSessionId({');
     expect(automationGroupSource).toMatch(/tone:\s*collapsedAttention\.tone/);
     expect(automationGroupSource).toMatch(/new Set\(collapsedAttention\.errorSessionIds\)/);
     expect(automationGroupSource).toContain('alertSessionIds,');
@@ -254,31 +251,6 @@ describe('collapsed project attention wiring', () => {
     expect(automationGroupSource).toMatch(/useSessionsAttentionKindMap\(groupSessionIds\)/);
     expect(automationGroupSource).toMatch(/useSessionsAttentionUrgencyIdSet\(groupSessionIds\)/);
     expect(automationGroupSource).toMatch(/useRemoteSessionsPhaseMap\(group.sessions\)/);
-  });
-
-  it('opens the unread-failed session from a collapsed red group header', () => {
-    const attention = { tone: 'error' as const, errorSessionIds: ['run-old'] };
-    expect(
-      resolveCollapsedGroupHeaderSessionId({
-        collapsed: true,
-        latestSessionId: 'run-new',
-        attention,
-      }),
-    ).toBe('run-old');
-    expect(
-      resolveCollapsedGroupHeaderSessionId({
-        collapsed: false,
-        latestSessionId: 'run-new',
-        attention,
-      }),
-    ).toBe('run-new');
-    expect(
-      resolveCollapsedGroupHeaderSessionId({
-        collapsed: true,
-        latestSessionId: 'run-new',
-        attention: { tone: 'done', errorSessionIds: [] },
-      }),
-    ).toBe('run-new');
   });
 
   it('feeds both regular and pinned project rows from their displayed children', () => {

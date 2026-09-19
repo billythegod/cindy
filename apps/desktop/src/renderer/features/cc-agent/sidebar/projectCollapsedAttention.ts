@@ -25,7 +25,7 @@ interface CollapsedAttentionInput {
 }
 
 export interface CollapsedAttentionSummary {
-  /** 折叠容器右侧状态槽要显示的档位;两者都没有则 null(回落时间文字)。 */
+  /** 折叠容器的成功未读档位；没有则 null（回落最新状态或时间文字）。 */
   tone: CollapsedAttentionTone | null;
   /**
    * 未处理错误的子任务 id。保留收起态下错误条目的可达性，
@@ -66,7 +66,7 @@ export function resolveCollapsedAttention({
       if (remotePhase === 'error') errorSessionIds.push(session.id);
       else if (remotePhase === 'completed') hasDone = true;
       // 远程活动镜像是远程行右侧状态的权威来源；running / needs-interaction
-      // 分别显示 spinner / 蓝点，不能再被本地残留状态误汇总成红绿点。
+      // 分别显示 spinner / 蓝点，不能再被本地残留状态误汇总成完成绿点。
       continue;
     }
 
@@ -100,32 +100,8 @@ export function resolveCollapsedProjectAttentionTone(
 }
 
 /**
- * 定时任务分组头右侧状态槽的最终档位。
- *
- * 组头平时是「最新一条运行的代理」(状态 / loading / 点击目标都跟最新那条一致,
- * 2026-08 既有裁决),展开态照此不变;收起态它代表的却是**整组**,于是按整组汇总补两档:
- *   - 汇总出 error → 强制红。压过 latest 的 running spinner,与全端色表
- *     error > awaiting > running > done 一致 ——「等你处理」永远最高。
- *   - 汇总出 done → 只在组头自身无状态可显(time)时补绿。绿点若压掉 spinner 会造成
- *     「仍在跑却看起来已完成」的错觉(sidebarRightStatus 里有同款告警)。
- * awaiting(蓝)刻意不升格,与项目折叠头口径一致。
+ * 定时任务分组头沿用最新运行的状态，折叠时仅在最新状态为 time 时补成功未读绿点。
+ * 本地汇总不产生 error；共享解析器保留其它端的错误汇总行为。
+ * 等待回复不在此处升格，错误子任务通过独立子行保持可达。
  */
 export { resolveCollapsedGroupRightStatus } from '@cindy/maker-shared/session-activity';
-
-/**
- * 组头点击打开哪一条。展开态仍打开最新一条；收起态保留错误条目的打开入口。
- */
-export function resolveCollapsedGroupHeaderSessionId({
-  collapsed,
-  latestSessionId,
-  attention,
-}: {
-  collapsed: boolean;
-  latestSessionId: string | undefined;
-  attention: Pick<CollapsedAttentionSummary, 'tone' | 'errorSessionIds'>;
-}): string | undefined {
-  if (collapsed && attention.errorSessionIds[0]) {
-    return attention.errorSessionIds[0];
-  }
-  return latestSessionId;
-}
