@@ -19,7 +19,7 @@ function harness(originalState: 'EACCES' | 'file' | 'ENOENT' | 'ready', saved = 
   const allocate = vi.fn(async () => fallback);
   const recovery = createWorkingDirectoryRecovery({ stat, mkdir, findFallback }, allocate);
   const emit = vi.fn();
-  const readiness = vi.fn(async () => 'ready');
+  const readiness = vi.fn(async (): Promise<'ready' | 'gone' | 'retry'> => 'ready');
   const managedBase = vi.fn((_dir: string): string | null => null);
   const isCindyMake = vi.fn(() => false);
   const deps = {
@@ -61,7 +61,7 @@ describe('persistent ordinary recovery in workdir preflight', () => {
 
   it('preserves EACCES without a saved workspace instead of reporting missing', async () => {
     const h = harness('EACCES', false);
-    h.readiness.mockResolvedValue('not-managed');
+    h.readiness.mockResolvedValue('retry');
     await expect(h.check('task', h.original, 'codex')).rejects.toMatchObject({ code: 'EACCES' });
     expect(h.recovery.isFallback('task', h.original)).toBe(false);
     expect(h.allocate).not.toHaveBeenCalled();
@@ -80,7 +80,7 @@ describe('persistent ordinary recovery in workdir preflight', () => {
 
   it('leaves a missing-path first probe to the caller with a DB repair candidate', async () => {
     const h = harness('ENOENT', false);
-    h.readiness.mockResolvedValue('not-managed');
+    h.readiness.mockResolvedValue('retry');
     expect(await h.check('task', h.original, 'codex', undefined, { suppressMissingBroadcast: true })).toBe(false);
     expect(h.mkdir).not.toHaveBeenCalled();
     expect(h.allocate).not.toHaveBeenCalled();
