@@ -72,9 +72,10 @@ fn run() -> Result<()> {
                     } else {
                         "updateRequired"
                     }
-                } else if service::registered()? {
-                    // SCM still has the AUTO_START service. A stopped or crashed
-                    // process is not a missing grant; Settings must keep Remove.
+                } else if service::registered()? || installation::leftover_installation()? {
+                    // SCM still has the AUTO_START service, or a failed update left
+                    // the protected Program Files record after deleting the service.
+                    // Neither is a missing grant; Settings must keep Remove.
                     "unavailable"
                 } else {
                     "missing"
@@ -138,9 +139,14 @@ mod tests {
             .unwrap();
         assert!(status.contains("installed_pid"));
         assert!(status.contains("registered()?"));
+        assert!(status.contains("leftover_installation"));
         assert!(
             status.find("registered()?").unwrap() < status.find("\"missing\"").unwrap(),
             "a registered service must not fall through to missing"
+        );
+        assert!(
+            status.find("leftover_installation").unwrap() < status.find("\"missing\"").unwrap(),
+            "a leftover protected install must not fall through to missing"
         );
         assert!(status.contains("\"unavailable\""));
     }

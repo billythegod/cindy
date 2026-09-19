@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import { REMOTE_DESKTOP_OFFER_BUDGET } from '@cindy/device-link';
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -89,6 +90,24 @@ export async function readWindowsDesktopSupport(): Promise<WindowsDesktopSupport
     return 'unavailable';
   }
 }
+export async function uninstallWindowsDesktopSupportFrom(
+  resources: string,
+  progress?: (phase: WindowsDesktopSetupPhase) => void,
+): Promise<void> {
+  if (process.platform !== 'win32') return;
+  const native = {
+    binary: path.join(resources, 'tools', 'remote-desktop', 'cindy-windows-desktop-host.exe'),
+    addon: path.join(resources, 'tools', 'remote-desktop', 'cindy-windows-desktop-host.node'),
+  };
+  if (!existsSync(native.binary)) return;
+  progress?.('removing');
+  await exec(native.binary, ['--elevate-uninstall'], {
+    timeout: 130_000,
+    maxBuffer: 1024,
+    windowsHide: true,
+  });
+}
+
 export async function configureWindowsDesktopSupport(
   enabled: boolean,
   progress?: (phase: WindowsDesktopSetupPhase) => void,

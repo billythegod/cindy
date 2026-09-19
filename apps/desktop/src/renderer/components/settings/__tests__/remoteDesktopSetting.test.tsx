@@ -279,6 +279,20 @@ it('keeps an independent remove action after post-install verification fails', a
   expect(screen.queryByRole('button', { name: 'remoteDesktop.windowsDisable' })).toBeNull();
 });
 
+it('keeps Remove after Main restarts when native status is leftover unavailable', async () => {
+  const state = vi.fn(async () => ({
+    enabled: true,
+    active: null,
+    windowsSupport: 'unavailable',
+  }));
+  const windowsSupport = vi.fn(async () => {});
+  Object.assign(window, { electronAPI: { remoteDesktop: { state, windowsSupport } } });
+  render(<RemoteDesktopSetting />);
+  await act(async () => {});
+  expect(screen.getByRole('button', { name: 'remoteDesktop.windowsDisable' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'remoteDesktop.windowsRetry' })).toBeTruthy();
+});
+
 it('keeps an independent remove action after a failed service update leaves the grant missing', async () => {
   let support: 'missing' | 'ready' = 'missing';
   let setup: {

@@ -28,7 +28,11 @@ vi.mock('node:child_process', () => ({
 vi.mock('node:module', () => ({
   createRequire: () => () => ({ DesktopConnection: { open: runtime.open } }),
 }));
-import { configureWindowsDesktopSupport, readWindowsDesktopSupport } from '../windowsHost';
+import {
+  configureWindowsDesktopSupport,
+  readWindowsDesktopSupport,
+  uninstallWindowsDesktopSupportFrom,
+} from '../windowsHost';
 
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 const resourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
@@ -83,6 +87,35 @@ describe('Windows lock screen service setup', () => {
     runtime.exec.mockResolvedValue({ stdout: 'unavailable\n' });
     expect(await readWindowsDesktopSupport()).toBe('unavailable');
     expect(runtime.open).not.toHaveBeenCalled();
+  });
+
+  it('keeps leftover protected install records removable after Main restarts', async () => {
+    runtime.exec.mockResolvedValue({ stdout: 'unavailable\n' });
+    expect(await readWindowsDesktopSupport()).toBe('unavailable');
+  });
+
+  it('uninstalls a personal-version lock-screen helper from that version resources tree', async () => {
+    const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    mkdirSync(path.join(customResources, 'tools', 'remote-desktop'), { recursive: true });
+    writeFileSync(
+      path.join(customResources, 'tools', 'remote-desktop', 'cindy-windows-desktop-host.exe'),
+      'helper',
+    );
+    try {
+      await uninstallWindowsDesktopSupportFrom(customResources);
+      expect(runtime.exec).toHaveBeenCalledWith(
+        path.join(customResources, 'tools', 'remote-desktop', 'cindy-windows-desktop-host.exe'),
+        ['--elevate-uninstall'],
+        expect.objectContaining({ windowsHide: true }),
+      );
+    } finally {
+      rmSync(customResources, { recursive: true, force: true });
+    }
+  });
+
+  it('skips personal-version uninstall when that snapshot has no helper', async () => {
+    await uninstallWindowsDesktopSupportFrom(path.join(os.tmpdir(), 'cindy-missing-resources'));
+    expect(runtime.exec).not.toHaveBeenCalled();
   });
 
   it('does not treat a running service as authorization for another caller', async () => {

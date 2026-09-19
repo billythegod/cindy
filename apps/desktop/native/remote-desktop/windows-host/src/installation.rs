@@ -127,6 +127,22 @@ impl Installation {
     }
 }
 
+/// Durable leftover after a failed update or helper crash: the Program Files
+/// directory still has authorization/restore/payload even if SCM is gone.
+/// Uses the current helper identity so a Program Files copy is not re-hashed.
+pub fn leftover_installation() -> Result<bool> {
+    let installation = Installation::current()?;
+    if !installation.directory.is_dir() {
+        return Ok(false);
+    }
+    for name in [APPROVAL, ACL_RESTORE, HOST, INPUT] {
+        if installation.directory.join(name).exists() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub fn package_root(binary: &Path) -> Result<PathBuf> {
     let root = binary
         .parent()
@@ -213,5 +229,20 @@ mod tests {
             .join(HOST);
         assert_eq!(package_root(&binary).unwrap(), root);
         assert!(package_root(&root.join(HOST)).is_err());
+    }
+    #[test]
+    fn leftover_installation_looks_at_the_protected_directory_not_scm() {
+        let source = include_str!("installation.rs");
+        assert!(source.contains("pub fn leftover_installation"));
+        assert!(source.contains("APPROVAL"));
+        assert!(source.contains("ACL_RESTORE"));
+        let status = include_str!("main.rs")
+            .split("Some(\"--status\")")
+            .nth(1)
+            .unwrap();
+        assert!(status.contains("leftover_installation"));
+        assert!(
+            status.find("leftover_installation").unwrap() < status.find("\"missing\"").unwrap()
+        );
     }
 }
