@@ -562,9 +562,9 @@ const TASK_INFO_VALUES: ReadonlySet<string> = new Set<TaskInfoField>([
 export const DEFAULT_TASK_INFO_FIELDS: readonly TaskInfoField[] = ['tags', 'time'];
 
 /**
- * 读任务行右侧信息复选。存储为 JSON string[]；非法值逐项剔除。
- * 与其它维度不同：空数组是合法状态（用户显式全不选 = 行右侧留空），
- * 只有解析失败 / 未设置才回落默认。
+ * 旧 string[] 没有记录用户是否见过标签开关，升级时补上默认开启的标签，
+ * 保留其他字段及顺序。新版本以带版本号的字段列表记录显式选择，
+ * 包括关闭标签或全不选；后续启动不再覆盖这些选择。
  */
 export function loadTaskInfoFields(): TaskInfoField[] {
   const storage = safeStorage();
@@ -579,15 +579,17 @@ export function loadTaskInfoFields(): TaskInfoField[] {
   if (raw == null) return [...DEFAULT_TASK_INFO_FIELDS];
   try {
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [...DEFAULT_TASK_INFO_FIELDS];
+    const legacy = Array.isArray(parsed);
+    const values = legacy ? parsed : parsed?.version === 1 ? parsed.fields : null;
+    if (!Array.isArray(values)) return [...DEFAULT_TASK_INFO_FIELDS];
     const seen = new Set<string>();
     const cleaned: TaskInfoField[] = [];
-    for (const value of parsed) {
+    for (const value of values) {
       if (typeof value !== 'string' || !TASK_INFO_VALUES.has(value) || seen.has(value)) continue;
       seen.add(value);
       cleaned.push(value as TaskInfoField);
     }
-    return cleaned;
+    return legacy && !seen.has('tags') ? ['tags', ...cleaned] : cleaned;
   } catch (err) {
     log.warn('[useSidebarFilter] failed to parse taskInfo JSON:', err);
     return [...DEFAULT_TASK_INFO_FIELDS];
@@ -598,7 +600,7 @@ export function persistTaskInfoFields(fields: readonly TaskInfoField[]): void {
   const storage = safeStorage();
   if (!storage) return;
   try {
-    storage.setItem(TASK_INFO_KEY, JSON.stringify(fields));
+    storage.setItem(TASK_INFO_KEY, JSON.stringify({ version: 1, fields }));
   } catch (err) {
     log.warn('[useSidebarFilter] failed to persist taskInfo:', err);
   }
