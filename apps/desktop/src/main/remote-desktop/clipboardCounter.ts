@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { linuxClipboardVersion } from './linuxClipboard';
 
 type Pending = {
   resolve(value: string): void;
@@ -85,6 +86,9 @@ export class ClipboardCounter {
     return session;
   }
   async read(portable = false): Promise<string> {
+    // Linux owns its Wayland selection adapter; its input helper does not
+    // implement the macOS/Windows counter-only pipe.
+    if (process.platform === 'linux') return linuxClipboardVersion();
     const session = this.session ?? this.start();
     if (session.pending.size >= 32) throw unavailable();
     clearTimeout(session.idle);

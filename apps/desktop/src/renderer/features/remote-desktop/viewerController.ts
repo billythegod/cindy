@@ -50,6 +50,14 @@ export interface ViewerSnapshot {
   credentialNotice: string | null;
 }
 
+function connectionBudget(caps: RemoteDesktopCapabilities | null): number {
+  // Match Mobile: system consent has its own two-minute host deadline.
+  return (
+    REMOTE_DESKTOP_CONNECTION_TIMEOUT_MS +
+    (caps?.displays.some((display) => display.id === 'wayland-portal') ? 120_000 : 0)
+  );
+}
+
 /** Desktop presentation adapter. Reuses the Mobile lease, browser media and
  * input queue; only window visibility and native clipboard live on Desktop.
  */
@@ -156,7 +164,15 @@ export class DesktopViewerController {
     ];
   }
   private publish(patch: Partial<ViewerSnapshot>): void {
+    const previousBudget = connectionBudget(this.state.caps);
     this.state = { ...this.state, ...patch };
+    const budget = connectionBudget(this.state.caps);
+    // Capabilities arrive after the initial timer starts. Change its budget
+    // only when the backend changes, never on repeated caps or media retries.
+    if (budget !== previousBudget && this.connectionTimer !== null) {
+      clearTimeout(this.connectionTimer);
+      this.connectionTimer = null;
+    }
     const waiting =
       this.scope.active &&
       !this.disposed &&
@@ -170,7 +186,7 @@ export class DesktopViewerController {
       // Transient failures and media fallback must not renew the total budget.
       this.connectionTimer = setTimeout(() => {
         this.fail(new Error('DESKTOP_CONNECTION_TIMEOUT'));
-      }, REMOTE_DESKTOP_CONNECTION_TIMEOUT_MS);
+      }, budget);
     }
     if (!this.disposed) this.changed(this.state);
   }

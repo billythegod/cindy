@@ -3,8 +3,13 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { ClipboardCounter } from '../clipboardCounter';
+import { linuxClipboardVersion } from '../linuxClipboard';
+
+vi.mock('../linuxClipboard', () => ({ linuxClipboardVersion: vi.fn() }));
+const platform = process.platform;
 
 function fixture(binary = async () => '/fake/helper') {
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
   vi.useFakeTimers();
   const children: Array<ChildProcessWithoutNullStreams> = [];
   const launch = vi.fn(() => {
@@ -22,6 +27,22 @@ function fixture(binary = async () => '/fake/helper') {
 }
 afterEach(() => {
   vi.useRealTimers();
+  Object.defineProperty(process, 'platform', { value: platform });
+});
+
+it('keeps Linux selection versions and failures on the existing Wayland adapter', async () => {
+  const binary = vi.fn(async () => '/fake/helper');
+  const { counter, launch } = fixture(binary);
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+  vi.mocked(linuxClipboardVersion).mockResolvedValueOnce('opaque-linux-version');
+  expect(await counter.read(true)).toBe('opaque-linux-version');
+  vi.mocked(linuxClipboardVersion).mockRejectedValueOnce(
+    new Error('DESKTOP_CLIPBOARD_UNAVAILABLE'),
+  );
+  await expect(counter.read()).rejects.toThrow('DESKTOP_CLIPBOARD_UNAVAILABLE');
+  counter.stop();
+  expect(binary).not.toHaveBeenCalled();
+  expect(launch).not.toHaveBeenCalled();
 });
 
 it('reuses one process but queries fresh counters, including concurrent portable reads', async () => {
