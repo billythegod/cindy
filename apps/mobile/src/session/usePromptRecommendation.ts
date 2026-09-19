@@ -35,6 +35,7 @@ export function usePromptRecommendation({ ownerId, deviceId, sessionId, agentKin
   const makerRef = useRef(maker);
   makerRef.current = maker;
   const request = useRef<{ scope: string; revision: number; cacheOnly: boolean } | null>(null);
+  useEffect(() => () => { request.current = null; }, []);
   const observed = useRef({
     scope,
     running: false,
@@ -42,8 +43,8 @@ export function usePromptRecommendation({ ownerId, deviceId, sessionId, agentKin
     revisionAtStart: 0,
     liveRevision: null as number | null,
   });
-  const current = useRef({ scope, revision, running, blocked });
-  current.current = { scope, revision, running, blocked };
+  const current = useRef({ scope, revision, running, blocked, hasTerminalError });
+  current.current = { scope, revision, running, blocked, hasTerminalError };
   const dismiss = useCallback(() => {
     if (revision) consumedRevisions.set(scope, revision);
     setResult(null);
@@ -85,12 +86,13 @@ export function usePromptRecommendation({ ownerId, deviceId, sessionId, agentKin
       run.sawRunning = false;
     }
     if (!deviceId || !sessionId || !agentKind || !revision || consumedRevisions.get(scope) === revision) return;
-    if (blocked) {
-      // Consume this completion even if the draft/attachment is later removed.
+    if (hasTerminalError) {
+      // Failed turns are ineligible; ordinary composer interaction only hides.
       consumedRevisions.set(scope, revision);
       setResult(null);
       return;
     }
+    if (blocked || (result?.scope === scope && result.revision === revision)) return;
     // Historical navigation only reuses a host result; it never starts a paid prediction.
     const cacheOnly = run.liveRevision !== revision;
     if (request.current?.scope === scope && request.current.revision === revision
@@ -98,15 +100,17 @@ export function usePromptRecommendation({ ownerId, deviceId, sessionId, agentKin
     const attempt = { scope, revision, cacheOnly };
     request.current = attempt;
     let cancelled = false;
+    let started = false;
     let retry = 0;
     let timer: ReturnType<typeof setTimeout>;
     const isCurrent = () => {
       const latest = current.current;
-      return !cancelled && latest.scope === scope && latest.revision === revision
-        && !latest.running && !latest.blocked && consumedRevisions.get(scope) !== revision;
+      return request.current === attempt && latest.scope === scope && latest.revision === revision
+        && !latest.running && !latest.hasTerminalError && consumedRevisions.get(scope) !== revision;
     };
     const predict = () => {
-      if (!isCurrent()) return;
+      if (cancelled || (!started && current.current.blocked) || !isCurrent()) return;
+      started = true;
       void makerRef.current.predictNextPrompt({ sessionId, agentKind, turnGen: 0, completionRevision: revision, cacheOnly })
         .then(({ prompt }) => {
           if (!isCurrent()) return;
@@ -120,14 +124,19 @@ export function usePromptRecommendation({ ownerId, deviceId, sessionId, agentKin
     };
     timer = setTimeout(predict, 500);
     return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      if (request.current === attempt) request.current = null;
+      // Once dispatched, keep the result even if editing hides the capsule.
+      // Its bounded cache-only retries can finish while hidden too; typing must
+      // neither strand a cache miss nor restart a paid prediction.
+      if (!started || !isCurrent()) {
+        cancelled = true;
+        clearTimeout(timer);
+      }
+      if (!started && request.current === attempt) request.current = null;
     };
-  }, [scope, deviceId, sessionId, agentKind, revision, running, blocked]);
+  }, [scope, deviceId, sessionId, agentKind, revision, running, blocked, hasTerminalError, result]);
 
   return {
-    prompt: !running && !blocked && result?.scope === scope && result.revision === revision
+    prompt: !running && !hasTerminalError && result?.scope === scope && result.revision === revision
       && consumedRevisions.get(scope) !== revision ? result.prompt : null,
     dismiss,
   };
