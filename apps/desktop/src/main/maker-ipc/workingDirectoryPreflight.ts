@@ -9,7 +9,7 @@ import { probeSessionWorkingDirectory, workdirErrorCode, type SessionWorkingDire
 export interface WorkingDirectoryPreflightDeps {
   workingDirectoryRecovery: ReturnType<typeof createWorkingDirectoryRecovery>;
   statWorkingDirectory(dir: string): Promise<SessionWorkingDirectoryStat>;
-  readBoundWorkingDir(sessionId: string): Promise<string | null>;
+  readBoundWorkingDir(sessionId: string): Promise<string | null | readonly (string | null)[]>;
   getUserDataPath(): string;
   isCindyMakeWorktreePath(userData: string, dir: string): boolean;
   assertCindyMakeWorkspace(userData: string, dir: string): Promise<unknown>;
@@ -92,7 +92,12 @@ export function createWorkingDirectoryPreflight(deps: WorkingDirectoryPreflightD
         stat: statWorkingDirectory,
         readBoundWorkingDir: async () => {
           const boundWorkingDir = await readBoundWorkingDir(sessionId);
-          return boundWorkingDir ? workingDirectoryRecovery.resolve(sessionId, boundWorkingDir) : null;
+          const resolveBoundWorkingDir = (dir: string | null) =>
+            dir ? workingDirectoryRecovery.resolve(sessionId, dir) : null;
+          if (typeof boundWorkingDir === 'string' || boundWorkingDir === null) {
+            return resolveBoundWorkingDir(boundWorkingDir);
+          }
+          return boundWorkingDir.map(resolveBoundWorkingDir);
         },
       });
       if (probe.kind === 'bound-timeout') {

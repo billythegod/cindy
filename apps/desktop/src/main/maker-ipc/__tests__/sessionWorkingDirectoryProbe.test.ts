@@ -25,6 +25,15 @@ describe('session working directory probe', () => {
     expect(stat).toHaveBeenCalledOnce();
   });
 
+  it('tolerates a timeout when the persisted binding matches the probed directory', async () => {
+    const timeout = Object.assign(new Error('probe timed out'), { code: 'WORKDIR_PROBE_TIMEOUT' });
+
+    await expect(probeSessionWorkingDirectory('C:/repaired-repo', {
+      stat: vi.fn(async () => { throw timeout; }),
+      readBoundWorkingDir: vi.fn(async () => ['C:/old-live-repo', 'C:/repaired-repo']),
+    })).resolves.toEqual({ kind: 'bound-timeout' });
+  });
+
   it('rethrows a timeout for an unbound directory instead of classifying it as missing', async () => {
     const timeout = Object.assign(new Error('probe timed out'), { code: 'WORKDIR_PROBE_TIMEOUT' });
 

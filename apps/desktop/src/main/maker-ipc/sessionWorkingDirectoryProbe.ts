@@ -7,12 +7,21 @@ export interface SessionWorkingDirectoryStat {
 
 export interface SessionWorkingDirectoryProbeDeps {
   stat(workingDir: string): Promise<SessionWorkingDirectoryStat>;
-  readBoundWorkingDir(): Promise<string | null>;
+  readBoundWorkingDir(): Promise<string | null | readonly (string | null)[]>;
 }
 
 export type SessionWorkingDirectoryProbeResult =
   | { kind: 'stat'; stat: SessionWorkingDirectoryStat }
   | { kind: 'bound-timeout' };
+
+function matchesBoundWorkingDir(
+  boundWorkingDir: string | null | readonly (string | null)[],
+  workingDir: string,
+): boolean {
+  const candidates = Array.isArray(boundWorkingDir) ? boundWorkingDir : [boundWorkingDir];
+  const normalizedWorkingDir = normalizeWorkingDirForStorage(workingDir);
+  return candidates.some((candidate) => normalizeWorkingDirForStorage(candidate) === normalizedWorkingDir);
+}
 
 /**
  * Probe a session cwd once. A timeout is usable evidence that the filesystem
@@ -30,7 +39,7 @@ export async function probeSessionWorkingDirectory(
     if (workdirErrorCode(error) !== 'WORKDIR_PROBE_TIMEOUT') throw error;
 
     const boundWorkingDir = await deps.readBoundWorkingDir().catch(() => null);
-    if (normalizeWorkingDirForStorage(boundWorkingDir) === normalizeWorkingDirForStorage(workingDir)) {
+    if (matchesBoundWorkingDir(boundWorkingDir, workingDir)) {
       return { kind: 'bound-timeout' };
     }
     throw error;

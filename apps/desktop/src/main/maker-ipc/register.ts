@@ -18119,8 +18119,11 @@ async function materializeCodexImage(
 const checkWorkDirExists = createWorkingDirectoryPreflight({
   workingDirectoryRecovery,
   statWorkingDirectory,
-  readBoundWorkingDir: async (sessionId) =>
-    getMakerIfReady()?.getSession(sessionId)?.workDir || await readSessionWorkingDirFromDb(sessionId),
+  readBoundWorkingDir: async (sessionId) => {
+    const liveWorkingDir = getMakerIfReady()?.getSession(sessionId)?.workDir || null;
+    const persistedWorkingDir = await readSessionWorkingDirFromDb(sessionId).catch(() => null);
+    return [liveWorkingDir, persistedWorkingDir];
+  },
   getUserDataPath: () => app.getPath('userData'),
   isCindyMakeWorktreePath: isCindyMakeManagedWorktreePath,
   assertCindyMakeWorkspace,
