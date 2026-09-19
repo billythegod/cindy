@@ -303,10 +303,10 @@ pub fn install(pid: u32) -> Result<()> {
         &approval.encode(),
     )?;
     crate::service::install()?;
-    // Best-effort removal of credentials/provider entries left by the
-    // withdrawn automatic-unlock experiment. Failure must not undo a
-    // successful service install.
-    let _ = legacy_cleanup::cleanup_current_installation();
+    // HKLM provider keys are cleaned after the service exists. Original-user
+    // vault cleanup already ran unelevated before UAC; a leftover administrator
+    // vault or registry key must not roll back a successful install.
+    let _ = legacy_cleanup::remove_provider_registration(&target.name);
     if let Some((_, _, _, captured)) = snapshot.as_mut() {
         captured.commit();
     }
@@ -318,8 +318,9 @@ pub fn remove() -> Result<()> {
     // Delete this user's leftover GENERIC vault entries before SCM uninstall.
     // Unelevated `--uninstall` and the unelevated half of `--elevate-uninstall`
     // both reach here in the original user; waiting until after uninstall()
-    // would skip cleanup when a standard user cannot stop the service.
-    let _ = legacy_cleanup::remove_saved_credentials();
+    // would skip cleanup when a standard user cannot stop the service. A
+    // vault error must surface: the new build has no password UI to retry.
+    legacy_cleanup::remove_saved_credentials()?;
     crate::service::uninstall()?;
     if !installation.directory.exists() {
         let _ = legacy_cleanup::remove_provider_registration(&installation.name);
@@ -460,13 +461,42 @@ mod tests {
             remove.find("remove_saved_credentials").unwrap()
                 < remove.find("service::uninstall").unwrap()
         );
-        let elevate = include_str!("main.rs")
+        assert!(
+            !remove.contains("let _ = legacy_cleanup::remove_saved_credentials"),
+            "vault cleanup failure must block uninstall"
+        );
+        let elevate_uninstall = include_str!("main.rs")
             .split("Some(\"--elevate-uninstall\")")
             .nth(1)
+            .unwrap()
+            .split("Some(\"--status\")")
+            .next()
             .unwrap();
         assert!(
-            elevate.find("remove_saved_credentials").unwrap()
-                < elevate.find("service::elevate").unwrap()
+            elevate_uninstall.find("remove_saved_credentials").unwrap()
+                < elevate_uninstall.find("service::elevate").unwrap()
         );
+        assert!(!elevate_uninstall.contains("let _ = legacy_cleanup::remove_saved_credentials"));
+        let elevate_install = include_str!("main.rs")
+            .split("Some(\"--elevate-install\")")
+            .nth(1)
+            .unwrap()
+            .split("Some(\"--elevate-uninstall\")")
+            .next()
+            .unwrap();
+        assert!(
+            elevate_install.find("remove_saved_credentials").unwrap()
+                < elevate_install.find("service::elevate").unwrap()
+        );
+        assert!(!elevate_install.contains("let _ = legacy_cleanup::remove_saved_credentials"));
+        let install = include_str!("approval.rs")
+            .split("pub fn install(")
+            .nth(1)
+            .unwrap()
+            .split("pub fn remove()")
+            .next()
+            .unwrap();
+        assert!(!install.contains("cleanup_current_installation"));
+        assert!(!install.contains("let _ = legacy_cleanup::remove_saved_credentials"));
     }
 }

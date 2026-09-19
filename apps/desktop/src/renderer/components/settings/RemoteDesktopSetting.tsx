@@ -108,11 +108,16 @@ export function RemoteDesktopSetting() {
   };
   const actionDisabled = busy || setupBusy || windowsSupport === 'installRequired';
   const retryRemoval = serviceError === 'setup' && setup?.failedEnabled === false;
+  const failedUpdate =
+    serviceError === 'setup' &&
+    setup?.failedEnabled === true &&
+    windowsSupport === 'missing';
   const showRemove =
     !setupBusy &&
     (windowsSupport === 'updateRequired' ||
       windowsSupport === 'unavailable' ||
-      retryRemoval);
+      retryRemoval ||
+      failedUpdate);
   return (
     <section
       aria-label={t('remoteDesktop.allow')}

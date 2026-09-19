@@ -38,12 +38,8 @@ pub fn path_is_within(child: &Path, parent: &Path) -> bool {
             .all(|(a, b)| a.as_os_str().eq_ignore_ascii_case(b.as_os_str()))
 }
 
-fn is_packaged_binary(path: &Path) -> bool {
-    path.extension().is_some_and(|e| {
-        ["exe", "dll", "bin"]
-            .iter()
-            .any(|ext| e.eq_ignore_ascii_case(ext))
-    })
+fn is_excluded_data_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("userData") || name.eq_ignore_ascii_case("workspace")
 }
 
 fn same_listed_path(left: &Path, right: &Path) -> bool {
@@ -142,6 +138,9 @@ fn freeze_tree(frozen: &mut Vec<(PathBuf, Handle)>, path: PathBuf) -> Result<()>
         if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return denied();
         }
+        if is_excluded_data_name(&name) {
+            continue;
+        }
         freeze_tree(frozen, path.join(name))?;
         if frozen.len() > 100_000 {
             return denied();
@@ -154,41 +153,29 @@ fn collect_code_paths(install: &Path) -> Result<Vec<PathBuf>> {
     if install.parent().is_none() || !install.join("resources/app.asar").is_file() {
         return denied();
     }
-    let mut paths = vec![
-        install.to_owned(),
-        install.join("resources"),
-        install.join("resources/app.asar"),
-    ];
-    for item in std::fs::read_dir(install)? {
-        let path = item?.path();
-        if is_packaged_binary(&path) {
-            paths.push(path);
+    let mut paths = Vec::new();
+    let mut pending = vec![install.to_owned()];
+    while let Some(path) = pending.pop() {
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return denied();
         }
-    }
-    for directory in [
-        "resources/app.asar.unpacked",
-        "resources/tools",
-        "resources/cindy-updater-runtime",
-    ] {
-        let root = install.join(directory);
-        if !root.exists() {
-            continue;
-        }
-        let mut pending = vec![root];
-        while let Some(path) = pending.pop() {
-            let metadata = std::fs::symlink_metadata(&path)?;
-            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-                return denied();
-            }
-            if metadata.is_dir() {
-                for item in std::fs::read_dir(&path)? {
-                    pending.push(item?.path());
+        if metadata.is_dir() {
+            for item in std::fs::read_dir(&path)? {
+                let child = item?.path();
+                let name = child
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(error)?;
+                if is_excluded_data_name(name) {
+                    continue;
                 }
+                pending.push(child);
             }
-            paths.push(path);
-            if paths.len() + pending.len() > 100_000 {
-                return denied();
-            }
+        }
+        paths.push(path);
+        if paths.len() + pending.len() > 100_000 {
+            return denied();
         }
     }
     paths.sort();
@@ -202,9 +189,11 @@ pub fn application_paths(install: &Path) -> Result<Vec<PathBuf>> {
     collect_code_paths(install)
 }
 
-/// Pin ancestors, freeze known code roots, then walk children under those pins.
-/// CODE_DACL is not inherited, so a child restored after an unprotected listing
-/// would stay user-writable. Capture consumes these freeze handles.
+/// Pin ancestors, then freeze the packaged tree. Ordinary Electron siblings
+/// (`.pak`, `locales`, extraResource directories) are included; `userData` and
+/// `workspace` are not. CODE_DACL is not inherited, so a child restored after
+/// an unprotected listing would stay user-writable. Capture consumes these
+/// freeze handles.
 pub fn freeze_code_tree(install: &Path) -> Result<(Vec<Handle>, Vec<(PathBuf, Handle)>)> {
     if install.parent().is_none() || !install.join("resources/app.asar").is_file() {
         return denied();
@@ -214,26 +203,14 @@ pub fn freeze_code_tree(install: &Path) -> Result<(Vec<Handle>, Vec<(PathBuf, Ha
     let Some(root) = freeze_object(&mut frozen, install.to_owned())? else {
         return denied();
     };
-    freeze_object(&mut frozen, install.join("resources"))?;
-    freeze_object(&mut frozen, install.join("resources/app.asar"))?;
     for (name, attributes) in directory_children(root)? {
         if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return denied();
         }
-        let path = install.join(&name);
-        if is_packaged_binary(&path) {
-            freeze_object(&mut frozen, path)?;
+        if is_excluded_data_name(&name) {
+            continue;
         }
-    }
-    for directory in [
-        "resources/app.asar.unpacked",
-        "resources/tools",
-        "resources/cindy-updater-runtime",
-    ] {
-        let root = install.join(directory);
-        if root.exists() {
-            freeze_tree(&mut frozen, root)?;
-        }
+        freeze_tree(&mut frozen, install.join(name))?;
     }
     Ok((ancestors, frozen))
 }
@@ -252,6 +229,9 @@ pub fn confirm_frozen_tree(frozen: &[(PathBuf, Handle)]) -> Result<()> {
         for (name, attributes) in directory_children(handle.0)? {
             if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
                 return denied();
+            }
+            if is_excluded_data_name(&name) {
+                continue;
             }
             let child = path.join(name);
             if frozen
@@ -1763,6 +1743,29 @@ mod tests {
         std::fs::write(&code, b"released").unwrap();
     }
     #[test]
+    fn freeze_code_tree_pins_ordinary_electron_resources() {
+        let fixture = Fixture::new();
+        let app = fixture.0.join("Cindy");
+        std::fs::create_dir_all(app.join("resources/locales")).unwrap();
+        std::fs::create_dir_all(app.join("userData")).unwrap();
+        std::fs::write(app.join("Cindy.exe"), b"fixture").unwrap();
+        std::fs::write(app.join("resources/app.asar"), b"fixture").unwrap();
+        std::fs::write(app.join("chrome_100_percent.pak"), b"fixture").unwrap();
+        std::fs::write(app.join("resources.pak"), b"fixture").unwrap();
+        std::fs::write(app.join("resources/locales/en-US.pak"), b"fixture").unwrap();
+        std::fs::write(app.join("userData/preferences.json"), b"fixture").unwrap();
+        let (_, frozen) = freeze_code_tree(&app).unwrap();
+        let frozen_paths: Vec<_> = frozen.iter().map(|(path, _)| path.clone()).collect();
+        assert!(frozen_paths.contains(&app.join("chrome_100_percent.pak")));
+        assert!(frozen_paths.contains(&app.join("resources.pak")));
+        assert!(frozen_paths.contains(&app.join("resources/locales")));
+        assert!(frozen_paths.contains(&app.join("resources/locales/en-US.pak")));
+        assert!(!frozen_paths
+            .iter()
+            .any(|path| path.starts_with(app.join("userData"))));
+        confirm_frozen_tree(&frozen).unwrap();
+    }
+    #[test]
     fn freeze_code_tree_refuses_children_that_appear_after_the_first_listing() {
         let fixture = Fixture::new();
         let app = fixture.0.join("Cindy");
@@ -1974,6 +1977,7 @@ mod tests {
             "resources/tools/remote-desktop",
             "resources/tools/windows-taskbar",
             "resources/cindy-updater-runtime",
+            "resources/locales",
             "userData",
             "workspace",
         ] {
@@ -1982,11 +1986,14 @@ mod tests {
         for file in [
             "Cindy.exe",
             "snapshot_blob.bin",
+            "chrome_100_percent.pak",
+            "resources.pak",
             "resources/app.asar",
             "resources/app.asar.unpacked/native/addon.node",
             "resources/tools/remote-desktop/cindy-windows-desktop-host.node",
             "resources/tools/windows-taskbar/cindy-windows-taskbar.node",
             "resources/cindy-updater-runtime/vcruntime140.dll",
+            "resources/locales/en-US.pak",
             "userData/preferences.json",
             "workspace/notes.txt",
         ] {
@@ -1995,6 +2002,10 @@ mod tests {
         crate::installation::validate_application_directory(&app).unwrap();
         let paths = application_paths(&app).unwrap();
         assert!(paths.contains(&app.join("snapshot_blob.bin")));
+        assert!(paths.contains(&app.join("chrome_100_percent.pak")));
+        assert!(paths.contains(&app.join("resources.pak")));
+        assert!(paths.contains(&app.join("resources/locales")));
+        assert!(paths.contains(&app.join("resources/locales/en-US.pak")));
         assert!(paths.contains(&app.join("resources/app.asar.unpacked/native/addon.node")));
         assert!(paths
             .contains(&app.join("resources/tools/remote-desktop/cindy-windows-desktop-host.node")));

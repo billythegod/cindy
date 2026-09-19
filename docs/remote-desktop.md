@@ -500,11 +500,11 @@ directory. The application can remain in its chosen per-user or custom location.
 The service name retains the installation-scoped legacy identity, so setup replaces
 the old on-demand service rather than leaving two brokers behind.
 
-Setup also protects the packaged application's code in place: its root and code
-directories, executable/DLL/V8 snapshot files, ASAR, unpacked native dependencies,
-and every file under `resources/tools` and `resources/cindy-updater-runtime`
-(including Main-loaded extraResource addons such as the Windows taskbar helper
-and the vendored updater VC++ runtime).
+Setup also protects the packaged application's code in place: its root and
+packaged siblings (executables, DLLs, V8 snapshots, `.pak` files, `locales`),
+ASAR, unpacked native dependencies, and every file under `resources/` except
+`userData` and `workspace` (including Main-loaded extraResource addons such as
+the Windows taskbar helper and the vendored updater VC++ runtime).
 It does not move the app or change parent-directory, userData, or workspace permissions.
 Protected code subsequently requires administrator rights to replace, including
 updates; the existing installer already handles protected-directory authorization.
@@ -516,9 +516,11 @@ the protected Program Files copy is written only after that UAC. If a live write
 before changing ACLs. Packaged setup also Authenticode-checks the approved Main
 executable against the elevated helper, keeps that no-write handle through
 hardening, re-hashes the same bytes before recording approval, and aborts if
-the requesting Main exits. Setup pins ancestors and freezes each discovered code
-object before the path list is trusted, then confirms the listing is unchanged
-before capture and approval. CODE_DACL is not inherited, so a child restored after
+the requesting Main exits. Setup pins ancestors and freezes the packaged tree, including ordinary Electron
+resources such as `chrome_*.pak`, `resources.pak`, and `locales`, before the path
+list is trusted, then confirms the listing is unchanged before capture and
+approval. Confirmation does not treat those user-owned packaged siblings as
+already-protected omissions. CODE_DACL is not inherited, so a child restored after
 an unprotected listing would otherwise stay user-writable. Capture also keeps no-write/no-delete handles to every
 unprotected code object and applies ACLs through those handles, so a junction
 cannot retarget hardening after the snapshot. Ancestor directories are pinned from the root down
@@ -567,7 +569,15 @@ then requests native UAC. Polling never compiles or elevates. Setup state belong
 to Main, including the preparation/compilation/UAC/verification phase and last
 failure. Reopening settings observes the same state. Repeated enable requests
 join the in-flight operation without a second compiler or UAC prompt. Failed
-preparation and transient status-probe failures leave a retry action. Compiler
+preparation and transient status-probe failures leave a retry action. A
+registered but stopped or crashed service reports `unavailable`, not
+`missing`, so Settings keeps Remove. A failed update that deleted the old
+service before the replacement started (`missing` plus `failedEnabled: true`)
+also keeps Remove, rather than only Retry. Original-user leftover GENERIC
+vault entries from the withdrawn automatic-unlock experiment are deleted
+before UAC; a vault error blocks install and uninstall instead of completing
+with the password still stored. HKLM credential-provider keys are removed
+after a successful elevated install or during elevated uninstall. Compiler
 diagnostics retain only phase, exit/OS code and an optional Rust error number;
 paths, compiler output, environment variables and input are not logged. Generated binaries
 are cached under userData by native source/runtime fingerprint, so a loaded Node

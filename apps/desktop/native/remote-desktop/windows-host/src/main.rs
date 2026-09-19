@@ -47,12 +47,15 @@ fn run() -> Result<()> {
         Some("--elevate-install") if args.len() == 2 => {
             let pid = args[1].parse::<u32>().map_err(|_| error())?;
             let (_approval, _main) = approval::Approval::for_client(pid)?;
+            // Original-user vault cleanup must happen before UAC. The elevated
+            // `--install` process enumerates the approving administrator.
+            legacy_cleanup::remove_saved_credentials()?;
             service::elevate(&format!("--install {pid}"))
         }
         Some("--elevate-uninstall") => {
             // Original-user vault cleanup must happen before UAC. The elevated
             // `--uninstall` process enumerates the approving administrator.
-            let _ = legacy_cleanup::remove_saved_credentials();
+            legacy_cleanup::remove_saved_credentials()?;
             service::elevate("--uninstall")
         }
         Some("--status") => {
@@ -66,6 +69,10 @@ fn run() -> Result<()> {
                     } else {
                         "updateRequired"
                     }
+                } else if service::registered()? {
+                    // SCM still has the AUTO_START service. A stopped or crashed
+                    // process is not a missing grant; Settings must keep Remove.
+                    "unavailable"
                 } else {
                     "missing"
                 }
@@ -99,5 +106,19 @@ mod tests {
             source.find("isolate_search_path()").unwrap()
                 < source.find("service::elevate").unwrap()
         );
+    }
+    #[test]
+    fn status_reports_a_registered_stopped_service_as_unavailable() {
+        let status = include_str!("main.rs")
+            .split("Some(\"--status\")")
+            .nth(1)
+            .unwrap();
+        assert!(status.contains("installed_pid"));
+        assert!(status.contains("registered()?"));
+        assert!(
+            status.find("registered()?").unwrap() < status.find("\"missing\"").unwrap(),
+            "a registered service must not fall through to missing"
+        );
+        assert!(status.contains("\"unavailable\""));
     }
 }

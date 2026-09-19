@@ -1,6 +1,6 @@
 //! Remove credentials and registry entries left by the withdrawn Windows
 //! automatic-unlock experiment. This module never reads or logs secret blobs.
-use crate::{installation::Installation, win::*};
+use crate::win::*;
 use sha2::{Digest, Sha256};
 use std::ptr;
 use windows_sys::Win32::{Foundation::*, Security::Credentials::*, System::Registry::*};
@@ -91,15 +91,6 @@ pub fn remove_provider_registration(service: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn cleanup_current_installation() -> Result<()> {
-    remove_saved_credentials()?;
-    let installation = Installation::current()?;
-    // Registry cleanup is best effort for ordinary status probes; service
-    // removal still runs it under the existing elevated path.
-    let _ = remove_provider_registration(&installation.name);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,5 +106,51 @@ mod tests {
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{guid}"
         )
         .contains(r"\Credential Providers\"));
+    }
+    #[test]
+    fn vault_cleanup_surfaces_enumerate_and_delete_failures() {
+        let source = include_str!("legacy_cleanup.rs");
+        let remove = source
+            .split("pub fn remove_saved_credentials()")
+            .nth(1)
+            .unwrap()
+            .split("pub fn remove_provider_registration")
+            .next()
+            .unwrap();
+        assert!(remove.contains("ERROR_NOT_FOUND"));
+        assert!(remove.contains("return Err(error())"));
+        assert!(!remove.contains("let _ ="));
+        let elevate_install = include_str!("main.rs")
+            .split("Some(\"--elevate-install\")")
+            .nth(1)
+            .unwrap()
+            .split("Some(\"--elevate-uninstall\")")
+            .next()
+            .unwrap();
+        let elevate_uninstall = include_str!("main.rs")
+            .split("Some(\"--elevate-uninstall\")")
+            .nth(1)
+            .unwrap()
+            .split("Some(\"--status\")")
+            .next()
+            .unwrap();
+        let install = include_str!("approval.rs")
+            .split("pub fn install(")
+            .nth(1)
+            .unwrap()
+            .split("pub fn remove()")
+            .next()
+            .unwrap();
+        let uninstall = include_str!("approval.rs")
+            .split("pub fn remove()")
+            .nth(1)
+            .unwrap()
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        for source in [elevate_install, elevate_uninstall, install, uninstall] {
+            assert!(!source.contains("let _ = legacy_cleanup::remove_saved_credentials"));
+            assert!(!source.contains("let _ = legacy_cleanup::cleanup_current_installation"));
+        }
     }
 }

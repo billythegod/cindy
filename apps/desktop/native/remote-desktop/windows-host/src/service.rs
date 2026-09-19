@@ -77,6 +77,15 @@ pub fn pid() -> Result<u32> {
     }
     process_id(&status).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
 }
+
+pub fn registered() -> Result<bool> {
+    let manager = manager(SC_MANAGER_CONNECT)?;
+    match service(&manager, SERVICE_QUERY_STATUS) {
+        Ok(_) => Ok(true),
+        Err(error) if error.raw_os_error() == Some(ERROR_SERVICE_DOES_NOT_EXIST as i32) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
 pub fn install() -> Result<()> {
     crate::security::require_elevated()?;
     let manager = manager(SC_MANAGER_CREATE_SERVICE | SC_MANAGER_CONNECT)?;
@@ -751,6 +760,22 @@ fn send_sas(owner: &Handle) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn status_distinguishes_registration_from_a_running_pid() {
+        let source = include_str!("service.rs");
+        assert!(source.contains("pub fn registered()"));
+        assert!(source.contains("ERROR_SERVICE_DOES_NOT_EXIST"));
+        let pid = source.split("pub fn pid()").nth(1).unwrap();
+        assert!(pid.contains("SERVICE_RUNNING"));
+        let registered = source
+            .split("pub fn registered() -> Result<bool>")
+            .nth(1)
+            .unwrap()
+            .split("pub fn install()")
+            .next()
+            .unwrap();
+        assert!(registered.contains("ERROR_SERVICE_DOES_NOT_EXIST"));
+    }
     #[test]
     fn pipe_client_process_is_opened_before_the_init_read() {
         let serve = include_str!("service.rs")

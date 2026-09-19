@@ -79,6 +79,12 @@ describe('Windows lock screen service setup', () => {
     expect(runtime.open).not.toHaveBeenCalled();
   });
 
+  it('keeps a registered but stopped service removable instead of treating it as missing', async () => {
+    runtime.exec.mockResolvedValue({ stdout: 'unavailable\n' });
+    expect(await readWindowsDesktopSupport()).toBe('unavailable');
+    expect(runtime.open).not.toHaveBeenCalled();
+  });
+
   it('does not treat a running service as authorization for another caller', async () => {
     runtime.open.mockRejectedValue(new Error('caller rejected'));
     expect(await readWindowsDesktopSupport()).toBe('unavailable');
