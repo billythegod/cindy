@@ -353,6 +353,14 @@ export class RemoteViewerConnection {
     }
     return { ...this.preferencesValue };
   }
+  async focusChanged(): Promise<void> {
+    const generation = this.generation;
+    // Cancel local reads immediately, then reconcile after any old enable has
+    // settled. Use current focus when reconciling (blur/focus may race).
+    await this.safetyState.pauseClipboard();
+    if (!this.active || generation !== this.generation) return;
+    await this.safety(generation).catch(() => {});
+  }
   async safety(generation: number, retry = false): Promise<RemoteViewerSafety> {
     this.check(generation);
     if (retry) this.safetyState.invalidate(true);
@@ -371,7 +379,10 @@ export class RemoteViewerConnection {
         ? await this.safetyState.tick({
             lease,
             caps: this.caps,
-            preferences: this.preferencesValue,
+            preferences: {
+              ...this.preferencesValue,
+              clipboardSync: this.preferencesValue.clipboardSync && (this.deps.focused?.() ?? true),
+            },
             current,
             clipboardCurrent: () =>
               current() && !this.clipboardPending && (this.deps.focused?.() ?? true),

@@ -27,7 +27,8 @@ import { extractIpcError } from '../../shared/ipcError.js';
 import { RemoteViewerConnection } from './connection.js';
 import { ViewerCredentials } from './credentials.js';
 import { readViewerPreferences, writeViewerPreferences } from './preferences.js';
-import { readDesktopClipboardVersion } from '../remote-desktop/inputHost.js';
+import { resolveDesktopInputBinary } from '../remote-desktop/inputHost.js';
+import { ClipboardCounter } from '../remote-desktop/clipboardCounter.js';
 import { transferDesktopClipboardContent } from '../remote-desktop/clipboard.js';
 
 async function requestRemote<T>(device: string, request: unknown, check: () => void): Promise<T> {
@@ -122,6 +123,7 @@ export class RemoteDesktopViewerWindows {
     win.webContents.send(REMOTE_VIEWER.CLOSE_REQUESTED, entry.connection.generation);
   }
   private create(): Entry {
+    const counter = new ClipboardCounter(resolveDesktopInputBinary);
     const credentials: ViewerCredentials = new ViewerCredentials({
       request: (message, check) => requestRemote(connection.target!.deviceId, message, check),
     });
@@ -133,7 +135,11 @@ export class RemoteDesktopViewerWindows {
       savePreferences: writeViewerPreferences,
       focused: () => entry.window?.isFocused() === true,
       clipboard: {
-        version: () => readDesktopClipboardVersion(true),
+        version: (current) => {
+          if (!current()) return Promise.reject(new Error('DESKTOP_STOPPED'));
+          return counter.read(true);
+        },
+        stop: () => counter.stop(),
         read: async (current) =>
           JSON.stringify(
             await transferDesktopClipboardContent('copy', undefined, current, () => {}, {
@@ -183,6 +189,9 @@ export class RemoteDesktopViewerWindows {
           register: markRemoteDesktopViewer,
         });
         entry.window = win;
+        win.on('blur', () => {
+          void connection.focusChanged();
+        });
         // Local navigation/reloads/crashes immediately retire authority, including in-flight starts.
         win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
           if (isMainFrame && !isInPlace) connection.deactivate();

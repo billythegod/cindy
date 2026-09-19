@@ -28,6 +28,7 @@ export class ViewerCredentials {
   ) {}
   dispose(): void {
     this.revision++;
+    this.pending = false;
     this.native.dispose();
   }
   async run(
@@ -173,7 +174,7 @@ export class ViewerCredentials {
           /* Lease and ordinary viewing do not depend on optional authentication. */
         }
       }
-      this.pending = false;
+      if (revision === this.revision) this.pending = false;
     }
   }
 }

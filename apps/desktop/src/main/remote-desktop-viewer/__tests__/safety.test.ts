@@ -32,6 +32,24 @@ it('does not apply opt-ins without confirmed control', async () => {
   await safety.tick({ ...options, current: () => false });
   expect(request).not.toHaveBeenCalled();
 });
+it('focus pause preserves privacy state and does not retry failed mute settings', async () => {
+  const { safety, options, request } = fixture();
+  request.mockImplementation(async (message: { op: string }) => {
+    if (message.op === 'hostMute') throw new Error('DESKTOP_UNAVAILABLE');
+    return { enabled: true };
+  });
+  await safety.tick(options);
+  const before = safety.snapshot();
+  await safety.pauseClipboard();
+  expect(safety.snapshot()).toEqual(before);
+  await safety.tick(options);
+  expect(
+    request.mock.calls.filter(([message]: [{ op: string }]) => message.op === 'privacyScreen'),
+  ).toHaveLength(1);
+  expect(
+    request.mock.calls.filter(([message]: [{ op: string }]) => message.op === 'hostMute'),
+  ).toHaveLength(1);
+});
 it('pauses until old work settles and discards its late success', async () => {
   const { safety, options, request } = fixture();
   let finish!: (value: unknown) => void;

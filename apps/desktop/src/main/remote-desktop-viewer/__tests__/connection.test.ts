@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { RemoteViewerConnection } from '../connection';
-import type { RemoteDesktopRequest } from '@cindy/device-link';
+import { ClipboardSync, type RemoteDesktopRequest } from '@cindy/device-link';
+import { DEFAULT_VIEWER_PREFERENCES } from '../../../shared/remoteDesktopViewer';
 
 function fixture() {
   let owner = 'account-a:1';
@@ -33,6 +34,58 @@ function fixture() {
   };
 }
 describe('standalone remote viewer authority', () => {
+  it('stops counters on blur and orders remote disable after an in-flight enable', async () => {
+    let focused = true;
+    let finish!: () => void;
+    const stop = vi.fn();
+    const tick = vi.spyOn(ClipboardSync.prototype, 'tick').mockResolvedValue(undefined);
+    const request = vi.fn(async (_target, message, check) => {
+      check();
+      if (message.op === 'capabilities') return { clipboardSync: true };
+      if (message.op === 'start') return { lease: 'lease', controlling: false };
+      if (message.op === 'control') return { controlling: true };
+      if (message.op === 'clipboardSync' && message.enabled && !finish)
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      return { enabled: message.enabled };
+    });
+    const connection = new RemoteViewerConnection({
+      owner: () => 'owner',
+      request,
+      focused: () => focused,
+      readClipboard: () => '',
+      writeClipboard: () => {},
+      preferences: () => ({ ...DEFAULT_VIEWER_PREFERENCES, clipboardSync: true }),
+      clipboard: { stop, version: async () => '1', read: async () => '', write: async () => '1' },
+    });
+    try {
+      connection.bind({ deviceId: 'target', name: 'Target' });
+      connection.setActive(true);
+      const generation = connection.generation;
+      await connection.request(generation, { op: 'capabilities' });
+      await connection.request(generation, { op: 'start', displayId: '1' });
+      await connection.request(generation, { op: 'control', lease: 'lease', enabled: true });
+      const pending = connection.safety(generation);
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+      focused = false;
+      const paused = connection.focusChanged();
+      expect(stop).toHaveBeenCalledOnce();
+      finish();
+      await Promise.all([pending, paused]);
+      expect(
+        request.mock.calls.filter(([, m]) => m.op === 'clipboardSync').map(([, m]) => m.enabled),
+      ).toEqual([true, false]);
+      expect(tick).not.toHaveBeenCalled();
+      focused = true;
+      await connection.safety(generation);
+      expect(tick).toHaveBeenCalledOnce();
+      connection.deactivate();
+      expect(stop).toHaveBeenCalledTimes(2);
+    } finally {
+      tick.mockRestore();
+    }
+  });
   it.each(['target', 'owner'])(
     'does not block a new %s behind the old scope cleanup',
     async (changed) => {

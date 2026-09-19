@@ -88,3 +88,59 @@ mac('cancels native preparation before it can send a late credential offer', asy
   expect(request).toHaveBeenCalledTimes(1);
   expect(native.dispose).toHaveBeenCalledOnce();
 });
+
+mac.each(['status', 'prepare', 'open', 'exchange', 'cleanup'])(
+  'releases cancelled authentication during %s without releasing its replacement',
+  async (stage) => {
+    let finishOld!: (value: unknown) => void;
+    let finishNew!: (value: unknown) => void;
+    let cleanup = false;
+    native.call.mockImplementation(async (_realm, method, args) => {
+      if (method === 'viewerSettings') {
+        if (args.target === 'replacement')
+          return new Promise((resolve) => {
+            finishNew = resolve;
+          });
+        return { autoUnlock: true };
+      }
+      if (method === 'viewerBegin')
+        return { handle: 'local', offer: 'offer', descriptor: 'descriptor' };
+      if (method === 'viewerReceive') return JSON.stringify({ kind: 'ready' });
+      if (method === 'viewerPassword') throw new Error('CREDENTIAL_PASSWORD_REJECTED');
+      if (method === 'viewerEnd') cleanup = true;
+      return 'ciphertext';
+    });
+    const request = vi.fn(async (message: any) => {
+      if (message.kind === stage || (stage === 'cleanup' && cleanup))
+        return new Promise((resolve) => {
+          finishOld = resolve;
+        });
+      if (message.kind === 'status') return { version: 1, state: 'locked' };
+      if (message.kind === 'prepare') return { version: 1, ready: true, descriptor: 'host' };
+      if (message.kind === 'open') return { handle: 'remote', offer: 'offer' };
+      return { ciphertext: 'reply' };
+    }) as any;
+    const credentials = new ViewerCredentials({ request });
+    const old = credentials.run('old', 'darwin', 'unlock', undefined, () => {});
+    const oldRejected = expect(old).rejects.toThrow(
+      stage === 'cleanup' ? 'CREDENTIAL_PASSWORD_REJECTED' : 'CREDENTIAL_CANCELLED',
+    );
+    await vi.waitFor(() => expect(finishOld).toBeTypeOf('function'));
+    credentials.dispose();
+    const replacement = credentials.run('replacement', 'darwin', 'settings', undefined, () => {});
+    await vi.waitFor(() => expect(finishNew).toBeTypeOf('function'));
+    const nativeCalls = native.call.mock.calls.length;
+    finishOld({});
+    await oldRejected;
+    expect(native.call).toHaveBeenCalledTimes(nativeCalls);
+    expect(native.dispose).toHaveBeenCalledOnce();
+    await expect(
+      credentials.run('third', 'darwin', 'settings', undefined, () => {}),
+    ).rejects.toThrow('CREDENTIAL_AUTHENTICATION_BUSY');
+    finishNew({ autoUnlock: true });
+    await expect(replacement).resolves.toMatchObject({ available: true, autoUnlock: true });
+    await expect(
+      credentials.run('third', 'darwin', 'settings', undefined, () => {}),
+    ).resolves.toMatchObject({ available: true });
+  },
+);

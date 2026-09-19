@@ -11,19 +11,30 @@ import {
 import type { RemoteViewerPreferences, RemoteViewerSafety } from '../../shared/remoteDesktopViewer';
 
 export interface ViewerClipboard {
-  version(): Promise<string>;
+  version(current: () => boolean): Promise<string>;
+  stop?(): void;
   read(current: () => boolean): Promise<string>;
   write(json: string, version: string | undefined, current: () => boolean): Promise<string>;
 }
 
 /** One lease's opt-ins. Clipboard payloads stay in Main; callers only receive status. */
 export class ViewerSafety {
+  private clipboard: ViewerClipboard | undefined;
   private revision = 0;
+  private clipboardRevision = 0;
   private pending = false;
   private settled: Promise<void> = Promise.resolve();
   async pause(): Promise<void> {
     this.invalidate();
     await this.settled;
+  }
+  async pauseClipboard(): Promise<void> {
+    this.clipboardRevision++;
+    this.clipboard?.stop?.();
+    await this.settled;
+    // Focus changes must not retry privacy/mute failures or clear their status.
+    this.applied.delete('clipboardSync');
+    this.retryAt = 0;
   }
   private baseline: ClipboardSyncBaseline = { local: '', remote: '' };
   private localReadCache: LocalClipboardReadCache = {};
@@ -34,6 +45,7 @@ export class ViewerSafety {
   private privacyActive = false;
   invalidate(resetBaseline = false): void {
     this.revision++;
+    this.clipboard?.stop?.();
     this.applied.clear();
     this.notices.clear();
     this.privacyActive = false;
@@ -65,12 +77,14 @@ export class ViewerSafety {
     request<T>(request: RemoteDesktopRequest, check: () => void): Promise<T>;
   }): Promise<RemoteViewerSafety> {
     if (this.pending || !options.current()) return this.snapshot();
+    this.clipboard = options.clipboard;
     this.pending = true;
     let settle!: () => void;
     this.settled = new Promise((resolve) => {
       settle = resolve;
     });
     const revision = this.revision;
+    const clipboardRevision = this.clipboardRevision;
     const valid = () => revision === this.revision && options.current();
     const check = () => {
       if (!valid()) throw new Error('DESKTOP_STOPPED');
@@ -120,7 +134,8 @@ export class ViewerSafety {
         !options.clipboardCurrent()
       )
         return this.snapshot();
-      const current = () => valid() && options.clipboardCurrent();
+      const current = () =>
+        valid() && clipboardRevision === this.clipboardRevision && options.clipboardCurrent();
       const clipboardCheck = () => {
         if (!current()) throw new Error('DESKTOP_STOPPED');
       };
@@ -130,7 +145,7 @@ export class ViewerSafety {
           current,
           inline: caps.clipboardInline === true,
           request: (message) => options.request(message, clipboardCheck),
-          localVersion: () => options.clipboard!.version(),
+          localVersion: () => options.clipboard!.version(current),
           readLocal: () => options.clipboard!.read(current),
           writeLocal: (json, version) => options.clipboard!.write(json, version, current),
           localReadCache: this.localReadCache,
