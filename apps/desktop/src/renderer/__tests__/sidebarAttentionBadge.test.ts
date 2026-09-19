@@ -4,8 +4,7 @@
  * sidebarAttentionBadge.test.ts
  * ---------------------------------------------------------------------------
  * 回归覆盖：
- * - 右侧状态槽优先级必须是 error > awaiting > running > 完成未读(done)。
- *   error 与 awaiting 拆成两档(红 / TapTap 蓝),同为"需要处理"压过 spinner。
+ * - 任务入口隐藏 error，保留 awaiting > running > 完成未读(done)。
  * - plan / ask-user / permission prompt 可能在会话仍标记 running 时到达，
  *   左侧状态图标的关注状态点在这种状态下仍必须可见。
  */
@@ -20,7 +19,8 @@ import {
   resolveSidebarRightStatus,
 } from '../features/cc-agent/sidebar/sidebarRightStatus';
 import { SessionStatusIcon } from '../features/cc-agent/sidebar/SessionStatusIcon';
-import { AttentionDot } from '@/components/sidebar/AttentionDot';
+import { addSessionAttention, clearSessionAttention } from '@/lib/sessionAttentionStore';
+import { SessionAttentionUrgencyProvider } from '../features/cc-agent/contexts/SessionAttentionUrgencyContext';
 import { SidebarRightStatusIndicator } from '../features/cc-agent/sidebar/SidebarRightStatusIndicator';
 
 const sidebarState = vi.hoisted(() => ({
@@ -52,6 +52,7 @@ vi.mock('@/components/sidebar/VendorIcon', () => ({
 
 afterEach(() => {
   cleanup();
+  clearSessionAttention(session.id, { intent: 'explicit' });
   sidebarState.hasDraft = false;
   sidebarState.hasPausedQueue = false;
 });
@@ -77,8 +78,31 @@ describe('sidebar right status priority', () => {
       expect(view.container.firstChild).toBeNull();
       view.unmount();
     }
-    const view = render(createElement(AttentionDot, { tone: 'error' }));
-    expect(view.container.firstChild).toBeNull();
+    const view = render(createElement(SessionStatusIcon, {
+      session, isRunning: false, isAttached: false, hasAttentionNotification: true,
+      isActive: false, attentionToneOverride: 'error',
+    }));
+    expect(attentionDot(view.container)).toBeUndefined();
+  });
+  it.each([false, true])('keeps pending input visible with old failure urgency (running=%s)', (isRunning) => {
+    for (const live of [false, true]) {
+      const activity = projectSidebarSessionActivity({
+        sessionId: session.id,
+        attentionKind: live ? undefined : 'awaiting',
+        liveActivity: live ? { phase: 'needs-interaction' } : null,
+        isUrgentFromContext: true, isRunning, hasAttentionNotification: !live,
+      });
+      expect(activity.phase).toBe('error');
+      expect(resolveSidebarRightStatus(activity)).toBe('awaiting');
+    }
+    addSessionAttention(session.id, 'awaiting');
+    const view = render(createElement(SessionAttentionUrgencyProvider, {
+      urgentSessionIds: new Set([session.id]),
+      children: createElement(SessionStatusIcon, {
+        session, isRunning, isAttached: false, hasAttentionNotification: true, isActive: false,
+      }),
+    }));
+    expect(attentionDot(view.container)?.className).toContain('--card-status-awaiting');
   });
   it('hides errors while preserving running, awaiting and unread results', () => {
     const resolve = (input: Parameters<typeof projectSidebarSessionActivity>[0]) =>
@@ -160,7 +184,7 @@ describe('sidebar right status priority', () => {
       isRunning: false,
       hasAttentionNotification: false,
     })).toBe('time');
-    // awaiting(ask-user / 权限 / 计划审阅)压过 running,但低于 error
+    // awaiting(ask-user / 权限 / 计划审阅)不被旧错误或 running 遮住
     expect(resolve({
       sessionId: 'session-1',
       attentionKind: 'awaiting',

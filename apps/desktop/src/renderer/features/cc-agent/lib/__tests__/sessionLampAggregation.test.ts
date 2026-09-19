@@ -3,7 +3,7 @@
  * ---------------------------------------------------------------------------
  * 该 helper 是 rail 段钮 / rail 浮层面板项目行 / 展开态项目行 / 「对话」组行 /
  * 设备段头共用的唯一事实源。这里钉住三件事:
- *   1. tone 优先级:error > awaiting > done;urgent(定时任务失败未读)提升为 error;
+ *   1. 任务入口只显示 awaiting > done；urgent 不遮住 awaiting;
  *   2. 未读集合之外的会话不点灯(attention kind 存在也不行);
  *   3. device-link 远程镜像并入:running / needs-interaction / error / 完成未读
  *      与本地链路合并取最高档(否则远程「行亮而上层入口不亮」)。
@@ -43,6 +43,12 @@ describe('dotToneOf', () => {
   it('失败的自动运行不显示提醒点', () => {
     const c = ctx({ notifications: ['a'], urgent: ['a'] });
     expect(dotToneOf('a', c.notifications, c.attentionKinds, c.urgentSessionIds)).toBeNull();
+  });
+
+  it('同一任务旧失败不遮住待回复，运行标记也保持独立', () => {
+    const c = ctx({ notifications: ['a'], kinds: { a: 'awaiting' }, urgent: ['a'], running: ['a'] });
+    expect(dotToneOf('a', c.notifications, c.attentionKinds, c.urgentSessionIds)).toBe('awaiting');
+    expect(aggregateSessionLamps([{ id: 'a' }], c)).toEqual({ running: true, dotTone: 'awaiting' });
   });
 
   it('kind 缺失的未读回落绿 done', () => {

@@ -22,6 +22,7 @@ import { getRemoteSessionActivity } from '@/features/device-link/remoteSessionAc
 import { getStartingSessionIds } from '@/lib/sessionStartingStore';
 import { getSessionDeviceId } from '@/features/device-link/remoteProjectsStore';
 import type { AttentionKind } from '@/lib/sessionAttentionStore';
+import { resolveSidebarAttentionTone } from '../sidebar/sidebarRightStatus';
 
 const TONE_RANK: Record<AttentionKind, number> = { error: 3, awaiting: 2, done: 1 };
 
@@ -46,10 +47,7 @@ export function dotToneOf(
   urgentSessionIds: ReadonlySet<string>,
 ): AttentionKind | null {
   if (!notifications.has(id)) return null;
-  const kind = attentionKinds.get(id);
-  if (kind === 'error' || urgentSessionIds.has(id)) return null;
-  if (kind === 'awaiting') return 'awaiting';
-  return 'done';
+  return resolveSidebarAttentionTone(attentionKinds.get(id), urgentSessionIds.has(id));
 }
 
 export interface SessionLampContext {
