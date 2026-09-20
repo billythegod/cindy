@@ -133,7 +133,7 @@ describe('completion card in the input area', () => {
     expect(screen.getByRole('alert').textContent).toBe('cindyMake.test.errors.timeout');
     expect((continueButton as HTMLButtonElement).disabled).toBe(false);
     h.api.mockImplementationOnce(() => new Promise(() => {}));
-    fireEvent.click(screen.getByRole('button', { name: 'cindyMake.test.retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'cindyMake.test.start' }));
     expect(h.api).toHaveBeenLastCalledWith('session', 'completion', 'start');
     expect((continueButton as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole('alert')).toBeNull();
@@ -343,10 +343,16 @@ describe('completion card in the input area', () => {
       <CindyMakeTestCard
         sessionId="session"
         completionId="completion"
-        meta={{ ...meta, lastAction: 'build', personal: { status: 'packaging' } }}
+        meta={{
+          ...meta,
+          lastAction: 'build',
+          personal: { status: 'packaging', logs: [{ step: 'packaging', at: 123 }] },
+        }}
       />,
     );
     expect(screen.getByText('cindyMake.personal.status.packaging')).toBeDefined();
+    expect(screen.getByText('cindyMake.personal.buildLog.title · 1')).toBeDefined();
+    expect(screen.getByText('cindyMake.personal.buildLog.steps.packaging')).toBeDefined();
     expect(
       (screen.getByRole('button', { name: 'cindyMake.test.continue' }) as HTMLButtonElement)
         .disabled,
@@ -360,6 +366,25 @@ describe('completion card in the input area', () => {
     ).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'cindyMake.test.continue' }));
     expect(h.api.mock.calls.some(([, , action]) => action !== 'status')).toBe(false);
+  });
+  it('shows the preparation detail and structured generation record', () => {
+    render(
+      <CindyMakeTestCard
+        sessionId="session"
+        completionId="completion"
+        meta={{
+          ...meta,
+          lastAction: 'build',
+          personal: {
+            status: 'waiting',
+            preparationStep: 'environment',
+            logs: [{ step: 'environment', at: 123 }],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText('cindyMake.personal.preparationStep.environment')).toBeDefined();
+    expect(screen.getByText('cindyMake.personal.buildLog.steps.environment')).toBeDefined();
   });
   it('offers the installer when ready and gives failed builds a retry', async () => {
     const { rerender } = render(

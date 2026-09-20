@@ -179,6 +179,22 @@ export async function fileDigest(file: string): Promise<string> {
   for await (const data of originalFs.createReadStream(file)) hash.update(data);
   return hash.digest('hex');
 }
+/** Same digest as fileDigest without touching the event loop; only for the pre-ready startup path. */
+export function fileDigestSync(file: string): string {
+  const hash = createHash('sha256');
+  const fd = originalFs.openSync(file, 'r');
+  try {
+    const chunk = Buffer.allocUnsafe(1024 * 1024);
+    for (;;) {
+      const read = originalFs.readSync(fd, chunk, 0, chunk.length, null);
+      if (read === 0) break;
+      hash.update(chunk.subarray(0, read));
+    }
+  } finally {
+    originalFs.closeSync(fd);
+  }
+  return hash.digest('hex');
+}
 export function runnableBundlePaths(
   directory: string,
   appName: string,
@@ -223,11 +239,7 @@ export function publishPersonalVersion(profile: string, id: string): void {
     fs.unlinkSync(path.join(directory, 'staged.json'));
   } catch {}
 }
-export async function verifyPersonalVersion(
-  profile: string,
-  id: string,
-  original: OriginalVersion,
-): Promise<PersonalVersion> {
+function personalVersionVerification(profile: string, id: string, original: OriginalVersion) {
   const item = readPersonalVersion(profile, id);
   const root = versionDirectory(profile, id);
   if (
@@ -239,13 +251,49 @@ export async function verifyPersonalVersion(
   const resources = path.join(root, item.resources);
   if (
     readVersionJson<{ version: number }>(path.join(resources, 'cindy-version-protocol.json'))
-      ?.version !== CINDY_VERSION_PROTOCOL ||
-    (await fileDigest(path.join(root, item.executable))) !== item.executableHash ||
-    (await fileDigest(path.join(resources, 'app.asar'))) !== item.applicationHash ||
-    migrationIdentity(path.join(resources, 'drizzle')) !== item.migrationHash
+      ?.version !== CINDY_VERSION_PROTOCOL
   )
     throw versionError('unavailable');
-  return item;
+  return {
+    executable: path.join(root, item.executable),
+    application: path.join(resources, 'app.asar'),
+    finish(executableHash: string, applicationHash: string): PersonalVersion {
+      if (
+        executableHash !== item.executableHash ||
+        applicationHash !== item.applicationHash ||
+        migrationIdentity(path.join(resources, 'drizzle')) !== item.migrationHash
+      )
+        throw versionError('unavailable');
+      return item;
+    },
+  };
+}
+export async function verifyPersonalVersion(
+  profile: string,
+  id: string,
+  original: OriginalVersion,
+): Promise<PersonalVersion> {
+  const verification = personalVersionVerification(profile, id, original);
+  return verification.finish(
+    await fileDigest(verification.executable),
+    await fileDigest(verification.application),
+  );
+}
+/**
+ * Startup self-check of a launched personal version. It runs before bootstrap-electron is
+ * loaded, and that module must still see Electron as not ready, so the digests are computed
+ * without yielding to the event loop.
+ */
+export function verifyPersonalVersionSync(
+  profile: string,
+  id: string,
+  original: OriginalVersion,
+): PersonalVersion {
+  const verification = personalVersionVerification(profile, id, original);
+  return verification.finish(
+    fileDigestSync(verification.executable),
+    fileDigestSync(verification.application),
+  );
 }
 export async function withVersionStore<T>(profile: string, run: () => Promise<T>): Promise<T> {
   const root = versionsRoot(profile);

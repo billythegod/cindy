@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { appendCindyMakeBuildLog } from '../../shared/cindyMakeSession.js';
 import type {
   CindyMakeCompletionMeta,
   CindyMakeTestAction,
@@ -69,7 +70,10 @@ export function createMakeTestController(deps: MakeTestControllerDeps) {
       if (state.stopping && ['ready', 'failed'].includes(job.context.meta.personal?.status ?? ''))
         return;
       if (job.cancelled && !state.stopping && !['ready', 'failed'].includes(state.status)) return;
-      const next = { ...state, buildId: job.buildId, startedAt: job.startedAt };
+      const next = appendCindyMakeBuildLog(
+        job.context.meta.personal,
+        { ...state, buildId: job.buildId, startedAt: job.startedAt },
+      );
       job.context.meta = await deps.save(job.context, { lastAction: 'build', personal: next });
       deps.onBuildState?.(job.context, next);
     });
@@ -209,6 +213,16 @@ export function createMakeTestController(deps: MakeTestControllerDeps) {
     stopAll(): void {
       for (const job of jobs.values()) stop(job);
     },
+    async stopAllAndWait(): Promise<void> {
+      const active = [...jobs.values()];
+      for (const job of active) stop(job);
+      await Promise.all(
+        active.map(async (job) => {
+          await job.accepted.catch(() => {});
+          await job.finished;
+        }),
+      );
+    },
     async act(
       sessionId: string,
       completionId: string,
@@ -238,12 +252,12 @@ export function createMakeTestController(deps: MakeTestControllerDeps) {
             context.meta.personal?.status ?? '',
           )
         )
-          patch.personal = {
+          patch.personal = appendCindyMakeBuildLog(context.meta.personal, {
             ...context.meta.personal,
             status: 'failed',
             stopping: undefined,
             error: 'interrupted',
-          };
+          });
         if (Object.keys(patch).length) return deps.save(context, patch);
         return context.meta;
       }

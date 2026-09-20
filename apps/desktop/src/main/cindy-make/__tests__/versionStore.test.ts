@@ -15,6 +15,7 @@ import {
   selectedVersion,
   selectVersion,
   verifyPersonalVersion,
+  verifyPersonalVersionSync,
   versionDirectory,
   versionsRoot,
   writeVersionJson,
@@ -148,6 +149,26 @@ describe('local Cindy version snapshots', () => {
       code: 'incompatible',
     });
     expect(listPersonalVersions(h.userData, h.original)[0].compatible).toBe(false);
+  });
+  it('verifies synchronously for the pre-ready startup path with the same outcome', async () => {
+    const h = await fixture();
+    const id = (await h.retain())!;
+    publishPersonalVersion(h.userData, id);
+    expect(verifyPersonalVersionSync(h.userData, id, h.original)).toEqual(
+      await verifyPersonalVersion(h.userData, id, h.original),
+    );
+    const item = readPersonalVersion(h.userData, id);
+    await writeFile(
+      path.join(versionDirectory(h.userData, id), item.executable),
+      'executable tampered',
+    );
+    let failure: unknown;
+    try {
+      verifyPersonalVersionSync(h.userData, id, h.original);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ code: 'unavailable' });
   });
   it('runs retained personal applications even after the original Dev source directory is removed', async () => {
     const h = await fixture();
