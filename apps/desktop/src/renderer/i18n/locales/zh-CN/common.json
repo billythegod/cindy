@@ -13102,7 +13102,8 @@
         "environment": "测试环境尚未就绪，请在设置中检查 Cindy Make 环境后重试。",
         "launchFailed": "未能启动隔离版，请重试；仍失败可返回继续修改。",
         "timeout": "隔离版启动超时，请重试。",
-        "interrupted": "上次测试已中断，请重新启动隔离版。"
+        "interrupted": "上次测试已中断，请重新启动隔离版。",
+        "stopFailed": "测试版尚未退出，请关闭测试窗口后重试。"
       },
       "startingHint": "启动完成前暂时不能继续修改，请等待当前步骤完成。",
       "currentStep": "当前步骤：{{step}}",

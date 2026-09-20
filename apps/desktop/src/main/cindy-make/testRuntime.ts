@@ -431,7 +431,7 @@ export async function actCindyMakeTest(
     const code = (error as { code?: unknown })?.code;
     throwIpcError(
       'PRECONDITION_FAILED',
-      code === 'environment' || code === 'changed' ? code : 'unavailable',
+      code === 'environment' || code === 'changed' || code === 'stopFailed' ? code : 'unavailable',
     );
   }
 }

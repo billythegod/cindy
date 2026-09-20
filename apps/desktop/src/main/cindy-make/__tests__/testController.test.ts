@@ -92,6 +92,35 @@ function harness(initial: Partial<CindyMakeCompletionMeta> = {}) {
 afterEach(() => vi.useRealTimers());
 
 describe('Main-owned Cindy Make test lifecycle', () => {
+  it.each(['continue', 'build', 'stop-for-build'] as const)(
+    'bounds a missing stop receipt for %s without releasing the live workspace',
+    async (action) => {
+      vi.useFakeTimers();
+      const h = harness();
+      h.stop.mockImplementation(() => {});
+      await h.controller.act('session', 'completion', 'start');
+      h.ready.resolve();
+      await vi.waitFor(() => expect(h.meta().test?.status).toBe('ready'));
+      const pending =
+        action === 'stop-for-build'
+          ? h.controller.stopTestForBuild('session')
+          : h.controller.act('session', 'completion', action);
+      const failed = expect(pending).rejects.toMatchObject({ code: 'stopFailed' });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await failed;
+      expect(h.leased()).toBe(true);
+      expect(h.controller.isUsingSession('session')).toBe(true);
+      expect(h.meta().continuedAt).toBeUndefined();
+      expect(h.build).not.toHaveBeenCalled();
+      // A retry may succeed once the test window really exits; no false exit receipt.
+      const continued = h.controller.act('session', 'completion', 'continue');
+      h.closed.resolve();
+      await continued;
+      expect(h.leased()).toBe(false);
+      expect(h.meta().continuedAt).toBe(123);
+    },
+  );
+
   it('waits for test shutdown and temporary cleanup before starting a personal build', async () => {
     const h = harness();
     h.stop.mockImplementation(() => {});

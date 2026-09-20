@@ -109,6 +109,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('Make history controls', () => {
+  it('keeps the running test visible when its stop fails', async () => {
+    const f = harness([item({ test: { status: 'ready' }, actions: ['continue'] })]);
+    f.execute.mockRejectedValueOnce(new Error('[PRECONDITION_FAILED] stopFailed'));
+    render(<CindyMakeHistoryPanel />);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'cindyMake.history.actions.continue' }),
+    );
+    await waitFor(() => expect(h.error).toHaveBeenCalledWith('cindyMake.test.errors.stopFailed'));
+    expect(h.navigate).not.toHaveBeenCalled();
+    expect(screen.getAllByText('cindyMake.test.status.ready')).not.toHaveLength(0);
+  });
+
   it('shows the prompt inside each round and removes the duplicate task request', async () => {
     const firstPrompt = 'Make the background blue';
     const f = harness([
@@ -448,9 +460,7 @@ describe('Make history controls', () => {
         expect(screen.getByRole('button', { name: /Next task/ }).getAttribute('aria-pressed')).toBe(
           'true',
         );
-        expect(
-          await screen.findByRole('button', { name: 'cindyMake.test.start' }),
-        ).toBeTruthy();
+        expect(await screen.findByRole('button', { name: 'cindyMake.test.start' })).toBeTruthy();
       } else {
         expect(screen.getByText('settings.cindyMake.tasks.noResults')).toBeTruthy();
         expect(screen.queryByRole('button', { name: 'cindyMake.history.cleanTask' })).toBeNull();

@@ -226,10 +226,16 @@ function CindyMakeCompletedTest({ sessionId, completionId, meta, onContinue }: C
       }
     } catch (error) {
       if (current()) {
-        const code = extractIpcError(error)?.message;
+        const code = extractIpcError(error)?.message.replace(/^\[PRECONDITION_FAILED\]\s*/, '');
         setError({
-          mode: action === 'build' || action === 'open-build' ? 'build' : 'test',
-          code: code === 'changed' || code === 'environment' ? code : 'unavailable',
+          mode:
+            code !== 'stopFailed' && (action === 'build' || action === 'open-build')
+              ? 'build'
+              : 'test',
+          code:
+            code === 'changed' || code === 'environment' || code === 'stopFailed'
+              ? code
+              : 'unavailable',
         });
       }
     } finally {
@@ -280,10 +286,10 @@ function CindyMakeCompletedTest({ sessionId, completionId, meta, onContinue }: C
       failed={Boolean(errorCode)}
       heading={t(
         buildMode && buildStatus
-            ? stopping
-              ? 'cindyMake.history.stopping'
-              : buildStatus === 'waiting' && personal?.preparationStep
-                ? 'cindyMake.personal.preparationStep.' + personal.preparationStep
+          ? stopping
+            ? 'cindyMake.history.stopping'
+            : buildStatus === 'waiting' && personal?.preparationStep
+              ? 'cindyMake.personal.preparationStep.' + personal.preparationStep
               : buildStatus === 'checking' && personal?.checkStep
                 ? 'cindyMake.personal.checkStep.' + personal.checkStep
                 : 'cindyMake.personal.status.' + buildStatus
@@ -305,15 +311,13 @@ function CindyMakeCompletedTest({ sessionId, completionId, meta, onContinue }: C
       )}
       detail={
         buildMode ? (
-          <CindyMakeBuildLog
-            build={personal}
-            openWhileActive={building || Boolean(errorCode)}
-          />
+          <CindyMakeBuildLog build={personal} openWhileActive={building || Boolean(errorCode)} />
         ) : (
           <CindyMakeTestStep
             test={pending === 'start' ? { status: 'starting', step: 'waiting' } : meta.test}
           />
-        )}
+        )
+      }
     >
       {versions.error && (
         <p role="alert" className="text-12 text-[var(--status-danger)]">
@@ -352,11 +356,7 @@ function CindyMakeCompletedTest({ sessionId, completionId, meta, onContinue }: C
           loading={starting}
           onClick={() => void act('start')}
         >
-          {t(
-            testStatus === 'ready'
-              ? 'cindyMake.test.started'
-              : 'cindyMake.test.start',
-          )}
+          {t(testStatus === 'ready' ? 'cindyMake.test.started' : 'cindyMake.test.start')}
         </Button>
         <Button
           variant="secondary"

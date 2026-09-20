@@ -292,15 +292,6 @@ async function dispatch(): Promise<void> {
   // Windows updater forceQuit() ends in process.exit(0), which bypasses Electron will-quit.
   process.once('exit', cleanupDevInstance);
   app.once('will-quit', cleanupDevInstance);
-  // bootstrap-electron registers privileged schemes, command-line switches and the 'ready'
-  // listener at module top level; Electron rejects or ignores all of them once ready. Getting
-  // here after ready means something above yielded to the event loop (real I/O, timers).
-  if (app.isReady()) {
-    throw new Error(
-      'bootstrap-electron must load before Electron is ready; ' +
-        'dispatchCindyVersionStartup() or beginDesktopDevInstance() yielded to the event loop',
-    );
-  }
   const mod = await import('./bootstrap-electron.js');
   await mod.bootstrapElectron();
 }

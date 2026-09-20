@@ -7624,7 +7624,7 @@ const registerIpcHandlers = () => {
         const message = (error as { message?: unknown }).message;
         const reason =
           typeof message === 'string'
-            ? /^\[PRECONDITION_FAILED\]\s*(busy|dirty|conflict|cleanupFailed|directoryBusy|unavailable)$/.exec(
+            ? /^\[PRECONDITION_FAILED\]\s*(busy|dirty|conflict|cleanupFailed|directoryBusy|unavailable|stopFailed)$/.exec(
                 message,
               )?.[1]
             : undefined;

@@ -51,7 +51,14 @@ export interface CindyMakeTestState {
   status: 'starting' | 'ready' | 'failed' | 'stopped';
   /** Optional startup detail; older completions retain the broad status. */
   step?: CindyMakeTestStep;
-  error?: 'unavailable' | 'changed' | 'environment' | 'launchFailed' | 'timeout' | 'interrupted';
+  error?:
+    | 'unavailable'
+    | 'changed'
+    | 'environment'
+    | 'launchFailed'
+    | 'timeout'
+    | 'interrupted'
+    | 'stopFailed';
 }
 
 export type CindyMakeTestStep =

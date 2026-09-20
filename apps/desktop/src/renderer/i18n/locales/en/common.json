@@ -13119,7 +13119,8 @@
         "environment": "The test environment is not ready. Check Cindy Make in Settings and retry.",
         "launchFailed": "The test build could not start. Retry or return to editing.",
         "timeout": "The test build took too long to start. Retry the launch.",
-        "interrupted": "The previous test was interrupted. Launch the isolated build again."
+        "interrupted": "The previous test was interrupted. Launch the isolated build again.",
+        "stopFailed": "The test version has not exited. Close its window, then try again."
       },
       "startingHint": "Editing is paused until startup finishes. Wait for the current step to complete.",
       "currentStep": "Current step: {{step}}",

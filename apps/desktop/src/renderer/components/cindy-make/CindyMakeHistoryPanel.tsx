@@ -139,9 +139,9 @@ export function CindyMakeHistoryPanel({
         ? 'cindyMake.history.stopping'
         : build.status === 'waiting' && build.preparationStep
           ? 'cindyMake.personal.preparationStep.' + build.preparationStep
-        : build.status === 'checking' && build.checkStep
-          ? 'cindyMake.personal.checkStep.' + build.checkStep
-          : 'cindyMake.history.buildStatus.' + build.status;
+          : build.status === 'checking' && build.checkStep
+            ? 'cindyMake.personal.checkStep.' + build.checkStep
+            : 'cindyMake.history.buildStatus.' + build.status;
     return item.test
       ? 'cindyMake.test.status.' + item.test.status
       : 'cindyMake.history.lifecycle.' + item.lifecycle;
@@ -310,9 +310,11 @@ export function CindyMakeHistoryPanel({
           ? reason
           : undefined;
         toast.error(
-          knownReason
-            ? t('settings.cindyMake.tasks.errors.' + knownReason)
-            : t('cindyMake.history.actionFailed'),
+          reason === 'stopFailed'
+            ? t('cindyMake.test.errors.stopFailed')
+            : knownReason
+              ? t('settings.cindyMake.tasks.errors.' + knownReason)
+              : t('cindyMake.history.actionFailed'),
         );
         await refresh();
       }
@@ -430,7 +432,7 @@ export function CindyMakeHistoryPanel({
                         ? 'cindyMake.history.stopping'
                         : state.build.status === 'waiting' && state.build.preparationStep
                           ? 'cindyMake.personal.preparationStep.' + state.build.preparationStep
-                        : 'cindyMake.history.buildStatus.' + state.build.status,
+                          : 'cindyMake.history.buildStatus.' + state.build.status,
                     )}
                   </p>
                   {state.build.status === 'checking' && state.build.checkStep && (

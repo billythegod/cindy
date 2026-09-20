@@ -177,6 +177,22 @@ beforeEach(() => {
 afterEach(() => cindyMakeTestController.stopAll());
 
 describe('Cindy Make test IPC ownership and persistence', () => {
+  it('reports a stop failure without inspecting or modifying personal source', async () => {
+    const stop = vi
+      .spyOn(cindyMakeTestController, 'stopTestForBuild')
+      .mockRejectedValueOnce(Object.assign(new Error('stopFailed'), { code: 'stopFailed' }));
+    try {
+      await expect(actCindyMakeTest('session', 'completion', 'build')).rejects.toThrow(
+        'stopFailed',
+      );
+      expect(h.history).not.toHaveBeenCalled();
+      expect(h.historyIntegrate).not.toHaveBeenCalled();
+      expect(h.build).not.toHaveBeenCalled();
+    } finally {
+      stop.mockRestore();
+    }
+  });
+
   it('stops the running test and waits for cleanup before inspecting history or building', async () => {
     let clean!: () => void;
     const closed = new Promise<void>((resolve) => {

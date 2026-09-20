@@ -31,6 +31,30 @@ afterEach(() => {
 });
 
 describe('completion card in the input area', () => {
+  it.each([false, true])(
+    'keeps a failed test stop actionable during generation (structured=%s)',
+    async (structured) => {
+      const current = { ...meta, test: { status: 'ready' as const } };
+      render(<CindyMakeTestCard sessionId="session" completionId="completion" meta={current} />);
+      await waitFor(() => expect(h.api).toHaveBeenCalledOnce());
+      const failure = new Error('[PRECONDITION_FAILED] stopFailed');
+      if (structured) Object.assign(failure, { code: 'PRECONDITION_FAILED' });
+      h.api.mockRejectedValueOnce(failure);
+      fireEvent.click(screen.getByRole('button', { name: 'cindyMake.personal.generate' }));
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        'cindyMake.test.errors.stopFailed',
+      );
+      expect(
+        (screen.getByRole('button', { name: 'cindyMake.test.continue' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+      expect(
+        (screen.getByRole('button', { name: 'cindyMake.personal.generate' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    },
+  );
+
   it('releases input only after Continue Editing succeeds', async () => {
     const onContinue = vi.fn();
     render(
