@@ -222,6 +222,19 @@ describe('history Main admission and owner boundary', () => {
     expect(item.completions.at(-1)?.prompt).toBe('First round prompt');
     expect(h.records.get('aaaa')?.completions.at(-1)?.prompt).toBe('First round prompt');
   });
+  it('skips synthetic UI triggers when associating a completion with its user prompt', async () => {
+    h.cards.push({
+      id: 2,
+      sessionId: 'session',
+      role: 'user',
+      clientId: 'synthetic-trigger',
+      content: JSON.stringify('[UI_ACTION_TRIGGER] continue the task'),
+      agentMeta: null,
+      createdAt: 2.5,
+    });
+    const item = (await getCindyMakeHistory('aaaa')).items[0];
+    expect(item.completions.at(-1)?.prompt).toBe('First round prompt');
+  });
   it('continues into generation after retrying a failed integration', async () => {
     h.state.upstreamMerge = {
       id: 'failed-merge',

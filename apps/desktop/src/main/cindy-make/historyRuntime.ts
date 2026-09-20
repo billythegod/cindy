@@ -44,6 +44,7 @@ import {
 import { currentVersionProfile, rememberOriginalVersion } from './versionStartup.js';
 import { hasPublishedPersonalVersionCommit } from './versionStore.js';
 import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
+import { isSyntheticTriggerText } from '../../shared/interruptedTurn.js';
 import {
   makeHistoryActions,
   activeFeatureReceipts,
@@ -109,7 +110,7 @@ function latestUserPromptBefore(
     const message = userMessages[index];
     if (chronologicalMessageOrder(message, completion) >= 0) continue;
     const prompt = decodeUserPrompt(message.content);
-    if (prompt !== undefined) return prompt;
+    if (prompt !== undefined && !isSyntheticTriggerText(prompt)) return prompt;
   }
   return;
 }
