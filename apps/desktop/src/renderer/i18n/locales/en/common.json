@@ -11205,6 +11205,14 @@
     "projectSkillNotLoaded": "This Pi task hasn't loaded this project Skill. New tasks will automatically try to load it."
   },
   "skillhub": {
+    "publishComparison": {
+      "updateAvailable": "Update available to publish",
+      "pendingChanges": "Further local changes since submission",
+      "unavailable": "Unable to check for publication updates",
+      "diffTitle": "Changes from online v{{version}}",
+      "summaryBadge": "Summary",
+      "summaryNote": "Binary or large file, or full text unavailable. Showing file sizes."
+    },
     "home": {
       "title": "Skills",
       "description": "Manage local skills, or discover and install more from Skill Hub.",

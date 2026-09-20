@@ -40,6 +40,7 @@ import { cn } from '@/lib/utils';
 import { getDraft, getFastModeForModel } from '@/state/newMakerDraft';
 import { useMetaColumnResize } from './hooks/useMetaColumnResize';
 import { invalidateHash, useSkillFolderHash } from './hooks/useSkillFolderHash';
+import { useSkillPublishComparison } from './hooks/useSkillPublishComparison';
 import {
   clearHistory,
   clearLastEntryId,
@@ -1061,16 +1062,20 @@ export function SkillhubDetailView() {
   // 拉新数据;publish 完成后通过 invalidateInfo + bump infoFetchTrigger 强刷。
   // detailState 完全基于 infoResult 派生(不再用批量 syncResults),保证按钮永远
   // 反映「这个 skill 在服务器上的真实状态」。
+  const entryMarketName = entry?.registrySkillName ?? entry?.name;
+  const publishSkill = useMemo(() => entry && entryMarketName
+    ? { ...entry, name: entryMarketName } : entry, [entry, entryMarketName]);
   const entryCatalogScope = entry?.registryEntry?.catalogScope;
   const [infoResult, setInfoResult] = useState<SkillhubInfoResult | null>(
-    () => (entry?.name ? getCachedInfo(entry.name, entryCatalogScope) : null),
+    () => (entryMarketName ? getCachedInfo(entryMarketName, entryCatalogScope) : null),
   );
   const [infoLoading, setInfoLoading] = useState(false);
   const [publishTargetInfo, setPublishTargetInfo] = useState<SkillhubInfoResult | null>(
-    () => (entry?.name && entryCatalogScope === 'team' ? getCachedInfo(entry.name) : null),
+    () => (entryMarketName && entryCatalogScope === 'team' ? getCachedInfo(entryMarketName) : null),
   );
   const [publishTargetLoading, setPublishTargetLoading] = useState(false);
   const [infoFetchTrigger, setInfoFetchTrigger] = useState(0);
+  const { comparison: publishComparison, refresh: comparisonRefresh } = useSkillPublishComparison(entry);
 
   // 同步重置:entry.name 变化时立刻把 infoResult 切到新 name 的缓存值。
   // FadeSwitcher 按 feature 段(/skillhub)聚合 key,同 feature 内切 skill 不重挂,
@@ -1079,15 +1084,15 @@ export function SkillhubDetailView() {
   // 关键升级:不再无脑置 null(那会让按钮闪过一次"无版本号 → 有版本号"),
   // 改成同步从 SWR 缓存取上次结果,缓存命中(常见的重访场景)时直接渲染最终态,
   // 完全不闪;缓存 miss(首访)时才退回到 null + loading=true。
-  const entryInfoKey = entry?.name ? `${entryCatalogScope ?? 'default'}:${entry.name}` : null;
+  const entryInfoKey = entryMarketName ? `${entryCatalogScope ?? 'default'}:${entryMarketName}` : null;
   const { result: scanResult, setResult: setScanResult } = usePublicationFeedback(entryInfoKey);
   const [trackedEntryInfoKey, setTrackedEntryInfoKey] = useState<string | null>(entryInfoKey);
   if (entryInfoKey !== trackedEntryInfoKey) {
     setTrackedEntryInfoKey(entryInfoKey);
-    const cached = entry?.name ? getCachedInfo(entry.name, entryCatalogScope) : null;
+    const cached = entryMarketName ? getCachedInfo(entryMarketName, entryCatalogScope) : null;
     setInfoResult(cached);
     setPublishTargetInfo(
-      entry?.name && entryCatalogScope === 'team' ? getCachedInfo(entry.name) : null,
+      entryMarketName && entryCatalogScope === 'team' ? getCachedInfo(entryMarketName) : null,
     );
     setLiveScanStatus(null);
     // 有缓存就不显示 loading(SWR 后台静默刷),没缓存才进 loading 态
@@ -1134,11 +1139,11 @@ export function SkillhubDetailView() {
     return { info, liveScanStatus: null };
   }, []);
 
-  const remoteInfoName = isSkill ? (entry?.name ?? null) : null;
+  const remoteInfoName = isSkill ? (entryMarketName ?? null) : null;
   const remoteInfoRequest = useMemo(() => {
     if (!remoteInfoName) return null;
-    return { name: remoteInfoName, catalogScope: entryCatalogScope, refreshKey: infoFetchTrigger };
-  }, [remoteInfoName, entryCatalogScope, infoFetchTrigger]);
+    return { name: remoteInfoName, catalogScope: entryCatalogScope, refreshKey: infoFetchTrigger, comparisonRefresh };
+  }, [remoteInfoName, entryCatalogScope, infoFetchTrigger, comparisonRefresh]);
 
   useEffect(() => {
     if (!remoteInfoRequest) {
@@ -1205,7 +1210,7 @@ export function SkillhubDetailView() {
   const previousPublishOpenRef = useRef(publishOpen);
   const deferredDoneRef = useRef(false);
   publishOpenRef.current = publishOpen;
-  const publishProgressName = isSkill ? (entry?.name ?? null) : null;
+  const publishProgressName = isSkill ? (entryMarketName ?? null) : null;
   const publishProgressAbsolutePath = isSkill ? (entry?.absolutePath ?? null) : null;
   const publishProgressTarget = useMemo(() => {
     if (!publishProgressName || !publishProgressAbsolutePath) return null;
@@ -1290,17 +1295,19 @@ export function SkillhubDetailView() {
 
   // 按钮区/banner 数据就绪:info 落定 + hash 算完即可,不再依赖批量 sync。
   // 仅 isSkill 场景需要 hash;command/agent 直接视为 ready。
-  const hashReady = !isSkill || (!hashLoading && localFolderHash !== null);
+  const hashReady = !isSkill || (!hashLoading && localFolderHash !== null)
+    || publishComparison.status === 'same' || publishComparison.status === 'different'
+    || publishComparison.status === 'unavailable';
   const detailReady = !isSkill || (!infoLoading && !effectivePublishLoading && hashReady);
 
   // 三维度 detail state
-  const marketDeleted = !infoLoading && checkMarketDeleted(entry?.name ?? '', entryCatalogScope);
+  const marketDeleted = !infoLoading && checkMarketDeleted(entryMarketName ?? '', entryCatalogScope);
   const detailState = useMemo<DetailState | null>(() => {
     const state = deriveDetailState(isSkill ? entry : null, infoResult, marketDeleted);
     return state;
   }, [isSkill, entry, infoResult, marketDeleted]);
   const publishTargetDeleted = !effectivePublishLoading
-    && checkMarketDeleted(entry?.name ?? '', entryCatalogScope === 'team' ? undefined : entryCatalogScope);
+    && checkMarketDeleted(entryMarketName ?? '', entryCatalogScope === 'team' ? undefined : entryCatalogScope);
   const publishDetailState = useMemo<DetailState | null>(() => (
     deriveDetailState(isSkill ? entry : null, effectivePublishInfo, publishTargetDeleted)
   ), [isSkill, entry, effectivePublishInfo, publishTargetDeleted]);
@@ -1315,8 +1322,9 @@ export function SkillhubDetailView() {
       publishedStatus,
       identityPolicy.canWrite && entry?.builtIn !== true,
       publishDetailState,
+      publishComparison,
     ),
-    [detailState, registryEntry, localFolderHash, publishedStatus, identityPolicy.canWrite, entry?.builtIn, publishDetailState],
+    [detailState, registryEntry, localFolderHash, publishedStatus, identityPolicy.canWrite, entry?.builtIn, publishDetailState, publishComparison],
   );
   const detailAction = detailActionState?.status ?? null;
   const isOutdated = detailActionState?.isOutdated ?? false;
@@ -1325,7 +1333,7 @@ export function SkillhubDetailView() {
 
   const rejectionFeedback = useRejectionFeedback({
     entryKey: entryInfoKey,
-    name: entry?.name ?? null,
+    name: entryMarketName ?? null,
     version: publishedStatus === 'rejected' ? effectivePublishedStatusVersion(publishedStatusSource) : null,
     canManage: publishDetailState?.canManage === true,
   });
@@ -1395,7 +1403,7 @@ export function SkillhubDetailView() {
     setMarketActionRunning(true);
     try {
       const res = await window.electronAPI.skillhub.install({
-        name: entry.name,
+        name: entry.registrySkillName ?? entry.name,
         installPath: entry.absolutePath,
         version: latestVersion,
         catalogScope: entry.registryEntry?.catalogScope,
@@ -1410,7 +1418,7 @@ export function SkillhubDetailView() {
         // 抓着旧 hash 不放——不主动 invalidate,按钮区会用旧 localHash 跟新
         // serverHash 比对,误命中 isMineDirty 分支显示「发布新版本」。
         invalidateHash(entry.absolutePath);
-        invalidateInfo(entry.name);
+        invalidateInfo(entry.registrySkillName ?? entry.name);
         setInfoFetchTrigger((n) => n + 1);
         void refreshSkillhub();
       } else if (res.errorCode !== 'CANCELLED') {
@@ -2219,6 +2227,11 @@ export function SkillhubDetailView() {
           detailState is null until skill+infoResult arrive (detailReady guard). */}
       {!editMode && isSkill && detailReady && detailState && (
         <>
+          {publishComparison.status === 'unavailable' && effectivePublishInfo?.canManage && (
+            <p className="shrink-0 px-4 pt-4 text-sm text-[var(--text-secondary)]">
+              {t('skillhub.publishComparison.unavailable')}
+            </p>
+          )}
           {/* mine + dirty: local changes not yet published */}
           {isMineDirty && (
             <div className="shrink-0 pl-3 pr-3 pt-4">
@@ -2234,14 +2247,16 @@ export function SkillhubDetailView() {
               >
                 <AlertTriangle size={16} className="shrink-0 text-[var(--settings-section-desc)]" />
                 <span className="flex-1 text-sm font-medium text-[var(--msg-assistant-text)]">
-                  {t('skillhub.detail.bannerLocalChanges')}
+                  {t(publishComparison.status === 'different' && publishComparison.pending
+                    ? 'skillhub.publishComparison.pendingChanges'
+                    : 'skillhub.publishComparison.updateAvailable')}
                 </span>
                 <span className="shrink-0 text-xs text-[var(--cmd-palette-item-meta)]">{t('skillhub.detail.bannerSeeChanges')}</span>
               </button>
             </div>
           )}
           {/* outdated: 另一台设备发布了新版,本地版本号已落后 */}
-          {isOutdated && publishDetailState?.canManage && entry.registryEntry && (
+          {isOutdated && effectivePublishInfo?.isCreator && entry.registryEntry && (
             <div className="shrink-0 pl-3 pr-3 pt-4">
               <button
                 type="button"
@@ -2533,8 +2548,10 @@ export function SkillhubDetailView() {
           <SkillhubDiffPanel
             open={diffPanelOpen}
             onClose={() => setDiffPanelOpen(false)}
-            skillName={entry.name}
+            skillName={entryMarketName ?? entry.name}
             absolutePath={entry.absolutePath}
+            skillId={entry.id}
+            published={effectivePublishInfo?.isCreator === true}
           />
         )}
       </div>
@@ -2544,7 +2561,7 @@ export function SkillhubDetailView() {
         <PublishDialog
           open={publishOpen}
           onOpenChange={setPublishOpen}
-          skill={entry}
+          skill={publishSkill ?? entry}
           isFirstPublish={!publishDetailState || detailAction?.kind === 'publish-to-market'}
           autoCleanName={
             detailState?.origin === null &&
@@ -2567,7 +2584,7 @@ export function SkillhubDetailView() {
             // 最后导航到新 URL。先 await refresh 才 navigate,确保新 URL 落地时
             // skills 已包含新 entry,免得短暂闪一下"未找到"。
             const owner = getDataOwnerGeneration();
-            invalidateInfo(entry.name);
+            invalidateInfo(entry.registrySkillName ?? entry.name);
             invalidateHash(newAbsolutePath);
             void refreshSkillhub().then((scannedSkills) => {
               if (!isDataOwnerIdCurrent(owner)) return;

@@ -93,6 +93,24 @@ X 快照有请求正文时，按原始 triggerMessageId 排除引用列表中的
 
 ### Skill Hub 目录与管理契约
 
+- 原作者发布更新比较：服务端摘要新增可选 `isCreator`，仅表示当前成员是原始上传者，
+  独立于组织归属 `isMine` 和管理员管理权 `canManage`。Desktop 自动提示只使用
+  `isCreator === true` 的新鲜服务端结果；缺字段、离线、摘要不完整均为未知。
+  `GET /skills/:slug/files?version=...&includeHashes=1` 需认证及该 Skill 的管理权，
+  返回每个文件原始字节的可选 `sha256`；普通 files 请求保持原预览结构。
+  `fileHash` 仍是 ZIP 校验和，绝不作为本地 `folderHash`。
+  新包在校验时写入现有 release.fileIndex；历史包按需校验不可变 ZIP 并回填 JSON，
+  不改数据库 schema、版本或下载计数。两仓分别保留同名 `published-content.json`
+  fixture，覆盖文本、二进制、空文件及 ZIP 元数据变化。
+- Desktop 的 `skillhub:compare-published` 只开放给受信任的本地 Renderer，
+  Main 从发送窗口的最新扫描记录解析路径、slug 和 catalog，不接受 Renderer 指定远端
+  身份；读取前后复核账号代次、项目授权和目录身份，不扩展 device-link allowlist。
+  比较遵循现有打包排除规则，包含 SKILL.md 的 version 字段；审核中优先比较已提交版本。
+  本地列表和详情在进入、切换、回到窗口及本地写入后刷新，最多并行 3 个比较，无后台轮询。
+  差异预览锚定线上具体版本；二进制、大文件或无法完整校验的文本仅展示变更和大小，
+  文本预览总计最多 4 MiB、单文件 1 MiB、远端预览最多 16 次。更新仍复用原发布审核流程，
+  下载覆盖仍复用用户确认和备份。新旧两端可分别升级，旧端缺少摘要时不推断相同或不同。
+
 - Desktop 本地技能管理用扫描条目 `id` 区分不同 scope / 项目中的同源记录；启停与卸载
   的本地 IPC 可选携带 `skillId`，Main 同时匹配路径、当前发送窗口的扫描记录和项目授权，
   缺省字段保留旧调用行为，不向 device-link 新开放管理能力。启停偏好仍按物理身份共享；

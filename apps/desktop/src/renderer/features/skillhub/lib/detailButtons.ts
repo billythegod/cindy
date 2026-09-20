@@ -1,4 +1,5 @@
 import { semverCompare } from '../versionUtils';
+import type { PublishComparisonState } from '../hooks/useSkillPublishComparison';
 
 /**
  * deriveDetailState — 从 entry + server info 派生三个独立维度的 UI 状态。
@@ -126,6 +127,7 @@ export function deriveDetailActionState(
   publishedStatus?: string | null,
   canPublish = true,
   publishTargetState: DetailState | null = detailState,
+  comparison?: PublishComparisonState,
 ): DetailActionState | null {
   if (!detailState) return null;
 
@@ -141,7 +143,13 @@ export function deriveDetailActionState(
     semverCompare(detailState.localVersion, publishState.latestVersion) > 0
   );
   const localChanged = hasLocalChanges(registryEntry, localFolderHash);
-  const isMineDirty = !!(publishState.canManage === true && localChanged);
+  const isMineDirty = comparison
+    ? comparison.status === 'different'
+    : !!(publishState.canManage === true && localChanged);
+  // Preserve manual management on older servers and for administrators. Only verified
+  // creator comparisons drive automatic reminders; a matching pending release is clean.
+  const publishChanged = comparison?.status === 'same' ? false
+    : comparison?.status === 'different' ? true : localChanged;
   const showForeignDirtyBanner = !!(
     detailState.origin === 'installed' &&
     detailState.localVersion !== null &&
@@ -153,15 +161,15 @@ export function deriveDetailActionState(
 
   if (publishState.canManage === true && publishedStatus === 'rejected') {
     status = { kind: 'publish-new-version' };
-  } else if (isPublishLocalAhead && publishState.canManage === true) {
+  } else if (isPublishLocalAhead && comparison?.status !== 'same' && publishState.canManage === true) {
     status = { kind: 'publish-new-version' };
   } else if (
     publishState.canManage === true &&
-    localChanged
+    publishChanged
   ) {
     status = { kind: 'publish-new-version' };
   } else if (publishState.latestVersion !== null && publishState.canManage === true) {
-    status = (detailState.origin === 'learned' || detailState.origin === 'imported')
+    status = comparison?.status !== 'same' && (detailState.origin === 'learned' || detailState.origin === 'imported')
       ? { kind: 'publish-new-version' }
       : { kind: 'published-tag', version: publishState.latestVersion };
   } else if (isOutdated && detailState.latestVersion !== null && detailState.origin !== 'learned' && detailState.origin !== 'imported') {

@@ -11189,6 +11189,14 @@
     "projectSkillNotLoaded": "現在の Pi タスクでは、このプロジェクト Skill はまだ読み込まれていません。新しいタスクでは自動的に読み込みを試みます。"
   },
   "skillhub": {
+    "publishComparison": {
+      "updateAvailable": "更新を公開できます",
+      "pendingChanges": "審査への提出後にローカルの変更があります",
+      "unavailable": "公開済みの内容と比較できません",
+      "diffTitle": "オンラインの v{{version}} との差分",
+      "summaryBadge": "概要",
+      "summaryNote": "バイナリ、大きなファイル、または全文を取得できないため、ファイルサイズのみ表示します。"
+    },
     "home": {
       "title": "スキル",
       "description": "ローカルスキルを管理し、Skill Hub から新しいスキルを見つけてインストールできます。",

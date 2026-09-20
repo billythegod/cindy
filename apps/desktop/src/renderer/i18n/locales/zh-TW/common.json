@@ -11189,6 +11189,14 @@
     "projectSkillNotLoaded": "目前的 Pi 任務尚未載入此專案 Skill，新任務會自動嘗試載入"
   },
   "skillhub": {
+    "publishComparison": {
+      "updateAvailable": "可發佈更新",
+      "pendingChanges": "提交審核後，本機又有改動",
+      "unavailable": "暫時無法檢查發佈更新",
+      "diffTitle": "與線上 v{{version}} 的差異",
+      "summaryBadge": "摘要",
+      "summaryNote": "檔案為二進位、過大或無法完整預覽，僅顯示檔案大小。"
+    },
     "home": {
       "title": "技能",
       "description": "管理本地技能，或從 Skill Hub 發現並安裝更多技能。",

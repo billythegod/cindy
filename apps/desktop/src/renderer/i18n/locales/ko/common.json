@@ -11189,6 +11189,14 @@
     "projectSkillNotLoaded": "현재 Pi 작업에는 이 프로젝트 Skill이 아직 로드되지 않았습니다. 새 작업에서는 자동으로 로드를 시도합니다."
   },
   "skillhub": {
+    "publishComparison": {
+      "updateAvailable": "업데이트를 게시할 수 있습니다",
+      "pendingChanges": "검토 제출 후 로컬 변경 사항이 있습니다",
+      "unavailable": "게시된 내용과 비교할 수 없습니다",
+      "diffTitle": "온라인 v{{version}}과의 차이",
+      "summaryBadge": "요약",
+      "summaryNote": "바이너리, 큰 파일 또는 전체 내용을 미리 볼 수 없는 파일은 크기만 표시합니다."
+    },
     "home": {
       "title": "스킬",
       "description": "로컬 스킬을 관리하거나 Skill Hub에서 새로운 스킬을 찾아 설치하세요.",

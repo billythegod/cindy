@@ -58,6 +58,7 @@ import { InstallTargetPicker, type InstallTargetSkill } from './components/Insta
 import { SkillCategoryFilterBar } from './components/SkillCategoryFilterBar';
 import { HomeMarketCard } from './components/HomeMarketCard';
 import { SkillIcon } from './components/SkillIcon';
+import { SkillPublishUpdateHint } from './SkillPublishUpdateHint';
 import { OfficialSkillBadge } from './components/OfficialSkillBadge';
 import { SkillhubMarketPreviewPanel } from './SkillhubMarketPreviewPanel';
 import { useSkillhubIdentityPolicy } from './hooks/useSkillhubIdentityPolicy';
@@ -573,7 +574,7 @@ function LocalGroup({
           // 来源:'skillhub' = 从市场安装的副本(填充徽标);'local' = 自己开发/发布、
           // 没走 SkillHub 安装的本地副本(弱化文字,不与 SkillHub 抢视觉)。
           // origin 缺失的历史 registry 靠 server isMine 兜底判定(见 deriveSkillSource)。
-          const sync = syncResults.get(skillhubCatalogKey(s.name, s.registryEntry?.catalogScope));
+          const sync = syncResults.get(skillhubCatalogKey(s.registrySkillName ?? s.name, s.registryEntry?.catalogScope));
           const isMine = sync?.exists === true ? sync.isMine : null;
           const source = deriveSkillSource(
             s.registryEntry?.origin,
@@ -621,6 +622,7 @@ function LocalGroup({
                     {displayDescription}
                   </span>
                 )}
+                <SkillPublishUpdateHint skill={s} knownCreator={sync?.exists === true && sync.isCreator === true} />
               </span>
               <span className="mt-1 flex size-7 shrink-0 items-center justify-center rounded-lg border border-transparent text-[var(--text-secondary)] transition-[background-color,color,transform] group-hover:translate-x-0.5 group-hover:bg-[var(--surface-chip)] group-hover:text-[var(--text-primary)] group-active:translate-x-0 group-active:scale-95">
                 <ChevronRight size={15} strokeWidth={1.8} />
