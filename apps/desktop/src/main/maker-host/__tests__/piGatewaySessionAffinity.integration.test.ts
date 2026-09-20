@@ -1,5 +1,5 @@
 /** Real Pi RPC → production loopback proxy → fake upstream affinity regression. */
-import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -87,15 +87,25 @@ function chatCompletionsStreamBody(text: string, model: string): string {
 }
 
 
+// Resolve the caller-created temporary directory before starting any HTTP/Pi processes.
 // Opt-in audit output contains only synthetic identity/status fields, never bodies or auth.
-function writeEvidence(record: Record<string, unknown>) {
+function createEvidenceWriter(): (record: Record<string, unknown>) => void {
   const directory = process.env.CINDY_TEST_PI_EVIDENCE_DIR;
-  if (!directory) return;
-  const relative = path.relative(realpathSync(tmpdir()), realpathSync(directory));
+  if (!directory) return () => {};
+  let resolvedDirectory: string;
+  try {
+    resolvedDirectory = realpathSync(directory);
+    if (!statSync(resolvedDirectory).isDirectory()) throw new Error('Not a directory');
+  } catch {
+    throw new Error('CINDY_TEST_PI_EVIDENCE_DIR must already exist; create a dedicated directory with mkdtemp under os.tmpdir() before running the test');
+  }
+  const relative = path.relative(realpathSync(tmpdir()), resolvedDirectory);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
     throw new Error('Pi test evidence must use a dedicated directory below os.tmpdir()');
   }
-  appendFileSync(path.join(directory, 'requests.jsonl'), JSON.stringify(record) + '\n', { mode: 0o600 });
+  return (record) => {
+    appendFileSync(path.join(resolvedDirectory, 'requests.jsonl'), JSON.stringify(record) + '\n', { mode: 0o600 });
+  };
 }
 
 async function collectTurn(handle: AgentSessionHandle, content: string) {
@@ -127,6 +137,7 @@ describe.skipIf(!existsSync(binary))('Gateway session affinity (real Pi RPC and 
     ['moonshot/kimi-k3', 'openai-completions', 'affinity-disabled-control'],
     ['claude-opus-5', 'anthropic-messages', 'affinity-disabled-control'],
   ] as const)('%s / %s / %s', async (model, api, scenario) => {
+    const writeEvidence = createEvidenceWriter();
     const temp = mkdtempSync(path.join(tmpdir(), 'cindy-pi-affinity-'));
     const workingDir = path.join(temp, 'workspace');
     mkdirSync(workingDir);
