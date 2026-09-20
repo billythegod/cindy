@@ -8850,9 +8850,10 @@
     },
     "unreadFailedScheduleBanner": {
       "text": "自動実行に失敗した記録があります。",
-      "precheck": "自動チェックが一時的に停止しています。",
-      "rateLimited": "リクエスト制限により自動チェックが一時的に停止しています。",
-      "dismissTitle": "過去の失敗通知を閉じる"
+      "precheck": "実行前チェックに失敗したため、以前の自動実行は開始されませんでした。",
+      "rateLimited": "実行前チェックでリクエスト制限に達したため、以前の自動実行は開始されませんでした。",
+      "dismissTitle": "過去の失敗通知を閉じる",
+      "viewDetails": "詳細を見る"
     },
     "worktreeRestoreBanner": {
       "text": "このセッションのワークツリーは回収されました（ディレクトリが存在しません）。",
@@ -11215,6 +11216,7 @@
       "installed": "インストール済み",
       "globalScope": "グローバル",
       "sourceSkillhub": "SkillHub",
+      "sourceBuiltIn": "内蔵",
       "sourceLocal": "ローカル",
       "import": "スキルをインポート",
       "importAria": "ローカルの zip または SKILL.md からスキルをインポート",
@@ -11222,6 +11224,16 @@
       "importPickerSubtitle": "{{name}} · {{description}}",
       "importSuccess": "{{name}} をインポートしました{{suffix}}",
       "importFailed": "スキルのインポートに失敗しました"
+    },
+    "builtIn": {
+      "official": "公式",
+      "officialDetail": "Cindy がアプリに同梱し、管理しています。",
+      "skillCreator": {
+        "description": "明確な手順と必要な補助リソースを備えた Cindy スキルを作成または更新します。"
+      },
+      "learn": {
+        "description": "現在のタスク、説明されたワークフロー、または SkillHub のスキルから再利用可能なスキルを抽出し、Cindy のレビューフローを経て保存します。"
+      }
     },
     "common": {
       "openFolderFailed": "フォルダを開けませんでした",
@@ -11766,6 +11778,7 @@
       "unlinkDescription": "ローカルのスキル登録のみを削除します。元のファイルと編集内容は保持されます。",
       "sharedImpact": "このスキルを共有する他の Agent にも影響します。公開済みバージョンや別の場所のインストールには影響しません。",
       "managedElsewhere": "このスキルは別のパッケージまたは共有ディレクトリで管理されています。提供元で削除してください",
+      "builtInManaged": "このスキルは Cindy に内蔵されているため、アンインストールできません",
       "managedByPlugin": "このスキルはプラグインが提供しています。提供元のプラグインページで管理してください。",
       "cleanupIncomplete": "「{{name}}」のアンインストール後のクリーンアップが未完了です。再試行するか、後でスキルを開き直して続行してください。完了するまで再インストールはできません。",
       "retryCleanup": "整理を再試行",
@@ -12168,7 +12181,8 @@
       "INTERNAL": "内部エラーです。しばらくしてから再試行してください。"
     },
     "hub": {
-      "learnButton": "このスキルを学習"
+      "learnButton": "このスキルを学習",
+      "disabledHint": "この操作を使うには、ローカルスキルで組み込みの Learn スキルを有効にしてください。"
     }
   },
   "planMode": {
@@ -12998,6 +13012,13 @@
       }
     },
     "test": {
+      "resume": {
+        "title": "テストを続ける",
+        "description": "現在の変更を確認し、問題がなければテストと個人版の作成を選べるようにします。",
+        "action": "確認して続ける",
+        "failed": "確認を開始できませんでした。もう一度お試しください。",
+        "request": "現在の変更を確認し、完了したらテストと個人版の作成を選べるようにして、次の操作を選ぶまで待ってください。"
+      },
       "title": "変更完了・次の操作を選択",
       "description": "編集を続けるか、隔離テスト版を起動するか、個人版のインストーラーを作成できます。",
       "readyHint": "テスト用ウィンドウで変更を確認してください。「編集を続ける」を選ぶとテスト版を閉じ、入力に戻ります。",
@@ -13018,6 +13039,19 @@
         "launchFailed": "テスト版を起動できませんでした。再試行するか、編集に戻ってください。",
         "timeout": "テスト版の起動がタイムアウトしました。再試行してください。",
         "interrupted": "前回のテストは中断されました。隔離テスト版を再起動してください。"
+      },
+      "retry": "起動を再試行",
+      "startingHint": "起動が完了するまで編集は一時停止されます。現在の手順が完了するまでお待ちください。",
+      "currentStep": "現在の手順: {{step}}",
+      "failedStep": "中断した手順: {{step}}",
+      "steps": {
+        "waiting": "起動を待機",
+        "environment": "テスト環境を確認",
+        "workspace": "変更内容を検証",
+        "stopping": "隔離インスタンスを準備",
+        "dependencies": "依存関係を確認・準備",
+        "assets": "実行時リソースを確認・準備",
+        "launching": "コンパイルしてテスト用ウィンドウを開く"
       }
     },
     "history": {

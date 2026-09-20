@@ -814,6 +814,8 @@ function extraResourcesForTarget(targetPlatform: string): string[] {
     // Input bytes for upgrading retired preset avatars to ordinary managed images.
     'resources/legacy-teammate-avatars',
     'resources/teammate-portrait-gallery.png',
+    // Cindy-owned Agent Skills are materialized under userData on startup.
+    'resources/system-skills',
     'resources/tools',
     'drizzle',
     'resources/cc-manager',
@@ -1367,6 +1369,45 @@ function buildWindowsTaskbarAddon(platform: ForgePlatform, arch: ForgeArch): voi
       path.join(build, target, 'release', 'cindy_windows_taskbar.dll'),
       path.join(dest, 'cindy-windows-taskbar.node'),
     );
+  } finally {
+    fs.rmSync(build, { recursive: true, force: true });
+  }
+}
+
+function buildWindowsAtomicRenameHelper(platform: ForgePlatform, arch: ForgeArch): void {
+  if (process.platform !== 'win32' || platform !== 'win32') return;
+  const target =
+    arch === 'arm64' ? 'aarch64-pc-windows-msvc' : arch === 'x64' ? 'x86_64-pc-windows-msvc' : null;
+  if (!target) throw new Error(`[forge] Unsupported Windows atomic rename architecture: ${arch}`);
+  const source = path.join(__dirname, 'native', 'windows-atomic-rename', 'main.rs');
+  const build = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-atomic-rename-build-'));
+  const output = path.join(build, 'cindy-windows-atomic-rename.exe');
+  try {
+    const userRustc = path.join(os.homedir(), '.cargo', 'bin', 'rustc.exe');
+    const result = spawnSync(
+      fs.existsSync(userRustc) ? userRustc : 'rustc',
+      [
+        source,
+        '--edition=2021',
+        '-C',
+        'opt-level=s',
+        '-C',
+        'panic=abort',
+        '--target',
+        target,
+        '-o',
+        output,
+      ],
+      { stdio: 'inherit', windowsHide: true },
+    );
+    if (result.error || result.status !== 0) {
+      throw new Error(
+        `[forge] Windows atomic rename build failed: ${result.error?.message ?? result.status}`,
+      );
+    }
+    const dest = path.join(__dirname, 'resources', 'tools', 'windows-atomic-rename');
+    fs.mkdirSync(dest, { recursive: true });
+    fs.copyFileSync(output, path.join(dest, 'cindy-windows-atomic-rename.exe'));
   } finally {
     fs.rmSync(build, { recursive: true, force: true });
   }
@@ -1975,6 +2016,7 @@ const config: ForgeConfig = {
       buildMacVoiceInputTextInsertionHelper(platform, arch);
       buildMacXboxGamepadHelper(platform, arch);
       buildWindowsGamepadHelper(platform, arch);
+      buildWindowsAtomicRenameHelper(platform, arch);
       buildWindowsTaskbarAddon(platform, arch);
       buildMacVoiceInputModifierShortcutListener(platform, arch);
       buildMacAgentIslandHelper(platform, arch);
@@ -2101,13 +2143,6 @@ const config: ForgeConfig = {
           config: 'vite.preload.config.ts',
           // 私有 Work Louder SDK + node-hid 只在独立 utilityProcess 内加载；
           // SDK 缺失或原生崩溃都不能影响 Electron main。
-          target: 'preload',
-        },
-        {
-          entry: 'src/main/workdir-probe-host/workdirProbeHostProcess.ts',
-          config: 'vite.preload.config.ts',
-          // UNC/SMB stat 不可取消；独立 utility process 超时后可直接终止，
-          // 避免把挂死 I/O 留在 Electron main 的 libuv 线程池。
           target: 'preload',
         },
         {
