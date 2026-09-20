@@ -62,6 +62,7 @@ import { SkillPublishUpdateHint } from './SkillPublishUpdateHint';
 import { OfficialSkillBadge } from './components/OfficialSkillBadge';
 import { SkillhubMarketPreviewPanel } from './SkillhubMarketPreviewPanel';
 import { useSkillhubIdentityPolicy } from './hooks/useSkillhubIdentityPolicy';
+import { useMarketSkillUpdate } from './hooks/useMarketSkillUpdate';
 
 const KIND_ICON: Record<string, LucideIcon> = {
   skill: Package,
@@ -90,6 +91,7 @@ export function SkillhubHomeView({
   // 未登录也请求公开 Skill 目录；登录身份只扩大服务端可见范围。
   const { user } = useAuth();
   const identityPolicy = useSkillhubIdentityPolicy(user);
+  const marketUpdate = useMarketSkillUpdate();
   const showOrganization = user?.membershipKind === 'org';
   const [catalogTab, setCatalogTab] = useState<HomeCatalogTab>('public');
   const marketFilter: HomeMarketFilter = catalogTab === 'organization' ? 'organization' : 'public';
@@ -393,7 +395,13 @@ export function SkillhubHomeView({
                 ) : (
                   <div className={cn('plugin-motion-stagger', PLUGIN_MANAGEMENT_CARD_GRID_CLASS)}>
                     {catalogItems.map((s) => (
-                      <HomeMarketCard key={skillhubCatalogKey(s.name, s.catalogScope)} skill={s} onClick={openCatalogSkill} />
+                      <HomeMarketCard
+                        key={skillhubCatalogKey(s.name, s.catalogScope)}
+                        skill={s}
+                        onClick={openCatalogSkill}
+                        onUpdate={user ? marketUpdate.update : undefined}
+                        updating={marketUpdate.updatingNames.has(s.name)}
+                      />
                     ))}
                     {marketResponseCurrent && marketHasMore ? (
                       <div className="col-span-full flex justify-center pt-1">

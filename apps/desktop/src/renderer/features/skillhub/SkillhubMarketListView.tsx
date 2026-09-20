@@ -32,6 +32,7 @@ import { syncMarketPreviewSelection } from './lib/marketPreviewSync';
 import { useAuth } from '@/contexts/AuthContext';
 import { CATEGORY_ALL } from '../../../shared/skillhubCategory';
 import { useSkillhubIdentityPolicy } from './hooks/useSkillhubIdentityPolicy';
+import { useMarketSkillUpdate } from './hooks/useMarketSkillUpdate';
 
 // Must match the global native scrollbar width in styles/globals.css.
 const MARKET_SCROLLBAR_GUTTER_PX = 12;
@@ -52,6 +53,7 @@ function SkillhubMarketListViewInner() {
   const { user, isInitializing } = useAuth();
   const { skills: localSkills, learnSkillEnabled } = useSkillhub();
   const identityPolicy = useSkillhubIdentityPolicy(user);
+  const { update, updatingNames, isUpdating } = useMarketSkillUpdate();
   const location = useLocation();
   const navigate = useNavigate();
   const marketState = location.state as { freshEntry?: boolean; initialVisibility?: Visibility } | null;
@@ -173,7 +175,8 @@ function SkillhubMarketListViewInner() {
       if (event.phase === 'done') {
         void refreshSkillhub();
       } else if (event.phase === 'failed') {
-        if (event.errorCode !== 'CANCELLED') {
+        // Direct updates report their own result; avoid a second toast from the broadcast.
+        if (event.errorCode !== 'CANCELLED' && !isUpdating(event.name)) {
           toast.error(t('skillhub.market.installFailedToast', {
             name: event.name,
             message: event.message ?? event.errorCode ?? t('skillhub.market.installError'),
@@ -182,7 +185,7 @@ function SkillhubMarketListViewInner() {
       }
     });
     return unsubscribe;
-  }, [t]);
+  }, [isUpdating, t]);
 
   const sortLabel = useMemo(() => {
     return t(SORT_OPTIONS.find((option) => option.value === sortBy)?.labelKey ?? 'skillhub.market.sortLatest');
@@ -233,6 +236,8 @@ function SkillhubMarketListViewInner() {
         : 'none'}
       allowPrivateVisibilityLabel={visibility === 'mine'}
       onClone={handleClone}
+      onUpdate={user ? update : undefined}
+      updating={updatingNames.has(skill.name)}
       onManageAction={management.handleManageAction}
       onClick={handleCardClick}
       selected={skill.name === selectedName}

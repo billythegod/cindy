@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
+import nodeFs from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fixture from './fixtures/published-content.json';
 import { comparePublishedSkill, localComparisonFiles, publishedManifest } from '../publishedComparison';
@@ -33,11 +35,17 @@ beforeEach(async () => {
     file: { content: Buffer.from(fixture.find((file) => file.path === name)!.base64, 'base64').toString('utf8'), truncated: false },
   }));
 });
-afterEach(async () => { await fs.rm(root, { recursive: true, force: true }); });
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await fs.rm(root, { recursive: true, force: true });
+});
 
 describe('published content comparison', () => {
   it('matches the server golden bytes, including binary and empty files, without a registry snapshot', async () => {
     const local = await localComparisonFiles(root, false);
+    const { manifest } = await pack(root);
+    expect(manifest.files.map(({ relPath, ...file }) => ({ path: relPath, ...file })))
+      .toEqual([...local].sort((a, b) => a.path.localeCompare(b.path)));
     expect(local.sort((a, b) => a.path.localeCompare(b.path))).toEqual(
       fixture.map(({ path, size, sha256 }) => ({ path, size, sha256 })).sort((a, b) => a.path.localeCompare(b.path)),
     );
@@ -118,19 +126,55 @@ describe('published content comparison', () => {
   });
 
   it('accepts 2,000 packaged files with directories and symlinks, but rejects an extra file', async () => {
-    await fs.mkdir(path.join(root, 'nested/empty'), { recursive: true });
-    await fs.symlink(os.tmpdir(), path.join(root, 'external'), process.platform === 'win32' ? 'junction' : 'dir');
-    const paths = Array.from({ length: 2_000 - fixture.length }, (_, index) => path.join(root, 'nested', `${index}.txt`));
-    for (let offset = 0; offset < paths.length; offset += 32) {
-      await Promise.all(paths.slice(offset, offset + 32).map((file) => fs.writeFile(file, 'content')));
-    }
+    // Exercise both production walkers at the real quota without thousands of
+    // disk operations competing with other unit workers. The golden test above
+    // verifies the same pack/compare contract against real filesystem handles.
+    const files = new Map<string, Buffer>([
+      [path.join(root, 'SKILL.md'), Buffer.from(fixture[0].base64, 'base64')],
+      ...Array.from({ length: 1_999 }, (_, index): [string, Buffer] =>
+        [path.join(root, 'nested', `${index}.txt`), Buffer.from('content')]),
+    ]);
+    const entry = (name: string, kind: 'file' | 'dir' | 'link') => ({
+      name, isFile: () => kind === 'file', isDirectory: () => kind === 'dir',
+    });
+    const directories = new Map([
+      [root, [entry('SKILL.md', 'file'), entry('nested', 'dir'), entry('external', 'link')]],
+      [path.join(root, 'nested'), [entry('empty', 'dir'),
+        ...Array.from({ length: 1_999 }, (_, index) => entry(`${index}.txt`, 'file'))]],
+      [path.join(root, 'nested', 'empty'), []],
+    ]);
+    const stat = (file: string) => ({
+      ino: 1, dev: 1, mtimeMs: 1, ctimeMs: 1,
+      size: files.get(file)?.length ?? 0, isFile: () => files.has(file),
+    });
+    const bytes = (file: string) => {
+      const content = files.get(file);
+      if (!content) throw new Error(`Unexpected file read: ${file}`);
+      return content;
+    };
+    vi.spyOn(fs, 'realpath').mockImplementation(async (file) => String(file));
+    vi.spyOn(fs, 'readdir').mockImplementation(async (dir) => {
+      const entries = directories.get(String(dir));
+      if (!entries) throw new Error(`Unexpected directory read: ${dir}`);
+      return entries as never;
+    });
+    vi.spyOn(fs, 'stat').mockImplementation(async (file) => stat(String(file)) as never);
+    vi.spyOn(fs, 'readFile').mockImplementation(async (file) => Buffer.from(bytes(String(file))));
+    vi.spyOn(fs, 'open').mockImplementation(async (file) => ({
+      stat: async () => stat(String(file)),
+      createReadStream: () => Readable.from([bytes(String(file))]),
+      close: async () => {},
+    }) as Awaited<ReturnType<typeof fs.open>>);
+    vi.spyOn(nodeFs, 'createReadStream').mockImplementation((file) =>
+      Readable.from([bytes(String(file))]) as ReturnType<typeof nodeFs.createReadStream>);
     const { manifest } = await pack(root);
     expect(manifest.files).toHaveLength(2_000);
     market.getPublishedFiles.mockResolvedValue({
       version: '1.0.0', files: manifest.files.map(({ relPath, ...file }) => ({ path: relPath, ...file })),
     });
     expect(await compare()).toEqual({ status: 'same', version: '1.0.0', pending: false });
-    await fs.writeFile(path.join(root, 'extra.txt'), 'one too many');
+    files.set(path.join(root, 'extra.txt'), Buffer.from('one too many'));
+    directories.get(root)!.push(entry('extra.txt', 'file'));
     await expect(compare()).rejects.toThrow('Skill exceeds comparison limit');
   });
 

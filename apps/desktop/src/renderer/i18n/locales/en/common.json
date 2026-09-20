@@ -11440,6 +11440,8 @@
       "installError": "Unknown error"
     },
     "marketCard": {
+      "updateAvailable": "Update available",
+      "updateFailed": "Update failed. Please try again.",
       "visibilityPublic": "Public",
       "visibilityDept": "Team",
       "visibilityPrivate": "Personal",

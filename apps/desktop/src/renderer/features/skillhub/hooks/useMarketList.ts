@@ -106,6 +106,8 @@ export interface MarketSkill {
   installedVersion: string | null;
   /** 本地安装的 absolutePath（卸载时需要），未装为 null。 */
   installedAbsolutePath: string | null;
+  /** A newer remote version is available for the registry-backed primary copy. */
+  updateAvailable?: boolean;
   /** global 或 project 任何位置有安装（用于显示已装 badge + [+] 按钮）。 */
   hasAnyInstall: boolean;
   /** 跨设备识别：null = pre-feature 历史版本（不亮提示，按 mine 走） */
@@ -253,6 +255,25 @@ export function deriveCardState(
   return semverCompare(item.latestVersion, g.version) > 0 ? 'installed-outdated' : 'installed-latest';
 }
 
+export function deriveLocalInstall(
+  item: Pick<MarketSkill, 'isMine' | 'latestVersion'>,
+  group: LocalSkillGroup | undefined,
+) {
+  // Keep the badge and update action on the same copy: global, then first project.
+  const primary = group?.global ?? group?.projects[0];
+  const installed = !!primary && (item.isMine || primary.hasRegistryEntry);
+  return {
+    installedLocally: installed,
+    installedVersion: installed ? primary.version : null,
+    installedAbsolutePath: installed ? primary.absolutePath : null,
+    updateAvailable: !!primary?.hasRegistryEntry && !!primary.version
+      && semverCompare(item.latestVersion, primary.version) > 0,
+    hasAnyInstall: !!group && (
+      !!group.global?.hasRegistryEntry || group.projects.some((entry) => entry.hasRegistryEntry)
+    ),
+  };
+}
+
 function mapServerToView(
   item: ServerListItem,
   localIndex: LocalSkillIndex,
@@ -260,15 +281,6 @@ function mapServerToView(
   translate: TFunction,
 ): MarketSkill {
   const group = localGroupForItem(item, localIndex);
-  // 优先用 global entry 作为"主安装"信息（版本、路径）；没有 global 时回落到第一个 project entry。
-  const primary = group?.global ?? group?.projects[0];
-  // mine：只要本地同名目录存在就算有副本（自己发布的 skill 不写 registry）。
-  // 别人的：必须 hasRegistryEntry=true 才算装的（保护用户手写的同名 skill）。
-  const isReallyInstalled = !!primary && (item.isMine || primary.hasRegistryEntry);
-  const hasAnyInstall = !!group && (
-    (!!group.global && group.global.hasRegistryEntry) ||
-    group.projects.some((p) => p.hasRegistryEntry)
-  );
   return {
     name: item.name,
     icon: item.icon,
@@ -295,10 +307,7 @@ function mapServerToView(
     publishedAt: item.publishedAt,
     relativeTime: formatMarketRelativeTime(item.publishedAt, translate),
     downloads: Number.isFinite(item.downloads) ? item.downloads ?? 0 : 0,
-    installedLocally: isReallyInstalled,
-    installedVersion: isReallyInstalled ? primary.version : null,
-    installedAbsolutePath: isReallyInstalled ? primary.absolutePath : null,
-    hasAnyInstall,
+    ...deriveLocalInstall(item, group),
     latestPublishedFromDeviceId: item.latestPublishedFromDeviceId,
     cardState: deriveCardState(item, group, installingNames.has(item.name)),
     catalogScope: item.catalogScope,
@@ -581,19 +590,10 @@ export function useMarketList(
       if (prev.items.length === 0) return prev;
       const remapped = prev.items.map((it) => {
         const group = localGroupForItem(it, localIndex);
-        const primary = group?.global ?? group?.projects[0];
-        const isReallyInstalled = !!primary && (it.isMine || primary.hasRegistryEntry);
-        const hasAnyInstall = !!group && (
-          (!!group.global && group.global.hasRegistryEntry) ||
-          group.projects.some((p) => p.hasRegistryEntry)
-        );
         return {
           ...it,
-          installedLocally: isReallyInstalled,
+          ...deriveLocalInstall(it, group),
           relativeTime: formatMarketRelativeTime(it.publishedAt, translateRef.current),
-          installedVersion: isReallyInstalled ? primary.version : null,
-          installedAbsolutePath: isReallyInstalled ? primary.absolutePath : null,
-          hasAnyInstall,
           cardState: deriveCardState(
             {
               ...it,

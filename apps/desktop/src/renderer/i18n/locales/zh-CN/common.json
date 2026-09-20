@@ -11424,6 +11424,8 @@
       "installError": "未知错误"
     },
     "marketCard": {
+      "updateAvailable": "可更新",
+      "updateFailed": "更新失败，请重试",
       "visibilityPublic": "公开",
       "visibilityDept": "团队",
       "visibilityPrivate": "个人",
