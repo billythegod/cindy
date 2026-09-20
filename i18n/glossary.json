@@ -104,6 +104,19 @@
       "note": "任务列表的 Finder 式颜色标签；仅标识任务，不改变运行状态。用户已确认显示为重叠色球，整合现有任务菜单，当前不增加筛选入口。"
     },
     {
+      "id": "remote-desktop-display-sound",
+      "status": "proposed",
+      "en": "Display & Sound",
+      "translations": {
+        "zh-CN": "影音",
+        "zh-TW": "影音",
+        "ja": "画面とサウンド",
+        "ko": "화면 및 소리"
+      },
+      "checkCase": false,
+      "note": "Remote desktop panel containing picture and audio settings; icon-only toolbar trigger."
+    },
+    {
       "id": "local-session-scope",
       "status": "proposed",
       "en": "Local",
