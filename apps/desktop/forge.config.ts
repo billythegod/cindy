@@ -1239,6 +1239,8 @@ function buildRemoteDesktopInput(platform: ForgePlatform, arch: ForgeArch): void
         if (location.error || location.status !== 0)
           throw new Error('Remote credentials output unavailable');
         outputs.push(path.join(location.stdout.trim(), 'cindy-macos-remote-credentials'));
+        fs.cpSync(path.join(location.stdout.trim(), 'CindyRemoteCredentials_CindyRemoteCredentials.bundle'),
+          path.join(destDir, 'CindyRemoteCredentials_CindyRemoteCredentials.bundle'), { recursive: true });
       }
       const credential = path.join(destDir, 'cindy-macos-remote-credentials');
       if (outputs.length === 1) fs.copyFileSync(outputs[0], credential);
@@ -1737,6 +1739,9 @@ if (isWin) {
   makers.unshift(
     new MakerNSIS({
       getAppBuilderConfig: async () => ({
+        directories: {
+          buildResources: path.join(__dirname, 'resources'),
+        },
         // NSIS installer(Setup.exe)与 uninstaller(Uninstall <App>.exe)的签名。
         // 这是签卸载器的唯一入口(Issue #998):uninstaller 由 NSIS 编译期两遍生成后
         // 嵌入 installer,postPackage 阶段还不存在、也没有独立成品文件可事后补签,

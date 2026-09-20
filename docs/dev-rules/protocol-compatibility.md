@@ -11,6 +11,18 @@
 
 > **增量适用原则**：wire protocol 兼容对所有跨端改动生效，不因是小改而豁免。
 
+## 任务列表标签目录
+
+`sessions:list` 第三个参数可追加 `tagCatalog: 1`。支持的主机仅对该请求返回
+`{ format: 'session-tag-catalog-v1', sessions, tags }`；任务行的 `tagIds` 是响应内
+目录索引，保留全部任务、标签与顺序。共享 DeviceLinkClient 解包后，上层仍读取原数组。
+新控制端兼容旧主机的数组回复；旧控制端不声明此字段，新主机仍返回数组。
+缓存／outbox 重发先解包并重新检查任务可见性，再从可见行生成目录，不能残留隐藏任务的标签。
+此扩展不改变 relay、帧限制或服务器权限，也不靠截断数据降低体积。
+
+标签的可选 `nameCustomized` 标记区分显式改名与预设本地化。新版更新请求仅在明确改名时
+提交 `nameCustomized: true`；旧端换色时携带相同原名不会误置标记。缺省字段沿用旧显示规则。
+
 ## 远程桌面临时分辨率
 
 被控端以可选能力 `resolutionRestore` 声明系统分辨率的连接级恢复支持。
@@ -273,3 +285,12 @@ X 快照有请求正文时，按原始 triggerMessageId 排除引用列表中的
 Seed 2.1 Pro 按火山方舟官方示例选择 Chat Completions 为 Cindy 的标准接入协议，
 依据与全路由覆盖验收见 model-catalog-maintenance.md。
 价格、窗口、推理档位不随此次协议补全修改；协议默认开启策略仍保留用户显式覆盖。
+
+### 远程桌面虚拟显示尺寸回执
+
+`viewerDisplay` 成功响应可附加 `viewerDisplayRequest: { width, height }`，回显本次请求。
+`display.width/height` 始终是系统实际逻辑尺寸，用于画面与输入坐标；macOS 可能选择同一比例的较小逻辑模式。
+客户端仅在回执匹配请求、实际尺寸为有效整数且比例一致时接受这种差异，仍校验 lease 与控制状态。
+缺少回执的旧服务端保持原来的精确尺寸判断；显式 `resolution` 模式不放宽。
+旧客户端仍可处理原来成功的精确尺寸响应；系统调整后的尺寸需要控制端和被控端同时更新。
+不修改请求格式、relay、IPC allowlist 或协议版本。
