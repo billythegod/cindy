@@ -34,6 +34,7 @@ import {
 } from './personalBuild.js';
 import { untilAborted } from './doctor.js';
 import { currentVersionProfile, rememberOriginalVersion } from './versionStartup.js';
+import { hasPublishedPersonalVersionCommit } from './versionStore.js';
 import { captureMakeHistoryStore } from './historyOwner.js';
 import { captureMakeHistoryCompletion } from './historyCapture.js';
 import { broadcastMakeRemoteChanged } from './remoteBroadcast.js';
@@ -277,7 +278,11 @@ export const cindyMakeTestController = createMakeTestController({
           },
           (run) => cindyMakeManager.withProject(makeSourceRoot(context.userData), run),
           {
-            ...historyBuildRollback(historyStore, makeSourceCheckoutPath(context.userData)),
+            ...historyBuildRollback(
+              historyStore,
+              makeSourceCheckoutPath(context.userData),
+              (commit) => hasPublishedPersonalVersionCommit(context.userData, commit),
+            ),
             features: () =>
               historyStore.list().flatMap((record) => {
                 const last = record.receipts.at(-1);
