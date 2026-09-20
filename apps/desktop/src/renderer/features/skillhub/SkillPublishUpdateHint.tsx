@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useSkillPublishComparison } from './hooks/useSkillPublishComparison';
+import { useSkillPublishComparison, type PublishComparisonState } from './hooks/useSkillPublishComparison';
 
 export function SkillPublishUpdateHint({ skill, knownCreator }: { skill: SkillhubSkill; knownCreator?: boolean }) {
   const { t } = useTranslation();
@@ -11,5 +11,18 @@ export function SkillPublishUpdateHint({ skill, knownCreator }: { skill: Skillhu
       {t(comparison.status === 'unavailable' ? 'skillhub.publishComparison.unavailable'
         : comparison.pending ? 'skillhub.publishComparison.pendingChanges' : 'skillhub.publishComparison.updateAvailable')}
     </span>
+  );
+}
+
+export function SkillPublishComparisonNotice({ comparison, isCreator }: {
+  comparison: PublishComparisonState;
+  isCreator?: boolean;
+}) {
+  const { t } = useTranslation();
+  if (comparison.status !== 'unavailable' || isCreator !== true) return null;
+  return (
+    <p className="shrink-0 px-4 pt-4 text-sm text-[var(--text-secondary)]">
+      {t('skillhub.publishComparison.unavailable')}
+    </p>
   );
 }

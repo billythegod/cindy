@@ -5,6 +5,7 @@ import type { SkillhubContentChange, SkillhubPublishComparison } from '../../sha
 import type { Skill } from './scanner';
 import type { SkillhubMarketService } from './marketService';
 import { isIgnoredSkillPackagePath } from './packageIgnore';
+import { activePublishedReviewVersion } from '../../shared/skillhubPublishedStatus';
 
 const MAX_FILES = 2_000;
 const MAX_BYTES = 50 * 1024 * 1024;
@@ -52,7 +53,6 @@ export async function localComparisonFiles(root: string, includeText: boolean): 
   const canonical = await fs.promises.realpath(root);
   const files: ContentFile[] = [];
   let bytes = 0;
-  let entries = 0;
   let retainedText = 0;
   async function assertInside(file: string) {
     const real = await fs.promises.realpath(file);
@@ -66,9 +66,10 @@ export async function localComparisonFiles(root: string, includeText: boolean): 
       const file = path.join(dir, entry.name);
       const relative = path.relative(canonical, file).split(path.sep).join('/');
       if (isIgnoredSkillPackagePath(relative)) continue;
-      if (++entries > MAX_FILES) throw new Error('Skill exceeds comparison limit');
       if (entry.isDirectory()) { await walk(file); continue; }
       if (!entry.isFile()) continue;
+      // Match the package manifest: directories and symlinks are not published files.
+      if (files.length >= MAX_FILES) throw new Error('Skill exceeds comparison limit');
       if (!safeRelativePath(relative)) throw new Error('Invalid local package path');
       const real = await assertInside(file);
       const handle = await fs.promises.open(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
@@ -124,10 +125,9 @@ export async function comparePublishedSkill(
     return { status: 'not-owner' };
   }
   const info = native.info;
-  const pendingVersion = info.pendingVersion;
-  const pending = pendingVersion?.status === 'scanning' || pendingVersion?.status === 'pending'
-    || info.moderationStatus === 'scanning' || info.moderationStatus === 'pending';
-  const version = pending && pendingVersion ? pendingVersion.version : info.latestVersion;
+  const reviewVersion = activePublishedReviewVersion(info);
+  const pending = reviewVersion !== null;
+  const version = reviewVersion ?? info.latestVersion;
   const remote = await market.getPublishedFiles({ name, version, includeHashes: true });
   if (remote.version !== version) throw new Error('Published version changed');
   const published = publishedManifest(remote.files);

@@ -82,6 +82,7 @@ import { useSkillhubIdentityPolicy } from './hooks/useSkillhubIdentityPolicy';
 import { usePublicationFeedback, useRejectionFeedback } from './hooks/useRejectionFeedback';
 import { shouldHandlePublishProgressEvent } from './lib/publishProgressFilter';
 import { SkillhubDiffPanel } from './SkillhubDiffPanel';
+import { SkillPublishComparisonNotice } from './SkillPublishUpdateHint';
 
 const log = createLogger('SkillhubDetailView');
 
@@ -2227,11 +2228,7 @@ export function SkillhubDetailView() {
           detailState is null until skill+infoResult arrive (detailReady guard). */}
       {!editMode && isSkill && detailReady && detailState && (
         <>
-          {publishComparison.status === 'unavailable' && effectivePublishInfo?.canManage && (
-            <p className="shrink-0 px-4 pt-4 text-sm text-[var(--text-secondary)]">
-              {t('skillhub.publishComparison.unavailable')}
-            </p>
-          )}
+          <SkillPublishComparisonNotice comparison={publishComparison} isCreator={effectivePublishInfo?.isCreator} />
           {/* mine + dirty: local changes not yet published */}
           {isMineDirty && (
             <div className="shrink-0 pl-3 pr-3 pt-4">

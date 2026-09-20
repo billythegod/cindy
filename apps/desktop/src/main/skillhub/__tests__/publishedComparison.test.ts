@@ -7,6 +7,9 @@ import fixture from './fixtures/published-content.json';
 import { comparePublishedSkill, localComparisonFiles, publishedManifest } from '../publishedComparison';
 import type { SkillhubMarketService } from '../marketService';
 import type { Skill } from '../scanner';
+import { pack } from '../zipPacker';
+
+vi.mock('../../logger', () => ({ createLogger: () => ({ info: vi.fn() }) }));
 
 let root: string;
 let skill: Pick<Skill, 'name' | 'absolutePath' | 'registryEntry' | 'registrySkillName'>;
@@ -62,12 +65,25 @@ describe('published content comparison', () => {
     ] });
   });
 
-  it('uses the submitted version while it is awaiting review', async () => {
-    market.info.mockResolvedValue({ info: { ...info, pendingVersion: { version: '1.1.0', status: 'pending' } } });
-    market.getPublishedFiles.mockResolvedValue({ version: '1.1.0', files: fixture });
-    expect(await compare()).toEqual({ status: 'same', version: '1.1.0', pending: true });
-    await fs.writeFile(path.join(root, 'scripts/run.py'), 'changed again');
-    expect(await compare()).toEqual({ status: 'different', version: '1.1.0', pending: true });
+  it.each(['pending', 'scanning', 'machine_reviewing', 'manual_reviewing', 'quarantine', 'warning', 'warn', ' MANUAL_REVIEWING ', undefined])(
+    'uses the submitted version during review (%s)', async (status) => {
+      market.info.mockResolvedValue({ info: { ...info, moderationStatus: 'published', pendingVersion: { version: '1.1.0', status } } });
+      market.getPublishedFiles.mockResolvedValue({ version: '1.1.0', files: fixture });
+      expect(await compare()).toEqual({ status: 'same', version: '1.1.0', pending: true });
+      await fs.writeFile(path.join(root, 'scripts/run.py'), 'changed again');
+      expect(await compare(true)).toMatchObject({ status: 'different', version: '1.1.0', pending: true });
+      expect(market.readPublishedFile).toHaveBeenCalledWith({ name: 'golden-skill', version: '1.1.0', path: 'scripts/run.py' });
+    });
+
+  it.each(['pending', 'scanning', 'machine_reviewing', 'manual_reviewing', 'quarantine', 'warning', 'warn'])(
+    'recognizes a first publication under review (%s)', async (moderationStatus) => {
+      market.info.mockResolvedValue({ info: { ...info, moderationStatus } });
+      expect(await compare()).toEqual({ status: 'same', version: '1.0.0', pending: true });
+    });
+
+  it.each(['rejected', 'failed', 'blocked'])('compares with the published version after rejection (%s)', async (status) => {
+    market.info.mockResolvedValue({ info: { ...info, moderationStatus: 'published', pendingVersion: { version: '1.1.0', status } } });
+    expect(await compare()).toEqual({ status: 'same', version: '1.0.0', pending: false });
   });
 
   it.each([false, undefined])('does not infer authorship from management rights (%s)', async (isCreator) => {
@@ -99,6 +115,23 @@ describe('published content comparison', () => {
     await fs.writeFile(path.join(root, '.DS_Store'), 'ignore');
     await fs.symlink(os.tmpdir(), path.join(root, 'external'), process.platform === 'win32' ? 'junction' : 'dir');
     expect(await compare()).toMatchObject({ status: 'same' });
+  });
+
+  it('accepts 2,000 packaged files with directories and symlinks, but rejects an extra file', async () => {
+    await fs.mkdir(path.join(root, 'nested/empty'), { recursive: true });
+    await fs.symlink(os.tmpdir(), path.join(root, 'external'), process.platform === 'win32' ? 'junction' : 'dir');
+    const paths = Array.from({ length: 2_000 - fixture.length }, (_, index) => path.join(root, 'nested', `${index}.txt`));
+    for (let offset = 0; offset < paths.length; offset += 32) {
+      await Promise.all(paths.slice(offset, offset + 32).map((file) => fs.writeFile(file, 'content')));
+    }
+    const { manifest } = await pack(root);
+    expect(manifest.files).toHaveLength(2_000);
+    market.getPublishedFiles.mockResolvedValue({
+      version: '1.0.0', files: manifest.files.map(({ relPath, ...file }) => ({ path: relPath, ...file })),
+    });
+    expect(await compare()).toEqual({ status: 'same', version: '1.0.0', pending: false });
+    await fs.writeFile(path.join(root, 'extra.txt'), 'one too many');
+    await expect(compare()).rejects.toThrow('Skill exceeds comparison limit');
   });
 
   it('shows summaries for truncated or unverifiable remote text', async () => {

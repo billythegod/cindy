@@ -105,7 +105,9 @@ X 快照有请求正文时，按原始 triggerMessageId 排除引用列表中的
 - Desktop 的 `skillhub:compare-published` 只开放给受信任的本地 Renderer，
   Main 从发送窗口的最新扫描记录解析路径、slug 和 catalog，不接受 Renderer 指定远端
   身份；读取前后复核账号代次、项目授权和目录身份，不扩展 device-link allowlist。
-  比较遵循现有打包排除规则，包含 SKILL.md 的 version 字段；审核中优先比较已提交版本。
+  比较遵循现有打包排除规则，包含 SKILL.md 的 version 字段；2,000 文件限额只计算
+  实际打包的普通文件，不计目录和符号链接。审核中优先比较已提交版本，Main 与 Renderer
+  共用 `skillhubPublishedStatus.ts`，统一识别机审、人工审核、隔离及历史状态别名。
   本地列表和详情在进入、切换、回到窗口及本地写入后刷新，最多并行 3 个比较，无后台轮询。
   差异预览锚定线上具体版本；二进制、大文件或无法完整校验的文本仅展示变更和大小，
   文本预览总计最多 4 MiB、单文件 1 MiB、远端预览最多 16 次。更新仍复用原发布审核流程，
