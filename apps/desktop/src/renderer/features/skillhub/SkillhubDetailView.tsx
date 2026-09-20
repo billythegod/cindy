@@ -39,6 +39,7 @@ import { getDataOwnerGeneration, isDataOwnerIdCurrent } from '@/contexts/dataOwn
 import { cn } from '@/lib/utils';
 import { getDraft, getFastModeForModel } from '@/state/newMakerDraft';
 import { useMetaColumnResize } from './hooks/useMetaColumnResize';
+import { useSkillhubHomeNavigation } from './hooks/useSkillhubHomeNavigation';
 import { invalidateHash, useSkillFolderHash } from './hooks/useSkillFolderHash';
 import {
   clearHistory,
@@ -986,6 +987,7 @@ export function SkillhubDetailView() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const { backToCatalog } = useSkillhubHomeNavigation();
   const { skills, bootstrapped, loading: skillsLoading } = useSkillhub();
   const commandPath = searchParams.get('path');
   useEffect(() => {
@@ -997,7 +999,6 @@ export function SkillhubDetailView() {
   // 而是退出到 SkillHub 一级页：market 来源回 market，其它入口回 local 欢迎页。
   const navState = location.state as { from?: string; resetHistory?: boolean } | null;
   const fromRoute = navState?.from ?? '/skillhub';
-  const backTargetRoute = fromRoute === '/skillhub/market' ? '/skillhub/market' : '/skillhub/local';
   // 兼容旧 sessionStorage 栈：从外部入口进入时先清掉，避免老版本留下的
   // detail 链影响后续返回语义。
   const shouldResetHistory = navState?.resetHistory === true;
@@ -1045,7 +1046,7 @@ export function SkillhubDetailView() {
     }
     clearLastEntryId();
     clearHistory();
-    navigate(backTargetRoute);
+    backToCatalog();
   };
 
   // ── v0.2.1: 4-state detection for kind === 'skill' ────────────────────────
@@ -1811,7 +1812,7 @@ export function SkillhubDetailView() {
               onClick={() => {
                 clearLastEntryId();
                 clearHistory();
-                navigate('/skillhub');
+                backToCatalog();
               }}
               className="text-[var(--msg-assistant-text)] underline-offset-2 hover:underline"
             >
@@ -2021,7 +2022,7 @@ export function SkillhubDetailView() {
               onUninstalled={() => {
                 clearLastEntryId();
                 clearHistory();
-                navigate('/skillhub/local');
+                backToCatalog();
               }} />}
             {/* 编辑入口 */}
             {!editButtonState.hidden && (
@@ -2574,7 +2575,7 @@ export function SkillhubDetailView() {
               const renamed = findLocalSkillByPath(scannedSkills, newAbsolutePath);
               if (!renamed) return;
               setLastEntryId(renamed.id);
-              navigate(buildLocalSkillRoute(renamed), { replace: true });
+              navigate(buildLocalSkillRoute(renamed), { replace: true, state: location.state });
             });
           }}
           onScanResult={setScanResult}
