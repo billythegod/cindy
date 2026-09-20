@@ -18,7 +18,7 @@ describe('Make test process cleanup', () => {
     expect(kill).not.toHaveBeenCalled();
   });
 
-  it('falls back for a missing group, but does not hide permission failures', () => {
+  it('falls back to the PTY process when the process group is missing', () => {
     const child = { pid: 4242, kill: vi.fn() };
     const kill = vi.fn<typeof process.kill>();
     kill.mockImplementationOnce(() => {
@@ -26,7 +26,26 @@ describe('Make test process cleanup', () => {
     });
     stopMakeTestProcess(child, 'darwin', kill);
     expect(child.kill).toHaveBeenCalledOnce();
+  });
+
+  it('falls back to the PTY process when signalling the group is denied', () => {
+    const child = { pid: 4242, kill: vi.fn() };
+    const kill = vi.fn<typeof process.kill>();
     kill.mockImplementationOnce(() => {
+      throw Object.assign(new Error('denied'), { code: 'EPERM' });
+    });
+    stopMakeTestProcess(child, 'darwin', kill);
+    expect(child.kill).toHaveBeenCalledOnce();
+  });
+
+  it('surfaces a permission failure when both group and process stop fail', () => {
+    const child = {
+      pid: 4242,
+      kill: vi.fn(() => {
+        throw Object.assign(new Error('leaf-denied'), { code: 'EPERM' });
+      }),
+    };
+    const kill = vi.fn<typeof process.kill>(() => {
       throw Object.assign(new Error('denied'), { code: 'EPERM' });
     });
     expect(() => stopMakeTestProcess(child, 'darwin', kill)).toThrow('denied');

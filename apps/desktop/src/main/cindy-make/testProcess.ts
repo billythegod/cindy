@@ -13,7 +13,17 @@ export function stopMakeTestProcess(
       kill(-child.pid, 'SIGKILL');
       return;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+        // Group already gone; close the PTY process itself.
+      } else {
+        // EPERM (and similar) on the group must not skip the leaf process.
+        try {
+          child.kill();
+          return;
+        } catch {
+          throw error;
+        }
+      }
     }
   }
   // node-pty owns the Windows console tree and closes it via ConPTY.
