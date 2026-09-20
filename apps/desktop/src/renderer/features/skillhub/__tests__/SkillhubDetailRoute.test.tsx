@@ -98,9 +98,10 @@ describe('unified Skill details', () => {
     state.leave.mockResolvedValue(true);
     fireEvent.click(screen.getByRole('button', { name: 'skillhub.unifiedDetail.market' }));
     expect(await screen.findByTestId('market')).toHaveProperty('textContent', '/skills/project');
-    fireEvent.click(screen.getByText('publish'));
+    expect(screen.queryByText('publish')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'skillhub.unifiedDetail.local' }));
     expect(await screen.findByTestId('local')).toHaveProperty('textContent', 'project');
-    expect(screen.getByTestId('location').textContent).toContain('action=publish');
+    expect(screen.getByTestId('location').textContent).toContain('view=local');
   });
 
   it('keeps local unregistered content separate from another creator with the same name', async () => {
@@ -112,11 +113,25 @@ describe('unified Skill details', () => {
     expect(screen.queryByRole('button', { name: 'skillhub.unifiedDetail.market' })).toBeNull();
   });
 
-  it('does not expose publishing to a read-only identity', async () => {
-    state.canWrite = false;
+  it.each([false, true])('does not expose publishing in the market view (canWrite=%s)', async (canWrite) => {
+    state.canWrite = canWrite;
     mount(buildMarketSkillRoute({ name: 'demo', catalogScope: 'market' }));
     await screen.findByTestId('market');
     expect(screen.queryByText('publish')).toBeNull();
+  });
+
+  it('associates the original native publication without merging another owner', async () => {
+    const authored = { ...local('authored', 'global'), name: 'google-play-console', registryEntry: {
+      version: '1.0.0', origin: 'published', authorId: 'creator',
+    } } as SkillhubSkill;
+    state.skills = [authored, { ...authored, id: 'other', registryEntry: { ...authored.registryEntry!, authorId: 'someone-else' } }];
+    info.mockResolvedValue({ success: true, info: { ...record, name: authored.name, authorId: 'creator' } });
+    mount(buildMarketSkillRoute({ name: authored.name, catalogScope: 'market' }));
+    expect(await screen.findByTestId('market')).toHaveProperty('textContent', '/skills/authored');
+    expect(screen.queryByLabelText('copy')).toBeNull();
+    expect(screen.queryByText('publish')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'skillhub.unifiedDetail.local' }));
+    expect(await screen.findByTestId('local')).toHaveProperty('textContent', 'authored');
   });
 
   it('discards an old account response even before React rerenders', async () => {

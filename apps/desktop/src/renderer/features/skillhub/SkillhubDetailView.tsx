@@ -1084,7 +1084,7 @@ export function SkillhubDetailView({ entryOverride, renderNavigation, onUninstal
   );
   const [publishTargetLoading, setPublishTargetLoading] = useState(false);
   const [infoFetchTrigger, setInfoFetchTrigger] = useState(0);
-  const { comparison: publishComparison, refresh: comparisonRefresh } = useSkillPublishComparison(entry);
+  const { comparison: publishComparison, refresh: comparisonRefresh } = useSkillPublishComparison(infoResult?.isCreator === true ? entry : null);
 
   // 同步重置:entry.name 变化时立刻把 infoResult 切到新 name 的缓存值。
   // FadeSwitcher 按 feature 段(/skillhub)聚合 key,同 feature 内切 skill 不重挂,

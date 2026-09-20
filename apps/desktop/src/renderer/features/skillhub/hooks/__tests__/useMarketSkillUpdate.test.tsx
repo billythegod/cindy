@@ -9,7 +9,7 @@ import { HomeMarketCard } from '../../components/HomeMarketCard';
 import { MarketCard } from '../../components/MarketCard';
 
 const mocks = vi.hoisted(() => ({
-  refresh: vi.fn(), install: vi.fn(), invalidateHash: vi.fn(), invalidateInfo: vi.fn(),
+  comparePublished: vi.fn(), refresh: vi.fn(), install: vi.fn(), invalidateHash: vi.fn(), invalidateInfo: vi.fn(),
   success: vi.fn(), error: vi.fn(), t: (key: string) => key,
 }));
 vi.mock('../useSkillhub', () => ({ refresh: mocks.refresh }));
@@ -41,7 +41,7 @@ beforeEach(() => {
   setDataOwnerGeneration('owner');
   mocks.refresh.mockResolvedValue([local]);
   mocks.install.mockResolvedValue(success);
-  Object.defineProperty(window, 'electronAPI', { configurable: true, value: { skillhub: { install: mocks.install } } });
+  Object.defineProperty(window, 'electronAPI', { configurable: true, value: { skillhub: { install: mocks.install, comparePublished: mocks.comparePublished } } });
 });
 afterEach(cleanup);
 
@@ -92,6 +92,32 @@ describe.each(['home', 'market'] as const)('%s direct update action', (surface) 
     await userEvent.keyboard('{Enter}');
     expect(onClick).toHaveBeenCalledExactlyOnceWith(skill);
   });
+});
+
+it.each(['home', 'market'])('never performs publication comparisons on the %s catalog card', async (surface) => {
+  const authored = { ...skill, isCreator: true, isMine: true, canManage: true };
+  render(surface === 'home' ? <HomeMarketCard skill={authored} onClick={vi.fn()} /> : <MarketCard skill={authored} onClone={vi.fn()} />);
+  await act(async () => {});
+  expect(mocks.comparePublished).not.toHaveBeenCalled();
+  expect(screen.queryByText('skillhub.publishComparison.updateAvailable')).toBeNull();
+});
+
+it('updates the original author copy from its public projection with a backup', async () => {
+  const authored = { ...local, registryEntry: { version: '1.0.0', origin: 'published', authorId: skill.authorId } };
+  mocks.refresh.mockResolvedValue([authored]);
+  const { result } = renderHook(useMarketSkillUpdate);
+  await act(() => result.current.update({ ...skill, isCreator: true, isMine: true, canManage: true }));
+  expect(mocks.install).toHaveBeenCalledExactlyOnceWith({
+    name: skill.name, version: skill.latestVersion, catalogScope: 'market',
+    installPath: local.absolutePath, force: true, skipBackup: false,
+  });
+});
+
+it('does not update a same-slug native publication belonging to another owner', async () => {
+  mocks.refresh.mockResolvedValue([{ ...local, registryEntry: { version: '1.0.0', origin: 'published', authorId: 'other' } }]);
+  const { result } = renderHook(useMarketSkillUpdate);
+  await act(() => result.current.update({ ...skill, isCreator: true, isMine: true, canManage: true }));
+  expect(mocks.install).not.toHaveBeenCalled();
 });
 
 describe('direct update registry and owner boundaries', () => {

@@ -20,12 +20,17 @@ beforeEach(async () => {
   setDataOwnerGeneration('owner-a', 1);
   ({ useSkillPublishComparison, invalidatePublishComparison } = await import('../useSkillPublishComparison'));
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-it('refreshes on mount, focus and local mutation, with no polling', async () => {
+it('reuses fresh focus reads, then refreshes after expiry or local mutation without polling', async () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(100_000);
   const hook = renderHook(() => useSkillPublishComparison(skill()));
   await waitFor(() => expect(hook.result.current.comparison).toEqual(same));
   comparePublished.mockResolvedValue(different);
+  act(() => window.dispatchEvent(new Event('focus')));
+  await waitFor(() => expect(hook.result.current.comparison).toEqual(same));
+  expect(comparePublished).toHaveBeenCalledTimes(1);
+  clock.mockReturnValue(131_000);
   act(() => window.dispatchEvent(new Event('focus')));
   await waitFor(() => expect(hook.result.current.comparison).toEqual(different));
   comparePublished.mockResolvedValue(same);
@@ -70,11 +75,55 @@ it('drops stale results after switching skill, refreshing or changing accounts',
 });
 
 it('maps both rejected IPC and error envelopes to unavailable, never clean', async () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(100_000);
   comparePublished.mockRejectedValueOnce(new Error('offline'));
   const hook = renderHook(() => useSkillPublishComparison(skill()));
   await waitFor(() => expect(hook.result.current.comparison.status).toBe('unavailable'));
+  clock.mockReturnValue(131_000);
   comparePublished.mockResolvedValueOnce({ success: false, error: 'grant revoked' });
   act(() => invalidatePublishComparison());
   await waitFor(() => expect(comparePublished).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(hook.result.current.comparison.status).toBe('unavailable'));
+});
+
+
+it('cancels queued comparisons when their last consumer leaves', async () => {
+  const resolves: Array<(value: SkillhubPublishComparison) => void> = [];
+  comparePublished.mockImplementation(() => new Promise((done) => { resolves.push(done); }));
+  const hooks = Array.from({ length: 20 }, (_, n) => renderHook(() => useSkillPublishComparison(skill(String(n)))));
+  await waitFor(() => expect(comparePublished).toHaveBeenCalledTimes(3));
+  hooks.forEach((hook) => hook.unmount());
+  await act(async () => resolves.forEach((resolve) => resolve(same)));
+  expect(comparePublished).toHaveBeenCalledTimes(3);
+});
+
+it('shares fresh results across navigation but not across account generations', async () => {
+  const first = renderHook(() => useSkillPublishComparison(skill()));
+  await waitFor(() => expect(first.result.current.comparison).toEqual(same));
+  first.unmount();
+  const second = renderHook(() => useSkillPublishComparison(skill()));
+  await waitFor(() => expect(second.result.current.comparison).toEqual(same));
+  expect(comparePublished).toHaveBeenCalledTimes(1);
+  second.unmount();
+  setDataOwnerGeneration('owner-b', 2);
+  const third = renderHook(() => useSkillPublishComparison(skill()));
+  await waitFor(() => expect(third.result.current.comparison).toEqual(same));
+  expect(comparePublished).toHaveBeenCalledTimes(2);
+});
+
+it('stops draining network requests after failure and permits a later focus retry', async () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(100_000);
+  comparePublished.mockResolvedValue({ status: 'unavailable' });
+  const hooks = Array.from({ length: 20 }, (_, n) => renderHook(() => useSkillPublishComparison(skill(String(n)))));
+  await waitFor(() => expect(hooks.every((hook) => hook.result.current.comparison.status === 'unavailable')).toBe(true));
+  expect(comparePublished).toHaveBeenCalledTimes(3);
+  act(() => window.dispatchEvent(new Event('focus')));
+  await waitFor(() => expect(hooks.every((hook) => hook.result.current.comparison.status === 'unavailable')).toBe(true));
+  expect(comparePublished).toHaveBeenCalledTimes(3);
+  hooks.slice(1).forEach((hook) => hook.unmount());
+  comparePublished.mockResolvedValue(same);
+  clock.mockReturnValue(131_000);
+  act(() => window.dispatchEvent(new Event('focus')));
+  await waitFor(() => expect(hooks[0].result.current.comparison).toEqual(same));
+  expect(comparePublished).toHaveBeenCalledTimes(4);
 });

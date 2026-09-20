@@ -4,7 +4,7 @@ import { hasPublishableChanges } from './lib/publishUpdateState';
 
 export function SkillPublishUpdateHint({ skill, knownCreator }: { skill: SkillhubSkill; knownCreator?: boolean }) {
   const { t } = useTranslation();
-  const { comparison } = useSkillPublishComparison(skill);
+  const { comparison } = useSkillPublishComparison(knownCreator ? skill : null);
   if (comparison.status !== 'different' && comparison.status !== 'unavailable') return null;
   if (comparison.status === 'different' && !hasPublishableChanges(comparison)) return null;
   if (comparison.status === 'unavailable' && !knownCreator) return null;

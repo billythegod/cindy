@@ -11447,7 +11447,7 @@
       "installError": "Unknown error"
     },
     "marketCard": {
-      "updateAvailable": "Update available",
+      "updateAvailable": "Get update",
       "updateFailed": "Update failed. Please try again.",
       "visibilityPublic": "Public",
       "visibilityDept": "Team",

@@ -56,11 +56,11 @@ import {
 import { deriveSkillSource } from './lib/skillSource';
 import { InstallTargetPicker, type InstallTargetSkill } from './components/InstallTargetPicker';
 import { SkillCategoryFilterBar } from './components/SkillCategoryFilterBar';
+import { MarketListError } from './components/MarketListError';
 import { HomeMarketCard } from './components/HomeMarketCard';
 import { SkillIcon } from './components/SkillIcon';
 import { SkillPublishUpdateHint } from './SkillPublishUpdateHint';
 import { OfficialSkillBadge } from './components/OfficialSkillBadge';
-import { useSkillhubIdentityPolicy } from './hooks/useSkillhubIdentityPolicy';
 import { useMarketSkillUpdate } from './hooks/useMarketSkillUpdate';
 
 const KIND_ICON: Record<string, LucideIcon> = {
@@ -90,7 +90,6 @@ export function SkillhubHomeView({
 
   // 未登录也请求公开 Skill 目录；登录身份只扩大服务端可见范围。
   const { user } = useAuth();
-  const identityPolicy = useSkillhubIdentityPolicy(user);
   const marketUpdate = useMarketSkillUpdate();
   const showOrganization = user?.membershipKind === 'org';
   const [catalogTab, setCatalogTab] = useState<HomeCatalogTab>(() => {
@@ -105,6 +104,8 @@ export function SkillhubHomeView({
     items: marketItems,
     loading: marketLoading,
     loadingMore: marketLoadingMore,
+    error: marketError,
+    reload: reloadMarket,
     hasMore: marketHasMore,
     resolvedScope,
     resolvedMine,
@@ -217,9 +218,8 @@ export function SkillhubHomeView({
   const [importBusy, setImportBusy] = useState(false);
 
   const returnTo = `/skillhub/local?${new URLSearchParams({ tab: catalogTab, q: query, category: categoryFilter })}`;
-  const openLocal = (local: SkillhubSkill, publish = false) => {
-    let route = withSkillDetailReturn(buildLocalSkillRoute(local), returnTo);
-    if (publish) route += '&action=publish';
+  const openLocal = (local: SkillhubSkill) => {
+    const route = withSkillDetailReturn(buildLocalSkillRoute(local), returnTo);
     navigate(route, { state: { from: '/skillhub/local', resetHistory: true } });
   };
   const openMarket = () => navigate('/skillhub/market');
@@ -338,7 +338,7 @@ export function SkillhubHomeView({
             </header>
 
             {/* ① 当前云端目录摘要 */}
-            {catalogTab !== 'local' && (!normalizedQuery || catalogItems.length > 0 || marketLoading) ? (
+            {catalogTab !== 'local' && (!normalizedQuery || catalogItems.length > 0 || marketLoading || marketError) ? (
               <section className="plugin-motion-page-section min-w-0">
                 {categories.length > 0 ? (
                   <SkillCategoryFilterBar
@@ -355,6 +355,7 @@ export function SkillhubHomeView({
                   />
                 ) : null}
 
+                <MarketListError error={marketError} loading={marketLoading} onRetry={reloadMarket} />
                 {(marketLoading || !marketResponseCurrent) && catalogItems.length === 0 ? (
                   // 占位骨架:与真实卡片同栅格、同行数、同高度,内容到位后原地替换不跳动。
                   <div className={PLUGIN_MANAGEMENT_CARD_GRID_CLASS} aria-hidden>
@@ -373,7 +374,7 @@ export function SkillhubHomeView({
                       </div>
                     ))}
                   </div>
-                ) : catalogItems.length === 0 ? (
+                ) : marketError && catalogItems.length === 0 ? null : catalogItems.length === 0 ? (
                   <div className="rounded-[12px] border-[0.5px] border-[var(--border-default)] px-4 py-5 text-13 leading-5 text-[var(--text-secondary)]">
                     {t('skillhub.home.catalogEmpty')}
                   </div>
@@ -384,7 +385,6 @@ export function SkillhubHomeView({
                         key={skillhubCatalogKey(s.name, s.catalogScope)}
                         skill={s}
                         onClick={openCatalogSkill}
-                        onPublishUpdate={identityPolicy.canWrite ? (local) => openLocal(local, true) : undefined}
                         onUpdate={user ? marketUpdate.update : undefined}
                         updating={marketUpdate.updatingNames.has(s.name)}
                       />

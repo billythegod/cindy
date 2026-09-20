@@ -6,7 +6,6 @@ export interface MarketInstallStatusProps {
   skill: MarketSkill;
   onUpdate?: (skill: MarketSkill) => void;
   updating?: boolean;
-  onPublishUpdate?: (local: SkillhubSkill) => void;
 }
 
 export function MarketInstallStatus({ skill, onUpdate, updating = false }: MarketInstallStatusProps) {

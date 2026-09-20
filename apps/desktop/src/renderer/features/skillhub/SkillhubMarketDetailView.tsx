@@ -1,7 +1,6 @@
 import { SkillDetailPage, SkillDetailHeader, SkillDetailColumns, SkillDetailSidebar, SkillDetailContent, SkillDetailResizeHandle } from './components/SkillDetailLayout';
 import { useMetaColumnResize } from './hooks/useMetaColumnResize';
 import { MarketInstallStatus } from './components/MarketInstallStatus';
-import { MarketPublishUpdateHint } from './components/MarketPublishUpdateHint';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Download, FileText, GraduationCap } from 'lucide-react';
@@ -45,10 +44,8 @@ interface SkillhubMarketDetailViewProps {
   open?: boolean;
   navigation?: ReactNode;
   localActions?: ReactNode;
-  selectedLocal?: SkillhubSkill | null;
   onUpdate?: (skill: MarketSkill) => void;
   updating?: boolean;
-  onPublishUpdate?: (local: SkillhubSkill) => void;
   onClose: () => void;
   /** 与卡片同口径的主操作:clone / manage / none。头部据此渲染操作按钮 */
   primaryAction?: MarketCardPrimaryAction;
@@ -68,7 +65,7 @@ interface SkillhubMarketDetailViewProps {
 export function SkillhubMarketDetailView({
   skill,
   open = true,
-  navigation, localActions, selectedLocal, onUpdate, updating, onPublishUpdate,
+  navigation, localActions, onUpdate, updating,
   onClose,
   primaryAction = 'none',
   onClone,
@@ -237,7 +234,6 @@ export function SkillhubMarketDetailView({
         subtitle={<p className="truncate text-xs text-[var(--cmd-palette-item-meta)]">{skillPublisherLabel(skill)} · {skill.name} · v{skill.latestVersion}</p>}
         actions={<>
           <MarketInstallStatus skill={skill} onUpdate={onUpdate} updating={updating} />
-          {skill.isMine && onPublishUpdate && <MarketPublishUpdateHint skill={skill} localSkill={selectedLocal} disabled={updating} onPublish={onPublishUpdate} />}
                   {primaryAction === 'clone' ? (
                     <Button
                       variant="secondary"

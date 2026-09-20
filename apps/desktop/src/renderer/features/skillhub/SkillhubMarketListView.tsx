@@ -1,5 +1,4 @@
-import { buildMarketSkillRoute, withSkillDetailReturn } from './lib/detailRoutes';
-import { buildLocalSkillRoute } from './lib/localRoutes';
+import { buildMarketSkillRoute } from './lib/detailRoutes';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -23,6 +22,7 @@ import {
 } from './hooks/useMarketList';
 import { refresh as refreshSkillhub } from './hooks/useSkillhub';
 import { MarketManagementDialogs, useMarketManagement } from './hooks/useMarketManagement';
+import { MarketListError } from './components/MarketListError';
 import { MarketCard } from './components/MarketCard';
 import { InstallTargetPicker } from './components/InstallTargetPicker';
 import { marketCardPrimaryAction } from './lib/marketDetailViewModel';
@@ -167,7 +167,6 @@ function SkillhubMarketListViewInner() {
 
   const returnTo = `/skillhub/market?${new URLSearchParams({ q: searchQuery, sort: sortBy, category: categoryFilter, visibility })}`;
   const handleCardClick = (skill: MarketSkill) => navigate(buildMarketSkillRoute(skill, returnTo));
-  const handlePublishUpdate = (local: SkillhubSkill) => navigate(`${withSkillDetailReturn(buildLocalSkillRoute(local), returnTo)}&action=publish`);
 
   const handleClone = (skill: MarketSkill) => {
     setPickerSkill(skill);
@@ -196,7 +195,6 @@ function SkillhubMarketListViewInner() {
       allowPrivateVisibilityLabel={visibility === 'mine'}
       onClone={handleClone}
       onUpdate={user ? update : undefined}
-      onPublishUpdate={identityPolicy.canWrite ? handlePublishUpdate : undefined}
       updating={updatingNames.has(skill.name)}
       onManageAction={management.handleManageAction}
       onClick={handleCardClick}
@@ -348,15 +346,12 @@ function SkillhubMarketListViewInner() {
             }
             : { width: '100%' }}
         >
-          {error ? (
-            <div className="flex h-full items-center justify-center">
-              <p className="text-sm text-[var(--error-fg)]">{t('skillhub.market.loadFailed', { error })}</p>
-            </div>
-          ) : loading && items.length === 0 ? (
+          <MarketListError error={error} loading={loading} onRetry={reload} />
+          {loading && items.length === 0 ? (
             <div className="flex h-full items-center justify-center">
               <p className="text-sm text-[var(--cmd-palette-item-meta)]">{t('skillhub.market.loading')}</p>
             </div>
-          ) : items.length === 0 ? (
+          ) : error && items.length === 0 ? null : items.length === 0 ? (
             <div className="flex h-full items-center justify-center">
               <p className="text-sm text-[var(--cmd-palette-item-meta)]">{t('skillhub.market.noResults')}</p>
             </div>

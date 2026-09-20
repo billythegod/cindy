@@ -5,9 +5,8 @@ import { SkillPublishComparisonNotice, SkillPublishUpdateHint } from '../SkillPu
 import type { PublishComparisonState } from '../hooks/useSkillPublishComparison';
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('../hooks/useSkillPublishComparison', () => ({
-  useSkillPublishComparison: () => ({ comparison: { status: 'unavailable' } }),
-}));
+const compare = vi.hoisted(() => vi.fn(() => ({ comparison: { status: 'unavailable' } })));
+vi.mock('../hooks/useSkillPublishComparison', () => ({ useSkillPublishComparison: compare }));
 afterEach(cleanup);
 
 it.each([false, undefined, true])('shows unavailable hints only for a confirmed creator (%s)', (isCreator) => {
@@ -34,4 +33,12 @@ it('removes the notice when author identity changes', () => {
   expect(screen.getByText('skillhub.publishComparison.unavailable')).toBeTruthy();
   rerender(<SkillPublishComparisonNotice comparison={{ status: 'unavailable' }} isCreator={false} />);
   expect(screen.queryByText('skillhub.publishComparison.unavailable')).toBeNull();
+});
+
+
+it.each([undefined, false, true])('only schedules list comparison after batch sync confirms the creator (%s)', (knownCreator) => {
+  compare.mockClear();
+  const skill = { id: 'google-play-console' } as SkillhubSkill;
+  render(<SkillPublishUpdateHint skill={skill} knownCreator={knownCreator} />);
+  expect(compare).toHaveBeenLastCalledWith(knownCreator ? skill : null);
 });

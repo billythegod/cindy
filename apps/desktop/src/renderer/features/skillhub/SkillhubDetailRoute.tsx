@@ -75,7 +75,7 @@ export function SkillhubDetailRoute() {
     && (search.has('remote') || explicitLocal?.registryEntry || remote.info.isCreator === true)
     ? remote.info : null;
   const copies = useMemo(() => info
-    ? marketLocalCopies(skills, { name: info.name, isMine: info.isCreator === true, catalogScope })
+    ? marketLocalCopies(skills, { ...info, isMine: info.isCreator === true, catalogScope })
     : explicitLocal ? [explicitLocal] : [], [info, skills, explicitLocal, catalogScope]);
   const selected = copies.find((copy) => copy.id === explicitLocal?.id) ?? copies[0] ?? null;
   const market = info ? marketViewModel(info, selected, catalogScope) : null;
@@ -126,10 +126,9 @@ export function SkillhubDetailRoute() {
         onUninstalled={() => info ? selectSource('market', null) : navigate(returnTo)} />
     ) : showingMarket && market ? (
       <SkillhubMarketDetailView key={`${owner.generation}:${remoteName}:${catalogScope}`} skill={market} onClose={() => navigate(returnTo)}
-        navigation={navigation()} selectedLocal={selected} primaryAction={user ? info?.canManage && identity.canWrite ? 'manage' : 'clone' : 'none'}
+        navigation={navigation()} primaryAction={user ? info?.canManage && identity.canWrite ? 'manage' : 'clone' : 'none'}
         onClone={() => setPickerOpen(true)} onManageAction={management.handleManageAction} learnSkillEnabled={learnSkillEnabled}
         onUpdate={user ? marketUpdate.update : undefined} updating={marketUpdate.updatingNames.has(market.name)}
-        onPublishUpdate={identity.canWrite ? (local) => selectSource('local', local, 'publish') : undefined}
         localActions={selected ? <LocalSkillControls key={selected.id} skill={selected} disabled={marketUpdate.updatingNames.has(market.name)} /> : null} />
     ) : (
       <SkillDetailPage>

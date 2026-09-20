@@ -11431,7 +11431,7 @@
       "installError": "不明なエラー"
     },
     "marketCard": {
-      "updateAvailable": "更新可能",
+      "updateAvailable": "更新を取得",
       "updateFailed": "更新に失敗しました。もう一度お試しください。",
       "visibilityPublic": "公開",
       "visibilityDept": "チーム",

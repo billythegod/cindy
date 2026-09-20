@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import { toast } from '@/lib/toast';
-import { skillhubCatalogKey } from '../../../../shared/skillhubCatalog';
+import { marketLocalCopies } from '../lib/marketLocalCopies';
 import { invalidate as invalidateInfo } from '../lib/infoDedupe';
 import { semverCompare } from '../versionUtils';
 import type { MarketSkill } from './useMarketList';
@@ -27,11 +27,8 @@ export function useMarketSkillUpdate() {
       // Recheck the registry before authorizing replacement of an existing directory.
       const locals = await refresh();
       if (!isDataOwnerGenerationCurrent(owner)) return;
-      const local = locals.find((entry) => entry.kind === 'skill'
-        && entry.absolutePath === skill.installedAbsolutePath
-        && entry.registryEntry
-        && skillhubCatalogKey(entry.registrySkillName ?? entry.name, entry.registryEntry.catalogScope)
-          === skillhubCatalogKey(skill.name, skill.catalogScope));
+      const local = marketLocalCopies(locals, skill).find((entry) =>
+        entry.absolutePath === skill.installedAbsolutePath && entry.registryEntry);
       if (!local?.registryEntry?.version
         || semverCompare(skill.latestVersion, local.registryEntry.version) <= 0) return;
 

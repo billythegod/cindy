@@ -11,8 +11,8 @@
  *   2. 把服务端 ListSkillItem 映射成视图模型 MarketSkill。
  *   3. 跨引用本地 useSkillhub().skills,标记 "已安装"：
  *      - 别人的 skill：必须 registryEntry !== null 才算"装的"（避免把用户手写的同名 skill 误判为已装）。
- *      - 自己的 skill (item.isMine=true)：只要本地有同名目录就算"本地有副本"，
- *        因为自己上传的 skill 不写 registry（registry 仅由 install 流程写入）。
+ *      - 自己的 skill：兼容未注册的本地目录；原作者发布记录通过作者 + slug
+ *        关联同一条记录的公开投影，版本判断不额外请求详情或文件摘要。
  *      版本号优先取 registryEntry.version，没有时回落 server 的 latestVersion。
  *
  * Stale-result guard:每次 fetch 拿一个 requestId,只有最后一次的结果才能
@@ -36,6 +36,7 @@ import { filterAvailableMarketItems } from '../lib/marketDetailViewModel';
 
 import { useSkillhub } from './useSkillhub';
 import { semverCompare } from '../versionUtils';
+import { publishedLocalIdentity, publishedMarketIdentity, type MarketLocalIdentity } from '../lib/marketLocalCopies';
 
 export type SortBy = 'trending' | 'downloads' | 'updated_at' | 'created_at';
 export type CatalogScope = 'all' | 'market' | 'team';
@@ -73,6 +74,7 @@ export interface MarketSkill {
   /** Latin/中文首字符,用于头像 fallback。 */
   avatarInitial: string;
   isMine: boolean;
+  isCreator?: boolean;
   canManage: boolean;
   latestVersion: string;
   visibility: 'PUBLIC' | 'DEPARTMENT_SCOPED';
@@ -128,6 +130,7 @@ interface ServerListItem {
   publisherName?: string;
   authorAvatarUrl: string | null;
   isMine: boolean;
+  isCreator?: boolean;
   canManage: boolean;
   latestVersion: string;
   visibility: 'PUBLIC' | 'DEPARTMENT_SCOPED';
@@ -205,6 +208,7 @@ export interface LocalSkillIndex {
   byCatalogKey: Map<string, LocalSkillGroup>;
   /** User-authored local folders have no remote scope and only back owned items. */
   untrackedByName: Map<string, LocalSkillGroup>;
+  publishedByIdentity?: Map<string, LocalSkillGroup>;
 }
 
 function addLocalEntry(
@@ -218,15 +222,20 @@ function addLocalEntry(
     group = { global: undefined, projects: [] };
     index.set(key, group);
   }
-  if (scope === 'global') group.global = entry;
+  if (scope === 'global') group.global ??= entry;
   else group.projects.push(entry);
 }
 
 export function localGroupForItem(
-  item: { name: string; isMine: boolean; catalogScope?: SkillhubCatalogScope },
+  item: MarketLocalIdentity,
   index: LocalSkillIndex,
 ): LocalSkillGroup | undefined {
-  const tracked = index.byCatalogKey.get(skillhubCatalogKey(item.name, item.catalogScope));
+  const identity = publishedMarketIdentity(item);
+  const authored = identity ? index.publishedByIdentity?.get(identity) : undefined;
+  const exact = index.byCatalogKey.get(skillhubCatalogKey(item.name, item.catalogScope));
+  const tracked = exact && authored ? {
+    global: exact.global ?? authored.global, projects: [...exact.projects, ...authored.projects],
+  } : exact ?? authored;
   if (!item.isMine) return tracked;
   const untracked = index.untrackedByName.get(item.name);
   if (!tracked) return untracked;
@@ -246,7 +255,7 @@ export function deriveCardState(
   // 只看 global 位置决定 cardState（影响"可获取"筛选）。
   // project-level 安装不改变卡片主状态，用户仍可从 target picker 装到其他位置。
   const g = group?.global;
-  // 自己发布的 skill 不写 registry —— 改用「全局目录是否存在」判定已装。
+  // 自己发布的 skill 可能没有 registry —— 全局目录存在时仍能判定已装。
   // 换机器 / 卸载后本地无目录 → not-installed，进入「可获取」可重新下载（修正 !isMine 排除 bug）。
   if (item.isMine) return g ? 'installed-latest' : 'not-installed';
   if (!g || !g.hasRegistryEntry) return 'not-installed';
@@ -292,6 +301,7 @@ function mapServerToView(
     authorAvatarUrl: item.authorAvatarUrl ?? null,
     avatarInitial: deriveAvatarInitial(item.authorName),
     isMine: item.isMine,
+    isCreator: item.isCreator,
     canManage: item.canManage,
     latestVersion: item.latestVersion,
     visibility: item.visibility,
@@ -315,6 +325,7 @@ function mapServerToView(
 }
 
 interface MarketListState {
+  queryKey: string | null;
   items: MarketSkill[];
   loading: boolean;
   loadingMore: boolean;
@@ -325,6 +336,7 @@ interface MarketListState {
 }
 
 const INITIAL: MarketListState = {
+  queryKey: null,
   items: [],
   loading: false,
   loadingMore: false,
@@ -364,6 +376,7 @@ export function useMarketList(
   },
 ) {
   const enabled = options?.enabled ?? true;
+  const owner = getDataOwnerGeneration();
   const { t, i18n: i18next } = useTranslation();
   const [searchQuery, setSearchQueryState] = useState(options?.initialSearchQuery ?? '');
   const [sortBy, setSortByState] = useState<SortBy>(() => options?.initialSort ?? 'updated_at');
@@ -386,6 +399,7 @@ export function useMarketList(
     ...(() => {
       const byCatalogKey = new Map<string, LocalSkillGroup>();
       const untrackedByName = new Map<string, LocalSkillGroup>();
+      const publishedByIdentity = new Map<string, LocalSkillGroup>();
       for (const s of localSkills) {
         if (s.kind !== 'skill') continue;
         const entry: LocalSkillEntry = {
@@ -395,11 +409,13 @@ export function useMarketList(
         };
         const index = s.registryEntry ? byCatalogKey : untrackedByName;
         const key = s.registryEntry
-          ? skillhubCatalogKey(s.name, s.registryEntry.catalogScope)
+          ? skillhubCatalogKey(s.registrySkillName ?? s.name, s.registryEntry.catalogScope)
           : s.name;
         addLocalEntry(index, key, s.scope, entry);
+        const identity = publishedLocalIdentity(s);
+        if (identity) addLocalEntry(publishedByIdentity, identity, s.scope, entry);
       }
-      return { byCatalogKey, untrackedByName };
+      return { byCatalogKey, untrackedByName, publishedByIdentity };
     })(),
   };
 
@@ -427,6 +443,7 @@ export function useMarketList(
       available: false,
       category: params.category,
     });
+    if (!isDataOwnerGenerationCurrent(owner)) return { success: false };
     if (!res.success) return { success: false, error: res.error };
     return {
       success: true,
@@ -435,7 +452,7 @@ export function useMarketList(
       ),
       nextCursor: res.nextCursor ?? null,
     };
-  }, []);
+  }, [owner]);
 
   const collectVisiblePage = useCallback(async (
     params: FetchMarketPageInput & { available: boolean },
@@ -480,7 +497,13 @@ export function useMarketList(
       category?: string;
     }) => {
       const myId = ++requestIdRef.current;
-      setState((prev) => ({ ...prev, loading: true, error: null }));
+      const queryKey = JSON.stringify([owner, params]);
+      setState((prev) => ({
+        ...(prev.queryKey === queryKey ? prev : INITIAL),
+        queryKey, loading: true, loadingMore: false, error: null,
+        resolvedScope: params.scope, resolvedMine: params.mine,
+      }));
+      const fail = (error: string) => setState((prev) => ({ ...prev, loading: false, loadingMore: false, error }));
       try {
         const res = await collectVisiblePage({
           sort: params.sort,
@@ -490,20 +513,13 @@ export function useMarketList(
           available: params.available,
           category: params.category,
         });
-        if (myId !== requestIdRef.current) return; // 旧响应,丢弃
+        if (myId !== requestIdRef.current || !isDataOwnerGenerationCurrent(owner)) return; // 旧响应,丢弃
         if (!res.success) {
-          setState({
-            items: [],
-            loading: false,
-            loadingMore: false,
-            error: res.error ?? i18n.t('skillhub.market.installError'),
-            nextCursor: null,
-            resolvedScope: params.scope,
-            resolvedMine: params.mine,
-          });
+          fail(res.error ?? i18n.t('skillhub.market.installError'));
           return;
         }
         setState({
+          queryKey,
           items: res.items ?? [],
           loading: false,
           loadingMore: false,
@@ -513,28 +529,20 @@ export function useMarketList(
           resolvedMine: params.mine,
         });
       } catch (err) {
-        if (myId !== requestIdRef.current) return;
-        setState({
-          items: [],
-          loading: false,
-          loadingMore: false,
-          error: err instanceof Error ? err.message : String(err),
-          nextCursor: null,
-          resolvedScope: params.scope,
-          resolvedMine: params.mine,
-        });
+        if (myId !== requestIdRef.current || !isDataOwnerGenerationCurrent(owner)) return;
+        fail(err instanceof Error ? err.message : String(err));
       }
     },
     // installedNames/localIndex 通过 ref 读取最新值；
     // fetchPage 自身只由 sort/q/mine 调用方参数驱动。
-    [collectVisiblePage],
+    [collectVisiblePage, owner],
   );
 
   const loadMore = useCallback(async () => {
     const cursor = state.nextCursor;
     if (!cursor || state.loadingMore || state.loading) return;
     const myId = requestIdRef.current;
-    setState((prev) => ({ ...prev, loadingMore: true }));
+    setState((prev) => ({ ...prev, loadingMore: true, error: null }));
     try {
       const res = await collectVisiblePage({
         cursor,
@@ -545,9 +553,9 @@ export function useMarketList(
         available: visibility === 'available',
         category: categoryFilter !== CATEGORY_ALL ? categoryFilter : undefined,
       });
-      if (myId !== requestIdRef.current) return;
+      if (myId !== requestIdRef.current || !isDataOwnerGenerationCurrent(owner)) return;
       if (!res.success) {
-        setState((prev) => ({ ...prev, loadingMore: false }));
+        setState((prev) => ({ ...prev, loadingMore: false, error: res.error ?? i18n.t('skillhub.market.installError') }));
         return;
       }
       setState((prev) => ({
@@ -556,11 +564,11 @@ export function useMarketList(
         loadingMore: false,
         nextCursor: res.nextCursor ?? null,
       }));
-    } catch {
-      if (myId !== requestIdRef.current) return;
-      setState((prev) => ({ ...prev, loadingMore: false }));
+    } catch (err) {
+      if (myId !== requestIdRef.current || !isDataOwnerGenerationCurrent(owner)) return;
+      setState((prev) => ({ ...prev, loadingMore: false, error: err instanceof Error ? err.message : String(err) }));
     }
-  }, [state.nextCursor, state.loadingMore, state.loading, sortBy, searchQuery, catalogScope, visibility, categoryFilter, collectVisiblePage]);
+  }, [state.nextCursor, state.loadingMore, state.loading, sortBy, searchQuery, catalogScope, visibility, categoryFilter, collectVisiblePage, owner]);
 
   // 外部主动刷新(删除/改可见性后)→ bump tick 触发重拉
   const [reloadTick, setReloadTick] = useState(0);
@@ -578,13 +586,14 @@ export function useMarketList(
       available: visibility === 'available',
       category: categoryFilter !== CATEGORY_ALL ? categoryFilter : undefined,
     });
+    return () => { requestIdRef.current++; };
   }, [enabled, sortBy, searchQuery, catalogScope, visibility, categoryFilter, fetchPage, reloadTick]);
 
   // 当本地扫描结果或 installing 集合变化时,只重新派生 cardState/installedVersion,不重发请求。
   // Include catalog scope so a same-slug install moving between catalogs remaps immediately.
   const localKey = localSkills
     .filter((s) => s.kind === 'skill')
-    .map((s) => `${s.name}@${s.registryEntry?.catalogScope ?? 'native'}@${s.registryEntry?.version ?? '?'}@${s.registryEntry !== null ? 'R' : '_'}@${s.absolutePath}`)
+    .map((s) => `${s.registrySkillName ?? s.name}@${s.registryEntry?.origin}@${s.registryEntry?.authorId}@${s.registryEntry?.catalogScope ?? 'native'}@${s.registryEntry?.version ?? '?'}@${s.registryEntry !== null ? 'R' : '_'}@${s.absolutePath}`)
     .join('|');
   const installingKey = Array.from(installingNames).sort().join(',');
   useEffect(() => {
@@ -639,14 +648,20 @@ export function useMarketList(
     });
   }, []);
 
+  const currentQueryKey = JSON.stringify([owner, {
+    sort: sortBy, q: searchQuery, scope: catalogScope,
+    mine: visibility === 'mine', available: visibility === 'available',
+    category: categoryFilter !== CATEGORY_ALL ? categoryFilter : undefined,
+  }]);
+  const visibleState = state.queryKey === currentQueryKey ? state : INITIAL;
   return {
-    items: state.items,
-    loading: state.loading,
-    loadingMore: state.loadingMore,
-    error: state.error,
-    hasMore: state.nextCursor !== null,
-    resolvedScope: state.resolvedScope,
-    resolvedMine: state.resolvedMine,
+    items: visibleState.items,
+    loading: visibleState.loading,
+    loadingMore: visibleState.loadingMore,
+    error: visibleState.error,
+    hasMore: visibleState.nextCursor !== null,
+    resolvedScope: visibleState.resolvedScope,
+    resolvedMine: visibleState.resolvedMine,
     searchQuery,
     sortBy,
     catalogScope,
