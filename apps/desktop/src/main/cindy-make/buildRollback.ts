@@ -2,6 +2,8 @@ import type { CindyMakeHistoryStore, MakeBuildRollbackEntry } from './historySto
 import { contentRef, snapshotContent, taskContentRef, type ContentGit } from './sourceContent.js';
 import { CINDY_PERSONAL_BRANCH } from './sourcePaths.js';
 
+type IsPublishedCommit = (commit: string) => boolean;
+
 /** Restore only an unchanged, unpublished build candidate; never discard user edits. */
 export async function restoreBuildSource(
   git: ContentGit,
@@ -29,7 +31,11 @@ export async function restoreBuildSource(
 }
 
 /** Build cleanup owns only the consecutive integrations not present in a saved version. */
-export function historyBuildRollback(store: CindyMakeHistoryStore, source: string) {
+export function historyBuildRollback(
+  store: CindyMakeHistoryStore,
+  source: string,
+  isPublishedCommit: IsPublishedCommit = () => false,
+) {
   const recover = async (git: ContentGit) => {
     const entries = store.readBuildRollback();
     while (entries.length) {
@@ -72,6 +78,7 @@ export function historyBuildRollback(store: CindyMakeHistoryStore, source: strin
       let current = head;
       while (true) {
         if (
+          isPublishedCommit(current.commit) ||
           records.some((record) =>
             record.versions.some((version) => version.commit === current.commit),
           )

@@ -42,6 +42,7 @@ import {
   type PersonalArtifact,
 } from './personalBuild.js';
 import { currentVersionProfile, rememberOriginalVersion } from './versionStartup.js';
+import { hasPublishedPersonalVersionCommit } from './versionStore.js';
 import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import {
   makeHistoryActions,
@@ -837,7 +838,11 @@ export async function generateHistoryPersonalVersion(): Promise<CindyMakeHistory
           h.check,
           (run) => cindyMakeManager.withProject(makeSourceRoot(h.userData), run),
           {
-            ...historyBuildRollback(h.store, makeSourceCheckoutPath(h.userData)),
+            ...historyBuildRollback(
+              h.store,
+              makeSourceCheckoutPath(h.userData),
+              (commit) => hasPublishedPersonalVersionCommit(h.userData, commit),
+            ),
             features: () =>
               h.store.list().flatMap((record) => {
                 const last = record.receipts.at(-1);
@@ -909,7 +914,9 @@ export async function recoverHistoryBuildRollback(rollbackUnbuilt = false): Prom
           signal,
         );
       };
-      const rollback = historyBuildRollback(h.store, source);
+      const rollback = historyBuildRollback(h.store, source, (commit) =>
+        hasPublishedPersonalVersionCommit(h.userData, commit),
+      );
       await rollback.recoverRollback(git);
       if (rollbackUnbuilt) {
         const commit = (await git(['rev-parse', 'HEAD'], source)).trim();

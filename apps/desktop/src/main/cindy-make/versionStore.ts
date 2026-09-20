@@ -169,6 +169,20 @@ export function readPersonalVersion(profile: string, id: string): PersonalVersio
   }
   return item;
 }
+/** A published snapshot is durable even if history registration was interrupted. */
+export function hasPublishedPersonalVersionCommit(profile: string, commit: string): boolean {
+  const root = path.join(versionsRoot(profile), 'versions');
+  if (!fs.existsSync(root)) return false;
+  assertVersionDirectory(profile, root);
+  return fs.readdirSync(root).some((id) => {
+    if (!VERSION_ID.test(id) || !fs.existsSync(path.join(root, id, 'version.json'))) return false;
+    try {
+      return readPersonalVersion(profile, id).commit === commit;
+    } catch {
+      return false;
+    }
+  });
+}
 export function migrationIdentity(directory: string): string {
   return createHash('sha256')
     .update(JSON.stringify(createMigrationRuntimeManifest(directory).migrations))

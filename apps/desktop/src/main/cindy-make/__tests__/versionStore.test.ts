@@ -5,6 +5,7 @@ import os from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   listPersonalVersions,
+  hasPublishedPersonalVersionCommit,
   migrationIdentity,
   publishPersonalVersion,
   readOriginalVersion,
@@ -106,7 +107,9 @@ describe('local Cindy version snapshots', () => {
     const h = await fixture();
     const first = (await h.retain())!;
     expect(listPersonalVersions(h.userData, h.original)).toEqual([]);
+    expect(hasPublishedPersonalVersionCommit(h.userData, h.commit)).toBe(false);
     publishPersonalVersion(h.userData, first);
+    expect(hasPublishedPersonalVersionCommit(h.userData, h.commit)).toBe(true);
     const a = await verifyPersonalVersion(h.userData, first, h.original);
     expect(a.builtAt).toBe(h.builtAt);
     expect(a.version).toBe(`Cindy Make ${first.slice(0, 8)}`);

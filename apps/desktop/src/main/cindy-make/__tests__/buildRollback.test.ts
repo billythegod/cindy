@@ -63,7 +63,8 @@ function fixture() {
     commits.set(head.commit, head.tree);
     return receipt;
   };
-  const rollback = () => historyBuildRollback(store, root).prepareRollback(head, git);
+  const rollback = (isPublishedCommit?: (commit: string) => boolean) =>
+    historyBuildRollback(store, root, isPublishedCommit).prepareRollback(head, git);
   return {
     store,
     git,
@@ -147,5 +148,14 @@ it('does not roll past a saved version whose latest integration changed no files
   h.store.version('second', { operationId: saved.id, commit: saved.commit });
   await h.rollback()();
   expect(h.head().commit).toBe(saved.commit);
+  expect(h.git).not.toHaveBeenCalled();
+});
+
+it('does not roll back a published snapshot whose history registration was interrupted', async () => {
+  const h = fixture();
+  const published = h.integrate('task', 'published-operation', 'b', '2');
+  await h.rollback((commit) => commit === published.commit)();
+  expect(h.head()).toEqual({ commit: published.commit, tree: published.tree });
+  expect(h.store.read('task')?.receipts).toEqual([published]);
   expect(h.git).not.toHaveBeenCalled();
 });

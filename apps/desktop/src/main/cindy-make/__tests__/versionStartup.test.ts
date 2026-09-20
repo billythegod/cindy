@@ -60,6 +60,7 @@ vi.mock('../../i18n.js', () => ({ t: (key: string) => key }));
 vi.mock('../../../shared/brandRegion.js', () => ({ CURRENT_CINDY_REGION: 'global' }));
 
 const originalExec = process.execPath;
+const originalResourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
 const originalArgv = [...process.argv];
 let root = '';
 let startup: typeof import('../versionStartup');
@@ -71,6 +72,7 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), 'cindy-version-startup-'));
   h.profile = path.join(root, 'profile');
   h.appPath = path.join(root, 'checkout', 'apps', 'desktop');
+  Object.defineProperty(process, 'resourcesPath', { value: h.appPath, configurable: true });
   h.name = 'Cindy';
   h.packaged = false;
   h.ready = false;
@@ -138,6 +140,9 @@ afterEach(async () => {
     configurable: true,
     writable: true,
   });
+  if (originalResourcesPath)
+    Object.defineProperty(process, 'resourcesPath', originalResourcesPath);
+  else Reflect.deleteProperty(process, 'resourcesPath');
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   if (root) await rm(root, { recursive: true, force: true });
@@ -424,6 +429,33 @@ describe('one original version type for Dev and installed Cindy', () => {
 // path that keeps this process running lets Electron become ready first (the 2026-09-20 Dev
 // startup failure with a recorded original.json).
 describe('startup dispatch stays ahead of Electron ready', () => {
+  it.each([false, true])(
+    'rejects an outdated selection using the running original before its registry refresh (packaged=%s)',
+    async (packaged) => {
+      h.packaged = packaged;
+      original.migrationHash = store.migrationIdentity(path.join(h.appPath, 'drizzle'));
+      saveOriginal();
+      const personal = await savePersonalVersion();
+      await store.selectVersion(h.profile, personal.id);
+      await writeFile(
+        path.join(h.appPath, 'drizzle', '0001_upgrade.sql'),
+        'ALTER TABLE sample ADD COLUMN name TEXT;',
+      );
+      const ready = armReadyOnNextTurn();
+      expect(await startup.dispatchCindyVersionStartup()).toBe(false);
+      expect(ready).not.toHaveBeenCalled();
+      expect(h.spawn).not.toHaveBeenCalled();
+      expect(h.exit).not.toHaveBeenCalled();
+      expect(store.readOriginalVersion(h.profile)?.migrationHash).toBe(original.migrationHash);
+      startup.finishCindyVersionStartup();
+      await vi.waitFor(() => {
+        expect(store.selectedVersion(h.profile)).toBe('original');
+        expect(store.readOriginalVersion(h.profile)?.migrationHash).toBe(
+          store.migrationIdentity(path.join(h.appPath, 'drizzle')),
+        );
+      });
+    },
+  );
   it('opens the recorded original without yielding, then refreshes the record after the lock', async () => {
     saveOriginal();
     const ready = armReadyOnNextTurn();

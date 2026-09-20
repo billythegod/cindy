@@ -428,7 +428,10 @@ export async function startVersionHandoff(
 ): Promise<void> {
   if (switching) throw versionError('busy');
   const profile = currentVersionProfile();
-  const original = readOriginalVersion(profile.userData);
+  // Startup dispatch precedes the asynchronous original.json refresh. Use this
+  // process's identity so an upgrade cannot launch a now-incompatible personal app.
+  const original =
+    currentId === 'original' ? describeOriginalVersion() : readOriginalVersion(profile.userData);
   if (!original) throw versionError('unavailable');
   if (targetId !== 'original') await verifyPersonalVersion(profile.userData, targetId, original);
   else if (
@@ -460,6 +463,8 @@ export async function startVersionHandoff(
     const pending = path.join(versionsRoot(profile.userData), 'pending.json');
     const previous = readVersionJson<{ id: string; pid: number }>(pending);
     if (previous && pidAlive(previous.pid)) throw versionError('busy');
+    if (currentId === 'original')
+      writeVersionJson(path.join(versionsRoot(profile.userData), 'original.json'), original);
     writeVersionJson(versionRequestPath(profile.userData, item.id), item);
     writeVersionJson(pending, { id: item.id, pid: process.pid });
   });
