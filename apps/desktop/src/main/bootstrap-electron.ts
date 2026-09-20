@@ -312,7 +312,10 @@ import {
 } from './rsb-browser-bridge/native-popup-surfaces.js';
 import { disposeAndroidAdb } from './mcp-integrations/android.js';
 import { shutdownCodexEnvironment } from './mcp-integrations/codexEnvironment.js';
-import { invalidatePiEnvironment, shutdownPiEnvironment } from './mcp-integrations/piEnvironment.js';
+import {
+  invalidatePiEnvironment,
+  shutdownPiEnvironment,
+} from './mcp-integrations/piEnvironment.js';
 import { fetchRemoteMediaImageBytes } from './device-link/remoteMediaProtocol';
 import * as imageCacheStore from './imageCacheStore';
 import {
@@ -361,7 +364,8 @@ import {
   isCindyMakeManagedWorktreePath,
 } from './cindy-make/sourcePaths.js';
 import { prepareCindyMakeWorkspace } from './cindy-make/taskWorkspace.js';
-import { restoreCindyMakeTaskState, startCindyMakeTask } from './cindy-make/taskRuntime.js';
+import { restoreCindyMakeTaskState, startCindyMakeTask, configureCindyMakeEditingGuard } from './cindy-make/taskRuntime.js';
+import { registerMakeRemoteResources } from './cindy-make/remoteRuntime.js';
 import {
   configureCindyMakeTaskManagement,
   manageCindyMakeTask,
@@ -456,8 +460,15 @@ import {
 } from './database-size-warning-settings';
 import { createDatabaseSizeWarningSettingsWatcher } from './database-size-warning-settings-watcher.js';
 import { createLocalDbMaintenanceIpcHandlers } from './localDb/ipc/maintenance';
-import { createDialogueWorkspaceHandlers, checkDialogueDirectoryWritable, customDialogueWorkspaceRoot } from './dialogue-workspace-ipc.js';
-import { readDialogueWorkspaceSettings, writeDialogueWorkspaceDirectory } from './dialogue-workspace-settings.js';
+import {
+  createDialogueWorkspaceHandlers,
+  checkDialogueDirectoryWritable,
+  customDialogueWorkspaceRoot,
+} from './dialogue-workspace-ipc.js';
+import {
+  readDialogueWorkspaceSettings,
+  writeDialogueWorkspaceDirectory,
+} from './dialogue-workspace-settings.js';
 import { writeDbSlimmingDevRelaunchSignal } from './localDb/devDbSlimmingRelaunch';
 import {
   cancelDbSlimmingStartupProgress,
@@ -631,10 +642,15 @@ import { listAllowedSkillhubProjectRoots } from './skillhub/allowedProjectRoots'
 import { SkillhubMarketService } from './skillhub/marketService';
 import { skillhubAutoSyncService } from './skillhub/autoSyncService';
 import { rehydrateCloseSuppression } from './maker-host/rehydrateCloseSuppression.js';
+import {
+  builtInSkillDescriptors,
+} from './maker-host/built-in-skills.js';
+import { isCindyLearnSkillEnabled } from './skillhub/activationPreferences';
 // Maker Core 一阶段重构（新链路）—— 静态 import 避免 dynamic import 触发 vite chunking
 // 让 imageProtocol 等需要 app.ready 前注册的模块跑在错误时机。getMaker() 是 lazy 的，
 // 静态 import 不会触发 Maker / Agent 的实例化。
 import {
+  desktopClaudeAuthAdapter,
   getMaker as getMakerCore,
   getMakerIfReady,
   resetMaker,
@@ -4102,7 +4118,8 @@ const createWindow = () => {
       restoreFullscreen: shouldRestoreMacFullscreen,
     });
     refreshWindowsAppBadge();
-    if (!app.isPackaged || isCindyVersionLaunchPending()) markDesktopDevWindowReady();
+    if (!app.isPackaged || isCindyVersionLaunchPending())
+      markDesktopDevWindowReady(mainWindow.webContents.getOSProcessId());
     void runComputerUseSmokeIfRequested();
     // 资源用量窗口不应与主窗口首帧争 CPU。主窗口可见后再后台完成 BrowserWindow、
     // renderer 和首份进程快照预热；回调绑定当代主窗口，重建/退出后不会创建孤儿窗。
@@ -6236,14 +6253,15 @@ const registerIpcHandlers = () => {
       registerBuiltinDesktopCommands(getDesktopCommandRegistry(), {
         getGoalController,
         getLearnController,
+        isLearnEnabled: isCindyLearnSkillEnabled,
         remoteInvoke: (deviceId, channel, args) =>
           deviceLinkHandleInvoke(deviceLinkIpcDeps(), deviceId, channel, args),
       });
       // desktop-cmd:run —— /cmd 的被控端远程执行 handler(仅隧道 dispatch 消费,
       // 本机 /cmd 仍在 builtins 内联执行,不走 IPC 往返)。
       registerRemoteCmdIpc();
-      // learn:* handler 提前一次性注册(eager,同 goal);handler 内部 getLearnController()
-      // 取单例,invoke 时 controller 已由 startLearnHost 启动。
+      // learn:* handler 提前一次性注册(eager,同 goal);handler 内部读取 controller
+      // 单例,invoke 时 controller 已由 startLearnHost 启动。
       registerLearnIpc();
       // maker:schedule:* handler 提前一次性注册;handler 内部 awaitReady 等真实
       // scheduler 实例(由后续 attemptStartScheduler 通过 attachSchedulerEventListeners
@@ -6855,6 +6873,10 @@ const registerIpcHandlers = () => {
   registerSkillhubIpc({
     getMaker: getMakerCore,
     getManagedSkillRoots: () => getGhostManager().managedRootDirs(),
+    getBuiltInSkills: () => builtInSkillDescriptors(
+      app.getPath('userData'),
+      app.getPath('appData'),
+    ),
     getAllowedProjectRoots: listAllowedSkillhubProjectRoots,
   });
   disposeSkillhubAutoSyncAuthListener = authManager.onAuthStateChange((state) => {
@@ -7628,6 +7650,8 @@ const registerIpcHandlers = () => {
   configureCindyMakeTestRuntime(
     (id) => getMakerIfReady()?.getSession(id)?.isTurnRunning() ?? false,
   );
+  configureCindyMakeEditingGuard((id) => cindyMakeTestController.isUsingSession(id));
+  registerMakeRemoteResources((id) => getMakerIfReady()?.getSession(id)?.isTurnRunning() ?? false);
   configureMakeHistory((id) => getMakerIfReady()?.getSession(id)?.isTurnRunning() ?? false);
   ipcMain.handle('app:cindy-make-history', async (event, selected?: unknown) => {
     assertTrustedAppRendererEvent(event);
@@ -8377,13 +8401,15 @@ const registerIpcHandlers = () => {
           properties: ['openDirectory', 'createDirectory'],
         };
         const ownerWindow = BrowserWindow.getFocusedWindow() ?? mainWindowRef;
-        const result = ownerWindow && !ownerWindow.isDestroyed()
-          ? await dialog.showOpenDialog(ownerWindow, options)
-          : await dialog.showOpenDialog(options);
+        const result =
+          ownerWindow && !ownerWindow.isDestroyed()
+            ? await dialog.showOpenDialog(ownerWindow, options)
+            : await dialog.showOpenDialog(options);
         return result.canceled ? null : (result.filePaths[0] ?? null);
       },
       // Dedicated owner subtree prevents unrelated folders from being treated as managed tasks.
-      resolveDirectory: (selected) => customDialogueWorkspaceRoot(selected, path.basename(ownerScopedUserDataPath())),
+      resolveDirectory: (selected) =>
+        customDialogueWorkspaceRoot(selected, path.basename(ownerScopedUserDataPath())),
       checkWritable: checkDialogueDirectoryWritable,
       openDirectory: (directory) => shell.openPath(directory),
     });
@@ -8881,6 +8907,18 @@ app.on('ready', async () => {
   }
 
   await ensureMainAppPresence('app-ready');
+
+  // Cindy-owned Skill activation and all home-level projections happen through
+  // one stable-owner boundary. Passive shared-userData instances may consume the
+  // active bundle but cannot switch it or its projections.
+  try {
+    await desktopClaudeAuthAdapter.ensureSharedGlobalSkills();
+  } catch (error) {
+    // A broken optional Skill must not block the desktop from starting.
+    createLogger('built-in-skills').warn('built-in Skill preparation failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   // macOS App Translocation fix: when the user launches the app without
   // dragging it to /Applications first, macOS runs it from a read-only
