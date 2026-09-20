@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, type Location } from 'react-router-dom';
 
 import type { HomeCatalogTab } from '../lib/homeMarketFilter';
 import { buildLocalSkillRoute } from '../lib/localRoutes';
@@ -16,8 +16,9 @@ interface SkillhubNavigationState {
 }
 
 /** Keep list state on the history entry so both detail Back and browser Back restore it. */
-export function useSkillhubHomeNavigation() {
-  const location = useLocation();
+export function useSkillhubHomeNavigation(navigationLocation?: Location) {
+  const currentLocation = useLocation();
+  const location = navigationLocation ?? currentLocation;
   const navigate = useNavigate();
   const navState = location.state as SkillhubNavigationState | null;
   const savedTab = navState?.skillhubHome?.catalogTab;
