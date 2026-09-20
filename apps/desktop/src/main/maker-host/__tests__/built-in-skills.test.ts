@@ -587,7 +587,8 @@ describe('built-in Skills', () => {
     const root = path.join(input.appDataDir, 'Cindy', 'shared-system-skills');
     const orphanBundle = 'v10-aaaaaaaaaaaaaaaa-00000000-0000-0000-0000-000000000000';
     const orphanRoot = path.join(root, '.versions', orphanBundle);
-    fs.cpSync(path.dirname(initial.descriptors[0]!.absolutePath), orphanRoot, { recursive: true });
+    // Copy bundle contents, not the .active junction (which needs symlink privileges on Windows).
+    fs.cpSync(fs.realpathSync(path.dirname(initial.descriptors[0]!.absolutePath)), orphanRoot, { recursive: true });
     const creatorLink = path.join(input.homeDir, '.agents', 'skills', 'cindy-skill-creator');
     fs.unlinkSync(creatorLink);
     fs.symlinkSync(
