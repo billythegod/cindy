@@ -1,5 +1,5 @@
 /** Real Pi RPC → production loopback proxy → fake upstream affinity regression. */
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -87,7 +87,18 @@ function chatCompletionsStreamBody(text: string, model: string): string {
 }
 
 
-async function sendTurn(handle: AgentSessionHandle, content: string) {
+// Opt-in audit output contains only synthetic identity/status fields, never bodies or auth.
+function writeEvidence(record: Record<string, unknown>) {
+  const directory = process.env.CINDY_TEST_PI_EVIDENCE_DIR;
+  if (!directory) return;
+  const relative = path.relative(realpathSync(tmpdir()), realpathSync(directory));
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Pi test evidence must use a dedicated directory below os.tmpdir()');
+  }
+  appendFileSync(path.join(directory, 'requests.jsonl'), JSON.stringify(record) + '\n', { mode: 0o600 });
+}
+
+async function collectTurn(handle: AgentSessionHandle, content: string) {
   const events = (async () => {
     const seen = [];
     for await (const event of handle.events()) {
@@ -97,26 +108,50 @@ async function sendTurn(handle: AgentSessionHandle, content: string) {
     return seen;
   })();
   await handle.send({ type: 'user', content });
-  const seen = await events;
+  return events;
+}
+
+async function sendTurn(handle: AgentSessionHandle, content: string) {
+  const seen = await collectTurn(handle, content);
   expect(seen.filter(event => event.type === 'error')).toEqual([]);
   expect(seen.some(event => event.type === 'text')).toBe(true);
-  expect(seen.at(-1)?.type).toBe('done');
+  expect(seen.at(-1)).toMatchObject({ type: 'done', data: { status: 'completed' } });
 }
 
 describe.skipIf(!existsSync(binary))('Gateway session affinity (real Pi RPC and proxy)', () => {
   it.each([
-    ['moonshot/kimi-k3', 'openai-completions'],
-    ['claude-opus-5', 'anthropic-messages'],
-  ] as const)('keeps %s affinity stable across turns/resume and isolates other tasks and BYOM', async (model, api) => {
+    ['moonshot/kimi-k3', 'openai-completions', 'positive-resume-isolation-byom'],
+    ['claude-opus-5', 'anthropic-messages', 'positive-resume-isolation-byom'],
+    ['moonshot/kimi-k3', 'openai-completions', 'upstream-401'],
+    ['claude-opus-5', 'anthropic-messages', 'upstream-401'],
+    ['moonshot/kimi-k3', 'openai-completions', 'affinity-disabled-control'],
+    ['claude-opus-5', 'anthropic-messages', 'affinity-disabled-control'],
+  ] as const)('%s / %s / %s', async (model, api, scenario) => {
     const temp = mkdtempSync(path.join(tmpdir(), 'cindy-pi-affinity-'));
     const workingDir = path.join(temp, 'workspace');
     mkdirSync(workingDir);
     const requests: Array<{ url: string; headers: IncomingHttpHeaders; body: string }> = [];
+    let upstreamStatus = scenario === 'upstream-401' ? 401 : 200;
+    let phase = 'first-turn';
     const upstream = createServer((req, res) => {
       let body = '';
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         requests.push({ url: req.url ?? '', headers: req.headers, body });
+        writeEvidence({
+          case: `${api}/${scenario}`, protocol: api, phase, turn: requests.length,
+          status: upstreamStatus,
+          affinity: {
+            'x-session-affinity': req.headers['x-session-affinity'] ?? null,
+            session_id: req.headers.session_id ?? null,
+            'x-client-request-id': req.headers['x-client-request-id'] ?? null,
+          },
+        });
+        if (upstreamStatus === 401) {
+          res.writeHead(401, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: { type: 'authentication_error', message: 'fixture unauthorized' } }));
+          return;
+        }
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         res.end(api === 'openai-completions' ? chatCompletionsStreamBody('affinity-ok', model) : anthropicStreamBody('affinity-ok', model));
       });
@@ -145,31 +180,74 @@ describe.skipIf(!existsSync(binary))('Gateway session affinity (real Pi RPC and 
         resolvePiGatewayModelSpec: resolvePiCindyGatewayModelSpec,
         capabilityAdditions: { availableModels: [{ id: model, displayName: model, contextWindow: 200000, efforts: [], defaultEffort: null }] },
       };
+      if (scenario === 'affinity-disabled-control') {
+        deps.resolvePiGatewayModelSpec = (provider, id, context) => {
+          const spec = resolvePiCindyGatewayModelSpec(provider, id, context);
+          return spec ? { ...spec, compat: { ...spec.compat, sendSessionAffinityHeaders: false } } : spec;
+        };
+      }
+      const assertAffinity = (headers: IncomingHttpHeaders, id: string) => {
+        expect(headers['x-session-affinity']).toBe(id);
+        if (api === 'openai-completions') {
+          expect(headers.session_id).toBe(id);
+          expect(headers['x-client-request-id']).toBe(id);
+        }
+      };
       const agent = new PiAgent(deps);
       handle = await agent.startSession({ sessionId: 'task-a', providerId: 'xd', model, workingDir });
       const nativeId = handle.id;
+      if (scenario === 'upstream-401') {
+        phase = 'unauthorized';
+        const events = await collectTurn(handle, 'FIXTURE_AUTH_FAILURE');
+        expect(requests).toHaveLength(1);
+        expect(events.some(event => event.type === 'error')).toBe(true);
+        expect(events.some(event => event.type === 'text')).toBe(false);
+        expect(events.at(-1)).toMatchObject({ type: 'done', data: { status: 'failed', result: '' } });
+        const failedAffinity = requests[0]!.headers['x-session-affinity'];
+        expect(failedAffinity).toMatch(/^[0-9a-f-]{36}$/);
+        assertAffinity(requests[0]!.headers, failedAffinity as string);
+        writeEvidence({ case: `${api}/${scenario}`, phase, settlement: 'failed', errorEvent: true, textEvent: false });
+        upstreamStatus = 200;
+        phase = 'same-task-after-401';
+        await sendTurn(handle, 'FIXTURE_RECOVERED');
+        expect(requests).toHaveLength(2);
+        const restoredId = JSON.parse(readFileSync(nativeId, 'utf8').split('\n')[0]!).id as string;
+        expect(restoredId).toBe(failedAffinity);
+        assertAffinity(requests[1]!.headers, restoredId);
+        writeEvidence({ case: `${api}/${scenario}`, phase, settlement: 'completed', errorEvent: false });
+        return;
+      }
       await sendTurn(handle, 'AFFINITY_FIRST_TURN');
       const affinityId = JSON.parse(readFileSync(nativeId, 'utf8').split('\n')[0]!).id as string;
       expect(affinityId).toMatch(/^[0-9a-f-]{36}$/);
+      if (scenario === 'affinity-disabled-control') {
+        expect(requests).toHaveLength(1);
+        for (const header of ['x-session-affinity', 'session_id', 'x-client-request-id']) {
+          expect(requests[0]!.headers[header]).toBeUndefined();
+        }
+        // The exact positive contract rejects the pre-fix behavior, even though inference succeeds.
+        expect(() => assertAffinity(requests[0]!.headers, affinityId)).toThrow();
+        writeEvidence({ case: `${api}/${scenario}`, phase, settlement: 'completed', positiveContractRejected: true });
+        return;
+      }
+      phase = 'second-turn';
       await sendTurn(handle, 'AFFINITY_SECOND_TURN');
       await handle.close(); handle = undefined;
       handle = await agent.startSession({ sessionId: 'task-a', providerId: 'xd', model, workingDir, resumeSessionId: nativeId });
       expect(handle.id).toBe(nativeId);
+      phase = 'resumed-turn';
       await sendTurn(handle, 'AFFINITY_RESUMED_TURN');
       expect(requests).toHaveLength(3);
       expect(requests[2]!.body).toContain('AFFINITY_FIRST_TURN');
       expect(requests[2]!.body).toContain('AFFINITY_SECOND_TURN');
       for (const request of requests) {
         expect(request.url).toContain(api === 'openai-completions' ? '/chat/completions' : '/messages');
-        expect(request.headers['x-session-affinity']).toBe(affinityId);
-        if (api === 'openai-completions') {
-          expect(request.headers.session_id).toBe(affinityId);
-          expect(request.headers['x-client-request-id']).toBe(affinityId);
-        }
+        assertAffinity(request.headers, affinityId);
       }
       await handle.close(); handle = undefined;
       handle = await agent.startSession({ sessionId: 'task-b', providerId: 'xd', model, workingDir });
       expect(handle.id).not.toBe(nativeId);
+      phase = 'different-task';
       await sendTurn(handle, 'AFFINITY_OTHER_TASK');
       expect(requests).toHaveLength(4);
       expect(requests[3]!.headers['x-session-affinity']).toBe(JSON.parse(readFileSync(handle.id, 'utf8').split('\n')[0]!).id);
@@ -184,9 +262,11 @@ describe.skipIf(!existsSync(binary))('Gateway session affinity (real Pi RPC and 
       }], env: { CINDY_FIXTURE_BYOM_KEY: 'fixture-not-a-real-key' } });
       const directAgent = new PiAgent(deps);
       handle = await directAgent.startSession({ sessionId: 'task-byom', providerId: 'fixture-byom', model: 'fixture-model', workingDir });
+      phase = 'direct-byom';
       await sendTurn(handle, 'BYOM_UNCHANGED');
       expect(requests).toHaveLength(5);
       expect(proxyRequests).toBe(4);
+      writeEvidence({ case: `${api}/${scenario}`, phase, settlement: 'completed', proxyRequests });
       for (const header of ['x-session-affinity', 'session_id', 'x-client-request-id']) {
         expect(requests[4]!.headers[header]).toBeUndefined();
       }
