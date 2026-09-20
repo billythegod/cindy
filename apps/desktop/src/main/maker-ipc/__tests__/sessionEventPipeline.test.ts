@@ -414,6 +414,28 @@ describe('production Session event pipeline', () => {
     }
   });
 
+  it('drops a pre-clear Pi notice on delayed delivery while accepting a new notice', async () => {
+    const h = harness();
+    h.deps.redactEventForRenderer.mockImplementation((value) => value);
+    try {
+      effects.fn('backgroundTurnPredatesSessionClear').mockReturnValueOnce(true);
+      h.emit(event('text', { text: 'Old plan notice', isFinal: true }, {
+        source: 'pi', standaloneText: true, turnScope: 'background', backgroundTurnStartedAt: 1000,
+      }));
+      expect(effects.fn('backgroundTurnPredatesSessionClear')).toHaveBeenCalledWith('task', 1000);
+      expect(effects.fn('onStandaloneTextEvent')).not.toHaveBeenCalled();
+      expect(h.deps.broadcastToAllWindows).not.toHaveBeenCalled();
+      effects.fn('backgroundTurnPredatesSessionClear').mockReturnValueOnce(false);
+      h.emit(event('text', { text: 'New plan notice', isFinal: true }, {
+        source: 'pi', standaloneText: true, turnScope: 'background', backgroundTurnStartedAt: 3000,
+      }));
+      expect(effects.fn('onStandaloneTextEvent')).toHaveBeenCalledExactlyOnceWith('task', 'New plan notice', null);
+      expect(effects.fn('onAssistantTextEvent')).not.toHaveBeenCalled();
+    } finally {
+      await h.dispose();
+    }
+  });
+
   it('retains accepted private-message visibility for independent Pi notices', async () => {
     const h = harness();
     h.deps.redactEventForRenderer.mockImplementation((value) => value);
