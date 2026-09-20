@@ -21,7 +21,7 @@ import { OrcaWorkflowRoute } from '@/features/cc-agent/OrcaWorkflowRoute';
 import { WorkdirBrowseRoute } from '@/features/cc-agent/workdir-browse/WorkdirBrowseRoute';
 import { IssueTrackerFeatureLayout } from '@/features/issue-tracker/IssueTrackerFeatureLayout';
 import { SkillhubFeatureLayout } from '@/features/skillhub/SkillhubFeatureLayout';
-import { SkillhubHomeView } from '@/features/skillhub/SkillhubHomeView';
+import { SkillhubLocalLayout } from '@/features/skillhub/SkillhubLocalLayout';
 import { SkillhubDetailRoute, LegacySkillDetailRedirect } from '@/features/skillhub/SkillhubDetailRoute';
 import { SkillhubMarketListView } from '@/features/skillhub/SkillhubMarketListView';
 import { MakerExperimentalView } from '@/features/maker-experimental/MakerExperimentalView';
@@ -152,19 +152,18 @@ export const router = createHashRouter([
                     element: <SkillhubFeatureLayout />,
                     children: [
                       { index: true, element: <Navigate to="/skillhub/local" replace /> },
-                      { path: 'detail', element: <SkillhubDetailRoute /> },
                       {
-                        path: 'local',
+                        element: <SkillhubLocalLayout />,
                         children: [
+                          { path: 'detail', element: <SkillhubDetailRoute /> },
                           {
-                            index: true,
-                            element: <SkillhubHomeView />,
-                          },
-                          { path: 'by-path', element: <LegacySkillDetailRedirect /> },
-                          { path: ':kind/global/:name', element: <LegacySkillDetailRedirect /> },
-                          {
-                            path: ':kind/project/:projectHash/:name',
-                            element: <LegacySkillDetailRedirect />,
+                            path: 'local',
+                            children: [
+                              { index: true, element: null },
+                              { path: 'by-path', element: <LegacySkillDetailRedirect /> },
+                              { path: ':kind/global/:name', element: <LegacySkillDetailRedirect /> },
+                              { path: ':kind/project/:projectHash/:name', element: <LegacySkillDetailRedirect /> },
+                            ],
                           },
                         ],
                       },

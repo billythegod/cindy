@@ -17,7 +17,7 @@ export interface SkillhubPublishComparisonParams {
 
 export type SkillhubPublishComparison =
   | { status: 'not-owner' }
-  | { status: 'unavailable' }
+  | { status: 'unavailable'; /** Only confirmed transport, rate-limit or server failures affect other skills. */ reason?: 'service' }
   | {
       status: 'same' | 'different';
       version: string;

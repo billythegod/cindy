@@ -58,7 +58,7 @@ function compare(key: string, skillId: string, absolutePath: string, owner: Data
           ? result : { status: 'unavailable' }, (): SkillhubPublishComparison => ({ status: 'unavailable' }))
         .then((value) => {
           // A failing service must not turn the remaining queue into a request burst.
-          if (value.status === 'unavailable' && isDataOwnerGenerationCurrent(owner)) retryAfter = Date.now() + FRESH_MS;
+          if (value.status === 'unavailable' && value.reason === 'service' && isDataOwnerGenerationCurrent(owner)) retryAfter = Date.now() + FRESH_MS;
           finish(value);
         }).finally(() => { active--; drain(); });
     });

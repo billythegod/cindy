@@ -26,6 +26,7 @@ import type { SkillhubPublishComparisonParams, SkillhubPublishComparison } from 
 import { type MdKind, parseAndValidateFrontmatter } from './frontmatterValidation';
 import * as importLocalSkill from './importLocalSkill';
 import * as installService from './installService';
+import { ServerApiError } from '../serverApiClient';
 import { SkillhubMarketService, skillhubIpcError } from './marketService';
 import type { PublishParams, PublishProgressEvent } from './publishService';
 import { SkillPublishService } from './publishService';
@@ -908,9 +909,11 @@ export function registerSkillhubIpc(options: RegisterSkillhubIpcOptions): void {
     let result: SkillhubPublishComparison;
     try {
       result = await comparePublishedSkill(record.skill, marketService, params.includeDiff);
-    } catch {
-      // Comparison failure is unknown, never evidence that the folder is clean or dirty.
-      result = { status: 'unavailable' };
+    } catch (error) {
+      // Local filesystem/identity/manifest failures must not throttle unrelated skills.
+      const serviceFailure = error instanceof ServerApiError
+        && (error.statusCode === 0 || error.statusCode === 408 || error.statusCode === 429 || error.statusCode >= 500);
+      result = { status: 'unavailable', ...(serviceFailure ? { reason: 'service' as const } : {}) };
     }
     assertReviewOwnerCurrent(owner);
     const current = await requireLocalSkill(event, params.absolutePath, params.skillId);

@@ -23,7 +23,7 @@ function safeRelativePath(value: string): boolean {
 
 /** Uses the exact local packaging exclusions, including on archives uploaded by other clients. */
 export function publishedManifest(value: unknown): ContentFile[] {
-  if (!Array.isArray(value) || value.length > MAX_FILES) throw new Error('Incomplete published manifest');
+  if (!Array.isArray(value)) throw new Error('Incomplete published manifest');
   const files: ContentFile[] = [];
   const paths = new Set<string>();
   let bytes = 0;
@@ -33,6 +33,7 @@ export function publishedManifest(value: unknown): ContentFile[] {
     }
     paths.add(file.path);
     if (isIgnoredSkillPackagePath(file.path)) continue;
+    if (files.length >= MAX_FILES) throw new Error('Skill exceeds comparison limit');
     if (typeof file.sha256 !== 'string' || !HASH_RE.test(file.sha256)
       || !Number.isSafeInteger(file.size) || file.size < 0) throw new Error('Missing file digest');
     bytes += file.size;

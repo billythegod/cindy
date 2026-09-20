@@ -600,6 +600,7 @@ export function catalogSurfaces() {
       // 统一详情布局与 InstallTargetPicker——只扫列表组件文件
       // 会漏掉这些子组件的样式事实。
       reachableComponents: [
+        'SkillhubLocalLayout',
         'SkillhubHomeView',
         'SkillhubDetailView',
         'SkillhubDetailRoute',
@@ -610,6 +611,7 @@ export function catalogSurfaces() {
         'InstallTargetPicker',
       ],
       styleRoots: [
+        'apps/desktop/src/renderer/features/skillhub/SkillhubLocalLayout.tsx',
         'apps/desktop/src/renderer/features/skillhub/SkillhubHomeView.tsx',
         'apps/desktop/src/renderer/features/skillhub/SkillhubDetailView.tsx',
         'apps/desktop/src/renderer/features/skillhub/SkillhubDetailRoute.tsx',
@@ -620,13 +622,14 @@ export function catalogSurfaces() {
         'apps/desktop/src/renderer/features/plugin/PluginManagementLayout.tsx',
       ],
       routerPaths: [
-        '/skillhub/local',
+        // The pathless parent renders the retained catalog itself at /skillhub/local.
+        '/skillhub',
         '/skillhub/detail',
         '/skillhub/local/:kind/global/:name',
         '/skillhub/local/:kind/project/:projectHash/:name',
         '/skillhub/local/by-path',
       ],
-      routeEntryComponents: { '/skillhub/local': 'SkillhubHomeView', '/skillhub/detail': 'SkillhubDetailRoute', '/skillhub/local/:kind/global/:name': 'LegacySkillDetailRedirect', '/skillhub/local/:kind/project/:projectHash/:name': 'LegacySkillDetailRedirect', '/skillhub/local/by-path': 'LegacySkillDetailRedirect' },
+      routeEntryComponents: { '/skillhub': 'SkillhubLocalLayout', '/skillhub/detail': 'SkillhubDetailRoute', '/skillhub/local/:kind/global/:name': 'LegacySkillDetailRedirect', '/skillhub/local/:kind/project/:projectHash/:name': 'LegacySkillDetailRedirect', '/skillhub/local/by-path': 'LegacySkillDetailRedirect' },
     },
     {
       id: 'desktop.skillhub.market',

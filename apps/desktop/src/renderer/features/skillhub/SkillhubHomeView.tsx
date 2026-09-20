@@ -9,7 +9,7 @@
 import { buildMarketSkillRoute, withSkillDetailReturn } from './lib/detailRoutes';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, type Location } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { skillhubCatalogKey } from '../../../shared/skillhubCatalog';
 import { CATEGORY_ALL } from '../../../shared/skillhubCategory';
@@ -50,7 +50,6 @@ import {
   homeMarketQuery,
   isHomeMarketResponseCurrent,
   visibleHomeCatalogTabs,
-  type HomeCatalogTab,
   type HomeMarketFilter,
 } from './lib/homeMarketFilter';
 import { deriveSkillSource } from './lib/skillSource';
@@ -61,6 +60,7 @@ import { HomeMarketCard } from './components/HomeMarketCard';
 import { SkillIcon } from './components/SkillIcon';
 import { SkillPublishUpdateHint } from './SkillPublishUpdateHint';
 import { OfficialSkillBadge } from './components/OfficialSkillBadge';
+import { useSkillhubHomeNavigation } from './hooks/useSkillhubHomeNavigation';
 import { useMarketSkillUpdate } from './hooks/useMarketSkillUpdate';
 
 const KIND_ICON: Record<string, LucideIcon> = {
@@ -76,26 +76,26 @@ function includesSkillQuery(values: ReadonlyArray<string | undefined>, query: st
 
 export function SkillhubHomeView({
   embedded = false,
+  active = true,
+  navigationLocation,
   onSelectCatalogTab,
 }: {
   embedded?: boolean;
+  active?: boolean;
+  navigationLocation?: Location;
   onSelectCatalogTab?: (tab: 'plugins' | 'skills') => void;
 } = {}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [initialSearch] = useSearchParams();
   const { skills, projects, bootstrapped, syncResults } = useSkillhub();
-  const [query, setQuery] = useState(() => initialSearch.get('q') ?? '');
+  const { catalogTab, query, setCatalogTab, setQuery } = useSkillhubHomeNavigation(navigationLocation);
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
   // 未登录也请求公开 Skill 目录；登录身份只扩大服务端可见范围。
   const { user } = useAuth();
   const marketUpdate = useMarketSkillUpdate();
   const showOrganization = user?.membershipKind === 'org';
-  const [catalogTab, setCatalogTab] = useState<HomeCatalogTab>(() => {
-    const tab = initialSearch.get('tab');
-    return tab === 'local' || (tab === 'organization' && showOrganization) ? tab : 'public';
-  });
   const marketFilter: HomeMarketFilter = catalogTab === 'organization' ? 'organization' : 'public';
   const marketRequest = useMemo(() => homeMarketQuery(marketFilter), [marketFilter]);
 
@@ -117,7 +117,7 @@ export function SkillhubHomeView({
     setVisibility,
     loadMore: loadMoreMarket,
   } = useMarketList('all', {
-    enabled: catalogTab !== 'local',
+    enabled: active && catalogTab !== 'local',
     initialScope: 'market',
     initialSort: 'trending',
     initialSearchQuery: initialSearch.get('q') ?? '',
@@ -220,7 +220,7 @@ export function SkillhubHomeView({
   const returnTo = `/skillhub/local?${new URLSearchParams({ tab: catalogTab, q: query, category: categoryFilter })}`;
   const openLocal = (local: SkillhubSkill) => {
     const route = withSkillDetailReturn(buildLocalSkillRoute(local), returnTo);
-    navigate(route, { state: { from: '/skillhub/local', resetHistory: true } });
+    navigate(route, { state: { from: '/skillhub/local', resetHistory: true, skillhubHome: { catalogTab, query } } });
   };
   const openMarket = () => navigate('/skillhub/market');
   const openCatalogSkill = (skill: MarketSkill) => navigate(buildMarketSkillRoute(skill, returnTo));
@@ -427,6 +427,7 @@ export function SkillhubHomeView({
                       <LocalGroup
                         skills={globalSkills}
                         syncResults={syncResults}
+                        active={active}
                         onOpen={openLocal}
                       />
                     )}
@@ -436,6 +437,7 @@ export function SkillhubHomeView({
                         label={g.label}
                         skills={g.skills}
                         syncResults={syncResults}
+                        active={active}
                         onOpen={openLocal}
                       />
                     ))}
@@ -453,7 +455,7 @@ export function SkillhubHomeView({
         </main>
 
         <InstallTargetPicker
-          open={importPickerOpen}
+          open={active && importPickerOpen}
           skill={importTarget}
           onClose={closeImportPicker}
           titleKey="skillhub.home.importPickerTitle"
@@ -483,7 +485,7 @@ export function SkillhubHomeView({
                 : undefined;
               if (imported) {
                 navigate(buildLocalSkillRoute(imported), {
-                  state: { from: '/skillhub/local', resetHistory: true },
+                  state: { from: '/skillhub/local', resetHistory: true, skillhubHome: { catalogTab, query } },
                 });
                 return;
               }
@@ -500,7 +502,7 @@ export function SkillhubHomeView({
                 name: result.name,
               };
               navigate(buildLocalSkillRoute(fallback), {
-                state: { from: '/skillhub/local', resetHistory: true },
+                state: { from: '/skillhub/local', resetHistory: true, skillhubHome: { catalogTab, query } },
               });
             });
           }}
@@ -514,10 +516,12 @@ function LocalGroup({
   label,
   skills,
   syncResults,
+  active,
   onOpen,
 }: {
   label?: string;
   skills: SkillhubSkill[];
+  active: boolean;
   /** server 归属结果(含 isMine),用于历史遗留 registry(origin 缺失)的来源推断 */
   syncResults: Map<string, SkillhubSyncResult>;
   onOpen: (s: SkillhubSkill) => void;
@@ -582,7 +586,7 @@ function LocalGroup({
                     {displayDescription}
                   </span>
                 )}
-                <SkillPublishUpdateHint skill={s} knownCreator={sync?.exists === true && sync.isCreator === true} />
+                <SkillPublishUpdateHint skill={s} knownCreator={active && sync?.exists === true && sync.isCreator === true} />
               </span>
               <span className="mt-1 flex size-7 shrink-0 items-center justify-center rounded-lg border border-transparent text-[var(--text-secondary)] transition-[background-color,color,transform] group-hover:translate-x-0.5 group-hover:bg-[var(--surface-chip)] group-hover:text-[var(--text-primary)] group-active:translate-x-0 group-active:scale-95">
                 <ChevronRight size={15} strokeWidth={1.8} />

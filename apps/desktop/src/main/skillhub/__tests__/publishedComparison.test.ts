@@ -217,6 +217,16 @@ describe('published content comparison', () => {
   it.each(['../escape', '/etc/passwd', 'C:/secret', 'a//b', 'a/./b', 'a\\b'])('rejects invalid remote paths: %s', (name) => {
     expect(() => publishedManifest([...fixture, { ...fixture[0], path: name }])).toThrow('Invalid published path');
   });
+  it('applies the file limit after package exclusions, while enforcing the retained limit', () => {
+    const ignored = Array.from({ length: 2_100 }, (_, i) => ({ path: `node_modules/package/${i}.js` }));
+    const retained = [fixture[0], ...Array.from({ length: 1_999 }, (_, i) => ({ ...fixture[0], path: `scripts/${i}.js` }))];
+    expect(publishedManifest([...ignored, ...retained])).toHaveLength(2_000);
+    expect(() => publishedManifest([...ignored, ...retained, { ...fixture[0], path: 'extra.js' }]))
+      .toThrow('Skill exceeds comparison limit');
+    expect(() => publishedManifest([...ignored, ...retained, { path: 'node_modules/../escape' }]))
+      .toThrow('Invalid published path');
+  });
+
   it('rejects duplicated and incomplete remote manifests', () => {
     expect(() => publishedManifest([...fixture, fixture[0]])).toThrow('Invalid published path');
     expect(() => publishedManifest(fixture.slice(1))).toThrow('Missing Skill manifest');

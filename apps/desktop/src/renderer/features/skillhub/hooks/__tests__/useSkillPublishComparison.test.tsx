@@ -113,7 +113,7 @@ it('shares fresh results across navigation but not across account generations', 
 
 it('stops draining network requests after failure and permits a later focus retry', async () => {
   const clock = vi.spyOn(Date, 'now').mockReturnValue(100_000);
-  comparePublished.mockResolvedValue({ status: 'unavailable' });
+  comparePublished.mockResolvedValue({ status: 'unavailable', reason: 'service' });
   const hooks = Array.from({ length: 20 }, (_, n) => renderHook(() => useSkillPublishComparison(skill(String(n)))));
   await waitFor(() => expect(hooks.every((hook) => hook.result.current.comparison.status === 'unavailable')).toBe(true));
   expect(comparePublished).toHaveBeenCalledTimes(3);
@@ -126,4 +126,19 @@ it('stops draining network requests after failure and permits a later focus retr
   act(() => window.dispatchEvent(new Event('focus')));
   await waitFor(() => expect(hooks[0].result.current.comparison).toEqual(same));
   expect(comparePublished).toHaveBeenCalledTimes(4);
+});
+
+
+it('keeps a local comparison failure isolated and retries repaired content immediately', async () => {
+  const broken = skill('broken');
+  comparePublished.mockImplementation(async ({ skillId }) => skillId === broken.id ? { status: 'unavailable' } : same);
+  const first = renderHook(() => useSkillPublishComparison(broken));
+  const healthy = Array.from({ length: 6 }, (_, n) => renderHook(() => useSkillPublishComparison(skill(String(n)))));
+  await waitFor(() => expect(first.result.current.comparison.status).toBe('unavailable'));
+  await waitFor(() => expect(healthy.every((hook) => hook.result.current.comparison.status === 'same')).toBe(true));
+  expect(comparePublished).toHaveBeenCalledTimes(7);
+  comparePublished.mockResolvedValue(same);
+  act(() => invalidatePublishComparison(broken.absolutePath));
+  await waitFor(() => expect(first.result.current.comparison).toEqual(same));
+  expect(comparePublished).toHaveBeenCalledTimes(8);
 });

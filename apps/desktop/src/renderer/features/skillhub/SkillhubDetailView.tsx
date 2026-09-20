@@ -1005,7 +1005,7 @@ export function SkillhubDetailView({ entryOverride, renderNavigation, onUninstal
   const { createSession } = useCCSessions();
   // 入口来源：market 卡片会带 state.from。详情页返回不走浏览器式历史，
   // 而是退出到 SkillHub 一级页：market 来源回 market，其它入口回 local 欢迎页。
-  const navState = location.state as { from?: string; resetHistory?: boolean } | null;
+  const navState = location.state as { from?: string; resetHistory?: boolean; skillhubHome?: unknown } | null;
   const fromRoute = navState?.from ?? '/skillhub';
   const backTargetRoute = skillDetailReturnRoute(searchParams, fromRoute === '/skillhub/market' ? '/skillhub/market' : '/skillhub/local');
   // 兼容旧 sessionStorage 栈：从外部入口进入时先清掉，避免老版本留下的
@@ -1055,7 +1055,7 @@ export function SkillhubDetailView({ entryOverride, renderNavigation, onUninstal
     }
     clearLastEntryId();
     clearHistory();
-    navigate(backTargetRoute);
+    navigate(backTargetRoute, { state: { skillhubHome: navState?.skillhubHome } });
   };
 
   // ── v0.2.1: 4-state detection for kind === 'skill' ────────────────────────
@@ -1836,7 +1836,7 @@ export function SkillhubDetailView({ entryOverride, renderNavigation, onUninstal
               onClick={() => {
                 clearLastEntryId();
                 clearHistory();
-                navigate('/skillhub');
+                navigate(backTargetRoute, { state: { skillhubHome: navState?.skillhubHome } });
               }}
               className="text-[var(--msg-assistant-text)] underline-offset-2 hover:underline"
             >
@@ -2012,7 +2012,7 @@ export function SkillhubDetailView({ entryOverride, renderNavigation, onUninstal
                 clearLastEntryId();
                 clearHistory();
                 if (onUninstalled) onUninstalled();
-                else navigate(backTargetRoute);
+                else navigate(backTargetRoute, { state: { skillhubHome: navState?.skillhubHome } });
               }} />}
             {/* 编辑入口 */}
             {!editButtonState.hidden && (
@@ -2527,7 +2527,7 @@ export function SkillhubDetailView({ entryOverride, renderNavigation, onUninstal
               const renamed = findLocalSkillByPath(scannedSkills, newAbsolutePath);
               if (!renamed) return;
               setLastEntryId(renamed.id);
-              navigate(withSkillDetailReturn(buildLocalSkillRoute(renamed), backTargetRoute), { replace: true });
+              navigate(withSkillDetailReturn(buildLocalSkillRoute(renamed), backTargetRoute), { replace: true, state: location.state });
             });
           }}
           onScanResult={setScanResult}

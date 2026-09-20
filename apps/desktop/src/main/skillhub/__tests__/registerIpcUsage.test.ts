@@ -192,7 +192,7 @@ describe('registerSkillhubIpc usage handlers', () => {
     });
   });
 
-  it.each(['unchanged', 'generation', 'revoked', 'failure'] as const)(
+  it.each(['unchanged', 'generation', 'revoked', 'failure', '429', '503', 'network', '404'] as const)(
     'binds publication comparison to the scanned local identity and original account: %s', async (transition) => {
       const sender = { id: 75, on: vi.fn(), once: vi.fn() };
       const source = fs.mkdtempSync(path.join(fixtureRoot, 'compare-'));
@@ -214,7 +214,11 @@ describe('registerSkillhubIpc usage handlers', () => {
       comparePublishedSkill.mockImplementationOnce(async () => {
         if (transition === 'generation') ownerState.generation++;
         if (transition === 'revoked') getAllowedProjectRoots.mockResolvedValueOnce([]);
-        if (transition === 'failure') throw new Error('offline');
+        if (transition === 'failure') throw new Error('unreadable local directory');
+        if (['429', '503', 'network', '404'].includes(transition)) {
+          const { ServerApiError } = await import('../../serverApiClient');
+          throw new ServerApiError('TEST_ERROR', transition === 'network' ? 0 : Number(transition), 'remote failure');
+        }
         return { status: 'different', version: '1.0.0', pending: false, changes: [{ oldContent: 'private content' }] };
       });
       const response = await Promise.resolve(handlers.get('skillhub:compare-published')!({ sender }, params))
@@ -223,7 +227,8 @@ describe('registerSkillhubIpc usage handlers', () => {
       expect(comparePublishedSkill).toHaveBeenCalledWith(scannedSkill, marketService, true);
       if (transition === 'unchanged') expect(response).toMatchObject({ status: 'different' });
       else {
-        expect(response).toMatchObject(transition === 'failure' ? { status: 'unavailable' } : { error: expect.any(Error) });
+        if (transition === 'generation' || transition === 'revoked') expect(response).toMatchObject({ error: expect.any(Error) });
+        else expect(response).toEqual({ status: 'unavailable', ...(['429', '503', 'network'].includes(transition) ? { reason: 'service' } : {}) });
         expect(JSON.stringify(response)).not.toContain('private content');
       }
     },
