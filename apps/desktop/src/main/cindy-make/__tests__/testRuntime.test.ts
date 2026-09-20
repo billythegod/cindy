@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
   showItem: vi.fn(),
   rememberOriginal: vi.fn(async () => {}),
   recoverBuild: vi.fn(async () => {}),
+  rollbackGuard: undefined as ((commit: string) => boolean) | undefined,
+  publishedCommit: vi.fn(() => true),
   pendingRollback: false,
   historyIntegrate: vi.fn(async () => ({ items: [{ runId: 'run', integration: 'integrated' }] })),
   history: vi.fn(async () => ({ items: [{ runId: 'run', integration: 'integrated' }] })),
@@ -37,6 +39,15 @@ vi.mock('../historyRuntime.js', () => ({
   getCindyMakeHistory: h.history,
   actCindyMakeHistory: h.historyIntegrate,
   recoverHistoryBuildRollback: h.recoverBuild,
+}));
+vi.mock('../buildRollback.js', () => ({
+  historyBuildRollback: (...args: [unknown, unknown, (commit: string) => boolean]) => {
+    h.rollbackGuard = args[2];
+    return { prepareRollback: vi.fn(), recoverRollback: vi.fn() };
+  },
+}));
+vi.mock('../versionStore.js', () => ({
+  hasPublishedPersonalVersionCommit: h.publishedCommit,
 }));
 vi.mock('../versionStartup.js', () => ({
   rememberOriginalVersion: h.rememberOriginal,
@@ -382,6 +393,8 @@ describe('Cindy Make test IPC ownership and persistence', () => {
     );
     expect(h.rememberOriginal).toHaveBeenCalledWith(process.execPath);
     expect(h.build.mock.calls[0][0].profile.userData).toBe(h.profile);
+    expect(h.rollbackGuard?.('published-commit')).toBe(true);
+    expect(h.publishedCommit).toHaveBeenCalledWith(h.profile, 'published-commit');
     await actCindyMakeTest('session', 'completion', 'open-build');
     expect(h.artifactPath).toHaveBeenCalledWith(h.profile, expect.any(String), {
       status: 'ready',
