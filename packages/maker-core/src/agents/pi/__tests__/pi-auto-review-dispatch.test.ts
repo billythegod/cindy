@@ -1360,9 +1360,11 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
         type: 'text',
         data: {
           text: '## context-mode stats (Pi)\n\n- Events captured: 0',
-          isFinal: false,
+          isFinal: true,
         },
         source: 'pi',
+        standaloneText: true,
+        turnScope: 'background',
       });
       expect(captured.sent.find((message) => message.id === 'context-mode-stats')).toBeUndefined();
     } finally {
@@ -1540,7 +1542,7 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
         expect(resolver).not.toHaveBeenCalled();
         expect(captured.sent).toHaveLength(sentBefore);
         expect(events.filter((event) => event.type === 'text')).toEqual([
-          { type: 'text', data: { text: 'Extension command result', isFinal: false }, source: 'pi' },
+          { type: 'text', data: { text: 'Extension command result', isFinal: true }, source: 'pi', standaloneText: true, turnScope: 'background' },
         ]);
       } finally {
         await handle.close();

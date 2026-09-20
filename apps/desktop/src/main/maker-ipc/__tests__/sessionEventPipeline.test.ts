@@ -110,6 +110,7 @@ vi.mock('../../messagePersistBroadcaster.js', () => ({
   enqueueDurableWrite: effects.fn('enqueueDurableWrite'),
   flushAssistantBlock: effects.fn('flushAssistantBlock'),
   onAssistantTextEvent: effects.fn('onAssistantTextEvent'),
+  onStandaloneTextEvent: effects.fn('onStandaloneTextEvent'),
   onAgentTaskUpdateEvent: effects.fn('onAgentTaskUpdateEvent'),
   onThinkingEvent: effects.fn('onThinkingEvent'),
   onToolResultEvent: effects.fn('onToolResultEvent'),
@@ -390,6 +391,40 @@ function ordered(...names: string[]) {
 }
 
 describe('production Session event pipeline', () => {
+  it('delivers Pi notices as durable rows without entering model streaming or turn bookkeeping', async () => {
+    const h = harness();
+    h.deps.redactEventForRenderer.mockImplementation((value) => value);
+    try {
+      h.emit(event('text', { text: 'Plan mode enabled.', isFinal: true }, {
+        source: 'pi', standaloneText: true, turnScope: 'background',
+      }));
+      await microtasks();
+      expect(effects.fn('onStandaloneTextEvent')).toHaveBeenCalledWith('task', 'Plan mode enabled.', null);
+      expect(effects.fn('onAssistantTextEvent')).not.toHaveBeenCalled();
+      expect(effects.fn('flushAssistantBlock')).not.toHaveBeenCalled();
+      expect(effects.fn('noteTurnStarted')).not.toHaveBeenCalled();
+      expect(effects.fn('markAssistantTurnCompleted')).not.toHaveBeenCalled();
+      expect(h.deps.broadcastToAllWindows).not.toHaveBeenCalled();
+      expect(h.deps.orcaTeamServiceForEvents?.captureWorkerText).not.toHaveBeenCalled();
+      h.emit(event('text', { text: 'Actual reply', isFinal: true, isFullText: true }, { source: 'pi' }));
+      expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledOnce();
+      expect(h.deps.broadcastToAllWindows).toHaveBeenCalled();
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it('retains accepted private-message visibility for independent Pi notices', async () => {
+    const h = harness();
+    h.deps.redactEventForRenderer.mockImplementation((value) => value);
+    h.deps.agentInputCoordinatorHolder.getActiveInputClientId.mockReturnValue('bot-dm:private-input');
+    h.emit(event('text', { text: 'Extension result', isFinal: true }, {
+      source: 'pi', standaloneText: true, turnScope: 'background',
+    }));
+    expect(effects.fn('onStandaloneTextEvent')).toHaveBeenCalledWith('task', 'Extension result', { botPrivateReply: true });
+    await h.dispose();
+  });
+
   it.each(['completed', 'failed', 'cancelled', 'interrupted'])(
     'runs the upstream-merge follow-up only for a successful product boundary: %s', async (status) => {
       const h = harness();
