@@ -51,10 +51,15 @@ export function useSkillhubHomeNavigation() {
     });
   };
 
+  const replaceLocalSkill = (skill: Parameters<typeof buildLocalSkillRoute>[0]) => {
+    // A rename replaces the current detail, retaining both its source and list filters.
+    navigate(buildLocalSkillRoute(skill), { replace: true, state: location.state });
+  };
+
   const backToCatalog = () => {
     const target = navState?.from === '/skillhub/market' ? '/skillhub/market' : '/skillhub/local';
     navigate(target, { state: { skillhubHome: navState?.skillhubHome } });
   };
 
-  return { catalogTab, query, setCatalogTab, setQuery, openLocalSkill, backToCatalog };
+  return { catalogTab, query, setCatalogTab, setQuery, openLocalSkill, replaceLocalSkill, backToCatalog };
 }

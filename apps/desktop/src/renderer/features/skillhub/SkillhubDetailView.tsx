@@ -51,7 +51,6 @@ import {
 import { triggerIncrementalSync } from './hooks/useSkillSync';
 import { type DetailState, deriveDetailActionState, deriveDetailState } from './lib/detailButtons';
 import {
-  buildLocalSkillRoute,
   findLocalSkillByPath,
   findLocalSkillRouteEntry,
 } from './lib/localRoutes';
@@ -987,7 +986,7 @@ export function SkillhubDetailView() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { backToCatalog } = useSkillhubHomeNavigation();
+  const { backToCatalog, replaceLocalSkill } = useSkillhubHomeNavigation();
   const { skills, bootstrapped, loading: skillsLoading } = useSkillhub();
   const commandPath = searchParams.get('path');
   useEffect(() => {
@@ -2575,7 +2574,7 @@ export function SkillhubDetailView() {
               const renamed = findLocalSkillByPath(scannedSkills, newAbsolutePath);
               if (!renamed) return;
               setLastEntryId(renamed.id);
-              navigate(buildLocalSkillRoute(renamed), { replace: true, state: location.state });
+              replaceLocalSkill(renamed);
             });
           }}
           onScanResult={setScanResult}

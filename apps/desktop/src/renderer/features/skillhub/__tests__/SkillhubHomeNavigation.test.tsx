@@ -44,16 +44,33 @@ function NavigationControls() {
   return (
     <>
       <output data-testid="location">{location.pathname}{location.search}{location.hash}</output>
+      <output data-testid="navigation-state">{JSON.stringify(location.state)}</output>
       <button onClick={() => navigate(-1)}>Browser Back</button>
       <button onClick={() => navigate('/away')}>Leave catalog</button>
     </>
   );
 }
 
-// Exercise the same return action used by the detail page without mounting its file editor/IPC.
+// Exercise production rename/return navigation after a simulated scanner refresh, without file IPC.
 function DetailNavigation() {
-  const { backToCatalog } = useSkillhubHomeNavigation();
-  return <button onClick={backToCatalog}>Detail Back</button>;
+  const { backToCatalog, replaceLocalSkill } = useSkillhubHomeNavigation();
+  const rename = () => {
+    const renamed = {
+      ...mocks.store.skills[0],
+      name: 'calendar-renamed',
+      absolutePath: '/skills/calendar-renamed',
+      mdPath: '/skills/calendar-renamed/SKILL.md',
+      sourceKey: 'renamed-source',
+    };
+    mocks.store.skills = [renamed, ...mocks.store.skills.slice(1)];
+    replaceLocalSkill(renamed);
+  };
+  return (
+    <>
+      <button onClick={rename}>Rename skill</button>
+      <button onClick={backToCatalog}>Detail Back</button>
+    </>
+  );
 }
 
 function renderCatalog(entry: string | { pathname: string; state: unknown } = '/skillhub/local') {
@@ -131,10 +148,41 @@ describe('Skill home navigation', () => {
     expect(screen.getByTestId('location').textContent).toBe('/before');
   });
 
-  it('preserves the Settings URL and restores its local catalog state on detail return', async () => {
+  it.each([
+    ['global', 'Detail Back'], ['global', 'Browser Back'],
+    ['project', 'Detail Back'], ['project', 'Browser Back'],
+  ] as const)('preserves filters and replaces the %s detail history entry on rename before %s', async (scope, back) => {
+    if (scope === 'project') {
+      Object.assign(mocks.store.skills[0], { scope, projectRoot: '/repo', projectHash: 'repo-hash' });
+    }
+    renderCatalog();
+    selectLocalAndSearch();
+    fireEvent.click(screen.getByRole('button', { name: /calendar-tools/ }));
+    const detailState = screen.getByTestId('navigation-state').textContent;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename skill' }));
+    const location = screen.getByTestId('location').textContent;
+    expect(location).toContain(`/skill/${scope}/`);
+    expect(location).toContain('/calendar-renamed?engine=claude-code&source=renamed-source');
+    expect(screen.getByTestId('navigation-state').textContent).toBe(detailState);
+
+    fireEvent.click(screen.getByRole('button', { name: back }));
+    await waitFor(() => expectTab('local'));
+    expect((screen.getByRole('textbox', { name: 'skillhub.home.search' }) as HTMLInputElement).value)
+      .toBe('calendar');
+    expect(screen.getByRole('button', { name: /calendar-renamed/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /calendar-tools|design-tools/ })).toBeNull();
+  });
+
+  it('keeps the Settings URL while changing embedded catalog filters', () => {
     renderCatalog('/settings?tab=ghosts#catalog');
     selectLocalAndSearch();
     expect(screen.getByTestId('location').textContent).toBe('/settings?tab=ghosts#catalog');
+  });
+
+  it('returns from an embedded Settings skill detail to the main catalog with saved filters', async () => {
+    renderCatalog('/settings?tab=ghosts#catalog');
+    selectLocalAndSearch();
     fireEvent.click(screen.getByRole('button', { name: /calendar-tools/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Detail Back' }));
     await waitFor(() => expectTab('local'));
@@ -153,11 +201,13 @@ describe('Skill home navigation', () => {
     await waitFor(() => expectTab(stillMember ? 'organization' : 'public'));
   });
 
-  it('keeps the market return destination for existing market detail entries', () => {
+  it('keeps the market return destination across a local skill rename', () => {
     renderCatalog({
       pathname: '/skillhub/local/skill/global/calendar-tools',
       state: { from: '/skillhub/market', resetHistory: true },
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename skill' }));
+    expect(screen.getByTestId('location').textContent).toContain('/calendar-renamed?');
     fireEvent.click(screen.getByRole('button', { name: 'Detail Back' }));
     expect(screen.getByTestId('location').textContent).toBe('/skillhub/market');
   });
