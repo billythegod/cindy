@@ -38,20 +38,25 @@ typedef CGError (*StartStream)(CFTypeRef);
 @end
 
 static NSString *standardCursorShape(NSCursor *cursor) {
-  NSArray<NSCursor *> *cursors = @[
+  if (!cursor) return @"default";
+  // Some AppKit standard cursors are unavailable in capture-only processes.
+  // A C array preserves nil entries (and their shape indices); NSArray would
+  // throw before we could skip them, terminating the screen capture process.
+  NSCursor *cursors[] = {
     NSCursor.arrowCursor, NSCursor.IBeamCursor, NSCursor.pointingHandCursor,
     NSCursor.crosshairCursor, NSCursor.openHandCursor, NSCursor.closedHandCursor,
     NSCursor.resizeLeftRightCursor, NSCursor.resizeUpDownCursor,
     NSCursor.operationNotAllowedCursor, NSCursor.dragCopyCursor,
     NSCursor.dragLinkCursor, NSCursor.IBeamCursorForVerticalLayout
-  ];
+  };
   NSArray<NSString *> *shapes = @[
     @"default", @"text", @"pointer", @"crosshair", @"grab", @"grabbing",
     @"ew-resize", @"ns-resize", @"not-allowed", @"copy", @"alias", @"vertical-text"
   ];
   NSData *raster = nil;
-  for (NSUInteger i = 0; i < cursors.count; i++) {
+  for (NSUInteger i = 0; i < sizeof(cursors) / sizeof(cursors[0]); i++) {
     NSCursor *candidate = cursors[i];
+    if (!candidate) continue;
     if ([cursor isEqual:candidate]) return shapes[i];
     if (!NSEqualSizes(cursor.image.size, candidate.image.size) ||
         !NSEqualPoints(cursor.hotSpot, candidate.hotSpot)) continue;
