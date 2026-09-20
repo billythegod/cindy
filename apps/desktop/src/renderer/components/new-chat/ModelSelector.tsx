@@ -3386,7 +3386,7 @@ export function ModelSelector({
   });
   const remoteModelLoading = !!deviceId && remoteModelListStatus === 'loading';
   const remoteModelLoadFailed = !!deviceId && remoteModelListStatus === 'error';
-  const localModelLoading = !deviceId && (
+  const localModelLoading = !deviceId && !(!providersOverride && localProviders.loadFailed) && (
     (!providersOverride && localProviders.loading) ||
     (agentKind === 'codex' ? codex.loading : agentKind === 'pi' ? pi.loading : cc.loading)
   );
