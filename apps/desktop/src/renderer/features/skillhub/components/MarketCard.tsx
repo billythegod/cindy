@@ -23,6 +23,7 @@ import {
 import { SkillIcon } from './SkillIcon';
 import { SkillTagList } from './SkillTagList';
 import { MarketInstallStatus, type MarketInstallStatusProps } from './MarketInstallStatus';
+import { MarketPublishUpdateHint } from './MarketPublishUpdateHint';
 
 function visibilityLabel(skill: MarketSkill, allowPrivateLabel: boolean): string {
   return i18n.t(marketVisibilityLabelKey({
@@ -151,6 +152,7 @@ export function MarketCard({
   selected,
   onUpdate,
   updating,
+  onPublishUpdate,
 }: MarketCardProps) {
   // useTranslation: subscribe to language change so footer / visibility re-render.
   const { t, i18n: i18next } = useTranslation();
@@ -228,7 +230,7 @@ export function MarketCard({
 
       {/* Footer: 时间戳 + 按钮 */}
       <div
-        className="flex w-full items-center justify-between"
+        className="flex w-full flex-wrap items-center justify-between"
         style={{ gap: '8px', minHeight: '36px' }}
       >
         <div
@@ -254,8 +256,9 @@ export function MarketCard({
             <span>{downloads}</span>
           </span>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex max-w-full flex-wrap items-center gap-2">
           <MarketInstallStatus skill={skill} onUpdate={onUpdate} updating={updating} />
+          {skill.isMine && onPublishUpdate && <MarketPublishUpdateHint skill={skill} disabled={updating} onPublish={onPublishUpdate} />}
           {primaryAction === 'manage' && onManageAction ? (
             <ManageMenu skill={skill} onAction={onManageAction} />
           ) : primaryAction === 'clone' && !skill.updateAvailable && !updating ? (

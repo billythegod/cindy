@@ -22,5 +22,8 @@ export type SkillhubPublishComparison =
       status: 'same' | 'different';
       version: string;
       pending: boolean;
+      /** When an installed copy differs from the compared release, distinguish
+       * local edits from an unchanged older installation. Omitted by older clients. */
+      localChanges?: 'modified' | 'unchanged' | 'unknown';
       changes?: SkillhubContentChange[];
     };

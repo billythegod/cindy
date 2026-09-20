@@ -136,7 +136,28 @@ export async function comparePublishedSkill(
   const newByPath = new Map(local.map((file) => [file.path, file]));
   const changedPaths = [...new Set([...oldByPath.keys(), ...newByPath.keys()])].sort()
     .filter((file) => oldByPath.get(file)?.sha256 !== newByPath.get(file)?.sha256);
-  const result = { status: changedPaths.length ? 'different' as const : 'same' as const, version, pending };
+  const installedVersion = skill.registryEntry?.version;
+  let localChanges: 'modified' | 'unchanged' | 'unknown' | undefined;
+  const installedOrigin = skill.registryEntry?.origin;
+  if (changedPaths.length && installedVersion && installedVersion !== version
+    && installedOrigin !== 'learned' && installedOrigin !== 'imported') {
+    // A difference from the latest release may just be an older, unedited copy.
+    // Compare with the immutable installed release, never a ZIP hash or guessed author.
+    try {
+      const baseline = await market.getPublishedFiles({ name, version: installedVersion, includeHashes: true });
+      if (baseline.version !== installedVersion) throw new Error('Installed version changed');
+      const original = publishedManifest(baseline.files);
+      localChanges = original.length === local.length
+        && original.every((file) => newByPath.get(file.path)?.sha256 === file.sha256)
+        ? 'unchanged' : 'modified';
+    } catch {
+      localChanges = 'unknown';
+    }
+  }
+  const result = {
+    status: changedPaths.length ? 'different' as const : 'same' as const, version, pending,
+    ...(localChanges ? { localChanges } : {}),
+  };
   if (!includeDiff) return result;
   const changes: SkillhubContentChange[] = [];
   let previewBytes = 0;

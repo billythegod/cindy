@@ -5,8 +5,9 @@ import { skillPublisherLabel } from '../lib/publisherLabel';
 import { SkillIcon } from './SkillIcon';
 import { SkillTagList } from './SkillTagList';
 import { MarketInstallStatus, type MarketInstallStatusProps } from './MarketInstallStatus';
+import { MarketPublishUpdateHint } from './MarketPublishUpdateHint';
 
-export function HomeMarketCard({ skill: s, onClick, onUpdate, updating }: MarketInstallStatusProps & {
+export function HomeMarketCard({ skill: s, onClick, onUpdate, updating, onPublishUpdate }: MarketInstallStatusProps & {
   onClick: (skill: MarketSkill) => void;
 }) {
   return (
@@ -37,12 +38,13 @@ export function HomeMarketCard({ skill: s, onClick, onUpdate, updating }: Market
           {s.description}
         </p>
       )}
-      <div className="flex items-center gap-2 text-11 text-[var(--cmd-palette-item-meta)]">
+      <div className="flex flex-wrap items-center gap-2 text-11 text-[var(--cmd-palette-item-meta)]">
         <span className="min-w-0 truncate">{skillPublisherLabel(s)}</span>
         <span className="inline-flex shrink-0 items-center gap-0.5">
           <Download size={11} />
           {s.downloads}
         </span>
+        {s.isMine && onPublishUpdate && <MarketPublishUpdateHint skill={s} disabled={updating} onPublish={onPublishUpdate} />}
       </div>
     </div>
   );

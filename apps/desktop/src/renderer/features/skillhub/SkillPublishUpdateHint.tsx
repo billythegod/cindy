@@ -1,10 +1,12 @@
 import { useTranslation } from 'react-i18next';
 import { useSkillPublishComparison, type PublishComparisonState } from './hooks/useSkillPublishComparison';
+import { hasPublishableChanges } from './lib/publishUpdateState';
 
 export function SkillPublishUpdateHint({ skill, knownCreator }: { skill: SkillhubSkill; knownCreator?: boolean }) {
   const { t } = useTranslation();
   const { comparison } = useSkillPublishComparison(skill);
   if (comparison.status !== 'different' && comparison.status !== 'unavailable') return null;
+  if (comparison.status === 'different' && !hasPublishableChanges(comparison)) return null;
   if (comparison.status === 'unavailable' && !knownCreator) return null;
   return (
     <span className="text-12 leading-4 text-[var(--text-secondary)]">

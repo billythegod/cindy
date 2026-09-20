@@ -53,6 +53,26 @@ describe('published content comparison', () => {
     expect(market.getPublishedFiles).toHaveBeenCalledWith({ name: 'golden-skill', version: '1.0.0', includeHashes: true });
   });
 
+  it.each(['unchanged', 'modified', 'unknown'] as const)('distinguishes %s local content from a newer remote release', async (localChanges) => {
+    skill.registryEntry = { version: '1.0.0' } as Skill['registryEntry'];
+    market.info.mockResolvedValue({ info: { ...info, latestVersion: '2.0.0' } });
+    const newer = fixture.map((file) => file.path === 'SKILL.md' ? { ...file, sha256: 'a'.repeat(64) } : file);
+    market.getPublishedFiles.mockImplementation(async ({ version }) => {
+      if (version === '1.0.0' && localChanges === 'unknown') throw new Error('Historical manifest unavailable');
+      return { version, files: version === '2.0.0' ? newer : fixture };
+    });
+    if (localChanges === 'modified') await fs.writeFile(path.join(root, 'scripts/run.py'), 'local edit');
+    expect(await compare()).toMatchObject({ status: 'different', version: '2.0.0', localChanges });
+    expect(market.getPublishedFiles).toHaveBeenCalledWith({ name: 'golden-skill', version: '1.0.0', includeHashes: true });
+  });
+
+  it.each(['learned', 'imported'] as const)('does not assume %s version numbers identify a downloaded baseline', async (origin) => {
+    skill.registryEntry = { version: '0.1.0', origin } as Skill['registryEntry'];
+    await fs.writeFile(path.join(root, 'scripts/run.py'), 'locally authored');
+    expect(await compare()).toEqual({ status: 'different', version: '1.0.0', pending: false });
+    expect(market.getPublishedFiles).toHaveBeenCalledTimes(1);
+  });
+
   it('counts version-only edits and compares with the remote text', async () => {
     const original = Buffer.from(fixture[0].base64, 'base64').toString('utf8');
     await fs.writeFile(path.join(root, 'SKILL.md'), original.replace('1.0.0', '1.0.1'));

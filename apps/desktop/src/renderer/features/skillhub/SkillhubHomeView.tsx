@@ -6,8 +6,10 @@
  * 公开、可选的组织目录和本地技能在同一行切换；“更多”进入完整 Market。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { buildMarketSkillRoute, withSkillDetailReturn } from './lib/detailRoutes';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { skillhubCatalogKey } from '../../../shared/skillhubCatalog';
 import { CATEGORY_ALL } from '../../../shared/skillhubCategory';
@@ -42,10 +44,8 @@ import {
   useMarketList,
   type MarketSkill,
 } from './hooks/useMarketList';
-import { MarketManagementDialogs, useMarketManagement } from './hooks/useMarketManagement';
 import { basename, deriveProjectWorkingDir } from './lib/pathDerivations';
 import { projectHash } from './lib/projectHash';
-import { marketCardPrimaryAction } from './lib/marketDetailViewModel';
 import {
   homeMarketQuery,
   isHomeMarketResponseCurrent,
@@ -60,7 +60,6 @@ import { HomeMarketCard } from './components/HomeMarketCard';
 import { SkillIcon } from './components/SkillIcon';
 import { SkillPublishUpdateHint } from './SkillPublishUpdateHint';
 import { OfficialSkillBadge } from './components/OfficialSkillBadge';
-import { SkillhubMarketPreviewPanel } from './SkillhubMarketPreviewPanel';
 import { useSkillhubIdentityPolicy } from './hooks/useSkillhubIdentityPolicy';
 import { useMarketSkillUpdate } from './hooks/useMarketSkillUpdate';
 
@@ -84,8 +83,9 @@ export function SkillhubHomeView({
 } = {}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { skills, projects, bootstrapped, learnSkillEnabled, syncResults } = useSkillhub();
-  const [query, setQuery] = useState('');
+  const [initialSearch] = useSearchParams();
+  const { skills, projects, bootstrapped, syncResults } = useSkillhub();
+  const [query, setQuery] = useState(() => initialSearch.get('q') ?? '');
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
   // 未登录也请求公开 Skill 目录；登录身份只扩大服务端可见范围。
@@ -93,7 +93,10 @@ export function SkillhubHomeView({
   const identityPolicy = useSkillhubIdentityPolicy(user);
   const marketUpdate = useMarketSkillUpdate();
   const showOrganization = user?.membershipKind === 'org';
-  const [catalogTab, setCatalogTab] = useState<HomeCatalogTab>('public');
+  const [catalogTab, setCatalogTab] = useState<HomeCatalogTab>(() => {
+    const tab = initialSearch.get('tab');
+    return tab === 'local' || (tab === 'organization' && showOrganization) ? tab : 'public';
+  });
   const marketFilter: HomeMarketFilter = catalogTab === 'organization' ? 'organization' : 'public';
   const marketRequest = useMemo(() => homeMarketQuery(marketFilter), [marketFilter]);
 
@@ -112,19 +115,22 @@ export function SkillhubHomeView({
     setCategoryFilter,
     setVisibility,
     loadMore: loadMoreMarket,
-    reload: reloadMarket,
   } = useMarketList('all', {
     enabled: catalogTab !== 'local',
     initialScope: 'market',
     initialSort: 'trending',
+    initialSearchQuery: initialSearch.get('q') ?? '',
+    initialCategoryFilter: initialSearch.get('category') ?? CATEGORY_ALL,
   });
   const categoryScope = marketRequest.scope === 'team' ? 'team' : 'market';
   const { categories } = useCategoryList(categoryScope);
+  const previousMarketRequest = useRef(marketRequest);
   useEffect(() => {
     setCatalogScope(marketRequest.scope);
     setVisibility(marketRequest.visibility);
     setSortBy(marketRequest.sort);
-    setCategoryFilter(CATEGORY_ALL);
+    if (previousMarketRequest.current !== marketRequest) setCategoryFilter(CATEGORY_ALL);
+    previousMarketRequest.current = marketRequest;
   }, [marketRequest, setCatalogScope, setCategoryFilter, setSortBy, setVisibility]);
   useEffect(() => {
     setSearchQuery(query);
@@ -204,40 +210,20 @@ export function SkillhubHomeView({
     ? visibleLocalCount > 0
     : catalogItems.length > 0;
 
-  // 推荐技能的预览浮层 + 安装选择器(复用 Market 那套):点推荐卡 = 下一步直接
-  // 进入该技能的预览;关闭 = 回退到首页。
-  const [previewSkill, setPreviewSkill] = useState<MarketSkill | null>(null);
-  const [pickerSkill, setPickerSkill] = useState<MarketSkill | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
-
   // 本地导入：main 选择并检查文件 → 安装位置选择器 → 凭授权导入
   const [importGrantToken, setImportGrantToken] = useState<string | null>(null);
   const [importTarget, setImportTarget] = useState<InstallTargetSkill | null>(null);
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
 
-  const openLocal = (s: SkillhubSkill) => {
-    // 从首页进入 = 一次全新入口:清掉旧的技能历史栈(resetHistory),并把回退落点
-    // 设为首页(from)。这样详情页「返回」回到首页这一步,而不是会话内残留的上一个技能。
-    // 详情→详情的链式跳转不带 resetHistory,链路仍能逐级回退。
-    navigate(buildLocalSkillRoute(s), {
-      state: { from: '/skillhub/local', resetHistory: true },
-    });
+  const returnTo = `/skillhub/local?${new URLSearchParams({ tab: catalogTab, q: query, category: categoryFilter })}`;
+  const openLocal = (local: SkillhubSkill, publish = false) => {
+    let route = withSkillDetailReturn(buildLocalSkillRoute(local), returnTo);
+    if (publish) route += '&action=publish';
+    navigate(route, { state: { from: '/skillhub/local', resetHistory: true } });
   };
   const openMarket = () => navigate('/skillhub/market');
-  const openCatalogSkill = (skill: MarketSkill) => setPreviewSkill(skill);
-  const handleClone = (skill: MarketSkill) => {
-    setPickerSkill(skill);
-    setPickerOpen(true);
-  };
-  const management = useMarketManagement({
-    active: false,
-    reload: reloadMarket,
-    onClone: handleClone,
-    onDeleted: (skill) => {
-      if (previewSkill?.name === skill.name) setPreviewSkill(null);
-    },
-  });
+  const openCatalogSkill = (skill: MarketSkill) => navigate(buildMarketSkillRoute(skill, returnTo));
   const homeCatalogTabs = visibleHomeCatalogTabs(showOrganization);
 
   const handleImportSkill = useCallback(async () => {
@@ -326,7 +312,6 @@ export function SkillhubHomeView({
                   optionClassName="px-3.5 text-12"
                   value={catalogTab}
                   onValueChange={(tab) => {
-                    setPreviewSkill(null);
                     setCatalogTab(tab);
                   }}
                   options={homeCatalogTabs.map((tab) => ({
@@ -399,6 +384,7 @@ export function SkillhubHomeView({
                         key={skillhubCatalogKey(s.name, s.catalogScope)}
                         skill={s}
                         onClick={openCatalogSkill}
+                        onPublishUpdate={identityPolicy.canWrite ? (local) => openLocal(local, true) : undefined}
                         onUpdate={user ? marketUpdate.update : undefined}
                         updating={marketUpdate.updatingNames.has(s.name)}
                       />
@@ -466,40 +452,6 @@ export function SkillhubHomeView({
           </PluginManagementPage>
         </main>
 
-        {/* Keep the preview outside the list scroller so it stays anchored to the viewport. */}
-        <SkillhubMarketPreviewPanel
-          open={previewSkill !== null}
-          skill={previewSkill}
-          onClose={() => setPreviewSkill(null)}
-          primaryAction={
-            previewSkill && user
-              ? (() => {
-                  const action = marketCardPrimaryAction({
-                    isMine: previewSkill.isMine,
-                    listVisibility: 'all',
-                    cardState: previewSkill.cardState,
-                  });
-                  return action === 'manage' && !identityPolicy.canWrite ? 'clone' : action;
-                })()
-              : 'none'
-          }
-          onClone={handleClone}
-          onManageAction={management.handleManageAction}
-          learnSkillEnabled={learnSkillEnabled}
-        />
-        <MarketManagementDialogs controller={management} />
-        <InstallTargetPicker
-          open={pickerOpen}
-          skill={pickerSkill}
-          onClose={() => setPickerOpen(false)}
-          onInstallComplete={() => {
-            void refreshSkillhub();
-            setPickerOpen(false);
-            // 安装后关掉预览浮层:否则它仍持有 stale previewSkill、CTA 继续显示「安装/克隆」,
-            // 可被重复点安装(PR #246 review)。
-            setPreviewSkill(null);
-          }}
-        />
         <InstallTargetPicker
           open={importPickerOpen}
           skill={importTarget}

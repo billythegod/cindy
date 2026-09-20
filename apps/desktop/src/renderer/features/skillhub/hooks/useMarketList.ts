@@ -359,16 +359,18 @@ export function useMarketList(
     initialScope?: CatalogScope;
     /** Fixed catalog surfaces can avoid an extra request by declaring their initial sort. */
     initialSort?: SortBy;
+    initialSearchQuery?: string;
+    initialCategoryFilter?: CategoryFilter;
   },
 ) {
   const enabled = options?.enabled ?? true;
   const { t, i18n: i18next } = useTranslation();
-  const [searchQuery, setSearchQueryState] = useState('');
+  const [searchQuery, setSearchQueryState] = useState(options?.initialSearchQuery ?? '');
   const [sortBy, setSortByState] = useState<SortBy>(() => options?.initialSort ?? 'updated_at');
   const [catalogScope, setCatalogScopeState] = useState<CatalogScope>(
     () => options?.initialScope ?? 'all',
   );
-  const [categoryFilter, setCategoryFilterState] = useState<CategoryFilter>(CATEGORY_ALL);
+  const [categoryFilter, setCategoryFilterState] = useState<CategoryFilter>(options?.initialCategoryFilter ?? CATEGORY_ALL);
   // 默认展示当前身份可见的完整目录；“我的管理”由列表页显式切换。
   const [visibility, setVisibilityState] = useState<Visibility>(() => initialVisibility);
   const [state, setState] = useState<MarketListState>(INITIAL);

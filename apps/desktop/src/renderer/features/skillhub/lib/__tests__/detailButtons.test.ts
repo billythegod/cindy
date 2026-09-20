@@ -91,6 +91,28 @@ describe('deriveDetailState — null guards', () => {
       isOutdated: true, isMineDirty: true, status: { kind: 'publish-new-version' },
     });
   });
+  it.each(['unchanged', 'unknown'] as const)('offers download without a publish reminder for %s older content', (localChanges) => {
+    const state = makeDetailState({ origin: 'installed', canManage: true, localVersion: '1.0.0', latestVersion: '2.0.0' });
+    expect(deriveDetailActionState(state, makeRegistryEntry(), 'abc123', 'approved', true, state,
+      { status: 'different', version: '2.0.0', pending: false, localChanges })).toMatchObject({
+      isOutdated: true, isMineDirty: false, status: { kind: 'update', latestVersion: '2.0.0' },
+    });
+  });
+
+  it('preserves manual publication of known local edits when the historical manifest is unavailable', () => {
+    const state = makeDetailState({ origin: 'installed', canManage: true, localVersion: '1.0.0', latestVersion: '2.0.0' });
+    expect(deriveDetailActionState(state, makeRegistryEntry(), 'locally-modified', 'approved', true, state,
+      { status: 'different', version: '2.0.0', pending: false, localChanges: 'unknown' })).toMatchObject({
+      isMineDirty: false, status: { kind: 'publish-new-version' },
+    });
+  });
+
+  it.each(['learned', 'imported'] as const)('keeps %s content outside the download-update path', (origin) => {
+    const state = makeDetailState({ origin, canManage: true, localVersion: '1.0.0', latestVersion: '2.0.0' });
+    expect(deriveDetailActionState(state, makeRegistryEntry(), 'abc123', 'approved', true, state,
+      { status: 'different', version: '2.0.0', pending: false, localChanges: 'unchanged' })?.status.kind).not.toBe('update');
+  });
+
   it('returns null when entry is null', () => {
     expect(deriveDetailState(null, null, false)).toBeNull();
   });

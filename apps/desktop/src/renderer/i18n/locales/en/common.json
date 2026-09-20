@@ -11205,6 +11205,13 @@
     "projectSkillNotLoaded": "This Pi task hasn't loaded this project Skill. New tasks will automatically try to load it."
   },
   "skillhub": {
+    "unifiedDetail": {
+      "contentSource": "Content source",
+      "local": "Local",
+      "market": "Market",
+      "marketUnavailable": "Market details are unavailable. You can still use your local copy.",
+      "retry": "Retry"
+    },
     "publishComparison": {
       "updateAvailable": "Update available to publish",
       "pendingChanges": "Further local changes since submission",

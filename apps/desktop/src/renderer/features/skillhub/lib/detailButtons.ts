@@ -1,5 +1,6 @@
 import { semverCompare } from '../versionUtils';
 import type { PublishComparisonState } from '../hooks/useSkillPublishComparison';
+import { hasPublishableChanges } from './publishUpdateState';
 
 /**
  * deriveDetailState — 从 entry + server info 派生三个独立维度的 UI 状态。
@@ -144,12 +145,13 @@ export function deriveDetailActionState(
   );
   const localChanged = hasLocalChanges(registryEntry, localFolderHash);
   const isMineDirty = comparison
-    ? comparison.status === 'different'
+    ? hasPublishableChanges(comparison)
     : !!(publishState.canManage === true && localChanged);
   // Preserve manual management on older servers and for administrators. Only verified
   // creator comparisons drive automatic reminders; a matching pending release is clean.
   const publishChanged = comparison?.status === 'same' ? false
-    : comparison?.status === 'different' ? true : localChanged;
+    : comparison?.status === 'different' && comparison.localChanges !== 'unknown'
+      ? hasPublishableChanges(comparison) : localChanged;
   const showForeignDirtyBanner = !!(
     detailState.origin === 'installed' &&
     detailState.localVersion !== null &&
@@ -168,6 +170,9 @@ export function deriveDetailActionState(
     publishChanged
   ) {
     status = { kind: 'publish-new-version' };
+  } else if (isOutdated && comparison?.status === 'different' && !hasPublishableChanges(comparison)
+    && detailState.latestVersion !== null && detailState.origin !== 'learned' && detailState.origin !== 'imported') {
+    status = { kind: 'update', latestVersion: detailState.latestVersion };
   } else if (publishState.latestVersion !== null && publishState.canManage === true) {
     status = comparison?.status !== 'same' && (detailState.origin === 'learned' || detailState.origin === 'imported')
       ? { kind: 'publish-new-version' }

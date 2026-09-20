@@ -11189,6 +11189,13 @@
     "projectSkillNotLoaded": "目前的 Pi 任務尚未載入此專案 Skill，新任務會自動嘗試載入"
   },
   "skillhub": {
+    "unifiedDetail": {
+      "contentSource": "內容來源",
+      "local": "本機",
+      "market": "市場",
+      "marketUnavailable": "暫時無法讀取市場資訊，本機副本仍可使用。",
+      "retry": "重試"
+    },
     "publishComparison": {
       "updateAvailable": "可發佈更新",
       "pendingChanges": "提交審核後，本機又有改動",
