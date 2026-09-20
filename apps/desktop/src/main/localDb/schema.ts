@@ -2076,6 +2076,7 @@ export const taskTags = sqliteTable(
   {
     id: text('id').primaryKey(),
     name: text('name').notNull(),
+    nameCustomized: integer('name_customized', { mode: 'boolean' }).notNull().default(false),
     color: text('color').notNull(),
     favoriteOrder: integer('favorite_order'),
     sortOrder: integer('sort_order'),

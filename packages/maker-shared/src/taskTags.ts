@@ -17,6 +17,8 @@ export type TaskTagColor = (typeof TASK_TAG_COLORS)[number] | 'none';
 export interface TaskTag {
   id: string;
   name: string;
+  /** Explicit rename, including renaming a localized preset to its canonical name. */
+  nameCustomized?: boolean;
   color: TaskTagColor;
   favoriteOrder: number | null;
   /** Missing on older hosts; legacy favorite ordering remains the fallback. */
@@ -49,6 +51,7 @@ export const TASK_TAG_PRESETS = [
 ] as const;
 
 export function taskTagNameKey(tag: TaskTag): string | null {
+  if (tag.nameCustomized) return null;
   const preset = TASK_TAG_PRESETS.find((item) => item.id === tag.id && item.name === tag.name);
   if (preset) return `taskTags.${preset.key}`;
   const originalColor = TASK_TAG_COLORS.find((color) => tag.id === `default:${color}`);
@@ -73,6 +76,8 @@ export type TaskTagRequest =
       tagId: string;
       revision: number;
       name?: string;
+      /** Additive intent; legacy clients also send unchanged names when recoloring. */
+      nameCustomized?: true;
       color?: TaskTagColor;
       favorite?: boolean;
     }
@@ -101,6 +106,8 @@ export function normalizeTaskTags(value: unknown, limit = 32): TaskTag[] {
         tag.id.length <= 128 &&
         typeof tag.name === 'string' &&
         tag.name.length <= 80 &&
+        (tag.nameCustomized === undefined ||
+          typeof tag.nameCustomized === 'boolean') &&
         (tag.color === 'none' || TASK_TAG_COLORS.includes(tag.color)) &&
         typeof tag.revision === 'number' &&
         (tag.sortOrder == null || (Number.isInteger(tag.sortOrder) && tag.sortOrder >= 0)) &&
@@ -138,7 +145,8 @@ export function reconcileTaskTags(
 /** Association/order changes advance the version without changing the edit baseline. */
 export function taskTagEditRevision(editing: TaskTag, catalog: readonly TaskTag[]): number {
   const latest = catalog.find((tag) => tag.id === editing.id);
-  return latest && latest.name === editing.name && latest.color === editing.color
+  return latest && latest.name === editing.name && latest.color === editing.color &&
+    !!latest.nameCustomized === !!editing.nameCustomized
     ? Math.max(editing.revision, latest.revision)
     : editing.revision;
 }

@@ -61,6 +61,27 @@ describe('task label tools', () => {
       expectedOrder: ['red', 'blue'],
     });
   });
+  it("distinguishes an explicit canonical rename from recoloring", async () => {
+    const h = setup();
+    await h.call("update_task_tag", {
+      tag_id: "preset:work",
+      revision: 1,
+      name: "Work",
+    });
+    expect(h.execute).toHaveBeenLastCalledWith(
+      "a",
+      expect.objectContaining({ name: "Work", nameCustomized: true }),
+    );
+    await h.call("update_task_tag", {
+      tag_id: "preset:work",
+      revision: 2,
+      color: "blue",
+    });
+    expect(h.execute).toHaveBeenLastCalledWith(
+      "a",
+      expect.objectContaining({ name: undefined, nameCustomized: undefined }),
+    );
+  });
   it('requires a signed caller-bound delete preview and passes concurrency preconditions', async () => {
     const h = setup();
     const preview = await h.call('delete_task_tag', { tag_id: 'red' });

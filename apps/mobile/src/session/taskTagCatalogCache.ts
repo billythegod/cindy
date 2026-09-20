@@ -28,6 +28,7 @@ export function sameTaskTags(a: readonly TaskTag[], b: readonly TaskTag[]) {
       return (
         tag.id === other.id &&
         tag.name === other.name &&
+        !!tag.nameCustomized === !!other.nameCustomized &&
         tag.color === other.color &&
         tag.revision === other.revision &&
         tag.sortOrder === other.sortOrder &&

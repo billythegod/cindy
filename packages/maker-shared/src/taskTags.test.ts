@@ -21,9 +21,15 @@ it('keeps default names localized after recoloring without translating custom na
     };
     expect(taskTagNameKey(original)).toBe(`taskTags.${color}`);
     expect(taskTagNameKey({ ...original, name: 'My label' })).toBeNull();
+    expect(taskTagNameKey({ ...original, nameCustomized: true })).toBeNull();
     expect(taskTagNameKey({ ...original, id: 'custom' })).toBeNull();
   }
   for (const preset of TASK_TAG_PRESETS) {
+    expect(taskTagNameKey({ ...tag(preset.id),
+        name: preset.name,
+        nameCustomized: true,
+      }),
+    ).toBeNull();
     expect(taskTagNameKey({ ...tag(preset.id, 'blue'), name: preset.name })).toBe(
       `taskTags.${preset.key}`,
     );
@@ -37,6 +43,11 @@ it('advances edit revisions only while the editable baseline remains unchanged',
   expect(taskTagEditRevision(editing, [{ ...editing, revision: 5, name: 'Other' }])).toBe(3);
   expect(taskTagEditRevision(editing, [{ ...editing, revision: 5, color: 'blue' }])).toBe(3);
   expect(taskTagEditRevision(editing, [])).toBe(3);
+  expect(
+    taskTagEditRevision(editing, [
+      { ...editing, revision: 5, nameCustomized: true },
+    ]),
+  ).toBe(3);
 });
 describe('task tag wire and cache projection', () => {
   it('rejects invalid colors and caps malformed cache growth', () => {

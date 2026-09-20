@@ -261,6 +261,7 @@ it.each([false, true])(
       tagId: tag.id,
       revision: recolored ? 1 : 2,
       name: "My draft",
+      nameCustomized: true,
       color: "red",
     });
   },

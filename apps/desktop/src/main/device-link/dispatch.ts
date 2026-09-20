@@ -1,6 +1,10 @@
 import { executeTaskTags, TASK_TAG_CHANNEL } from '../localDb/ipc/taskTags.js';
 import type { TaskTagRequest } from '@cindy/maker-shared';
-import { FILE_PEER_CHANNEL } from '@cindy/device-link';
+import {
+  FILE_PEER_CHANNEL,
+  encodeSessionTagCatalog,
+  decodeSessionTagCatalog,
+} from '@cindy/device-link';
 import { requestFilePeer, stopFilePeers } from './filePeer';
 import { normalizeProviderOrder } from "../../shared/providerOrder.js";
 /**
@@ -2852,7 +2856,13 @@ async function authorizeRemoteBotResult(
     if (!result.ok) return result;
     try {
       await assertRemoteBotInvocationAllowed(args ?? [], channel);
-      return { ok: true, result: await projectRemoteSessionResult(channel ?? '', result.result) };
+      return {
+        ok: true,
+        result: await projectRemoteSessionResult(
+          channel ?? '',
+          decodeSessionTagCatalog(channel, result.result),
+        ),
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (isDbWorkerOverloadedError(message) && isCompletedInvokeRetryableReadChannel(channel)) {
@@ -2897,7 +2907,17 @@ function sendInvokeResultSafe(
   fingerprint?: string,
 ): boolean {
   const key = `${src}\u0000${requestId}`;
-  const normalized = sanitizeMessageInvokeResult(normalizeInvokeResultForWire(result), channel);
+  const sanitized = sanitizeMessageInvokeResult(normalizeInvokeResultForWire(result), channel);
+  const normalized = sanitized.ok && channel === 'local-db:sessions:list'
+    ? {
+        ...sanitized,
+        result: encodeSessionTagCatalog(
+          channel,
+          args,
+          decodeSessionTagCatalog(channel, sanitized.result),
+        ),
+      }
+    : sanitized;
   const proactive =
     subscriptions.controllerSupports(src, DEVICE_LINK_CAPABILITY_COMPACT_MESSAGE_HISTORY_V1) &&
     channel === 'local-db:messages:list' && normalized.ok && Array.isArray(normalized.result)

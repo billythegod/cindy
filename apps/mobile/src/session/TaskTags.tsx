@@ -364,6 +364,7 @@ export function TaskTagsPanel({
   }, [expanded, target]);
   const [editing, setEditing] = useState<TaskTag | null>(null);
   const [name, setName] = useState('');
+  const editName = useRef('');
   const [color, setColor] = useState<TaskTagColor>('blue');
   const [pendingAttach, setPendingAttach] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -508,7 +509,8 @@ export function TaskTagsPanel({
     cancelDrag();
     setFormOpen(true);
     setEditing(tag);
-    setName(tag ? tagName(tag, t) : '');
+    editName.current = tag ? tagName(tag, t) : '';
+    setName(editName.current);
     setColor(tag?.color === 'none' ? 'white' : (tag?.color ?? 'blue'));
     setDeletion(undefined);
     requestAnimationFrame(() => {
@@ -1153,7 +1155,9 @@ export function TaskTagsPanel({
                                 action: 'update',
                                 tagId: editing.id,
                                 revision: taskTagEditRevision(editing, latestCatalog.current),
-                                name: name === tagName(editing, t) ? editing.name : name,
+                                name: name === editName.current ? undefined : name,
+                                nameCustomized:
+                                  name === editName.current ? undefined : true,
                                 color:
                                   editing.color === 'none' &&
                                   color === 'white' &&

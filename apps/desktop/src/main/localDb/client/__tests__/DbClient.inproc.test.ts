@@ -48,6 +48,7 @@ CREATE TABLE embedding_jobs (
 CREATE TABLE task_tags (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
+  name_customized INTEGER NOT NULL DEFAULT 0,
   color TEXT NOT NULL,
   favorite_order INTEGER,
   sort_order INTEGER,

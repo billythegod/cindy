@@ -4,11 +4,11 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { TaskTagEditor, TaskTagMenuSection } from '../TaskTags';
 import { TASK_TAG_COLORS } from '@cindy/maker-shared';
-import { emitTaskTagCatalog } from '../taskTagEvents';
+import { emitTaskTagCatalog, resetTaskTagCatalogCache } from '../taskTagEvents';
 import type { Session } from '@/lib/ccAgent.types';
 
 vi.mock('@/features/cc-agent/lib/remoteSessionWriteGuard', () => ({
-  isRemoteSessionWriteBlocked: () => false,
+  isRemoteSessionWriteBlocked: (s: Session) => s.deviceLinkConnectionStatus === 'disconnected',
 }));
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -18,6 +18,7 @@ vi.mock('react-i18next', () => ({
           'taskTags.title': 'Labels',
           'taskTags.red': 'Red',
           'taskTags.green': 'Green',
+          'taskTags.presetWork': '工作',
           'taskTags.more': 'More labels',
           'taskTags.addLabel': `Add ${options?.name}`,
           'taskTags.removeLabel': `Remove ${options?.name}`,
@@ -26,7 +27,42 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetTaskTagCatalogCache();
+});
+it('treats 工作 to Work as an explicit rename, but not an unchanged save', async () => {
+  const tag = { id: 'preset:work', name: 'Work', color: 'blue', favoriteOrder: null, revision: 1 };
+  const execute = vi.fn(async () => ({ tags: [tag], sessions: [] }));
+  Object.defineProperty(window, 'electronAPI', { configurable: true, value: { localDb: { taskTags: { execute } } } });
+  render(<TaskTagEditor session={{ id: 'task', tags: [] } as unknown as Session} onClose={() => {}} />);
+  fireEvent.doubleClick(await screen.findByRole('button', { name: '工作' }));
+  fireEvent.click(screen.getByRole('button', { name: 'taskTags.save' }));
+  await waitFor(() => expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'update', name: undefined, nameCustomized: undefined })));
+  fireEvent.doubleClick(await screen.findByRole('button', { name: '工作' }));
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Work' } });
+  fireEvent.click(screen.getByRole('button', { name: 'taskTags.save' }));
+  await waitFor(() => expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'update', name: 'Work', nameCustomized: true })));
+});
+
+it.each([false, true])('ignores a previous device mutation after switching tasks (reject: %s)', async (reject) => {
+  const tag = (name: string) => ({ id: name, name, color: 'blue', favoriteOrder: null, revision: 1 });
+  let finish!: (value: unknown) => void;
+  let fail!: (error: Error) => void;
+  const invoke = vi.fn(async (device: string, _channel: string, [request]: [{ action: string }]) => request.action === 'get'
+    ? { tags: [tag(device)], sessions: [] }
+    : new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+  Object.defineProperty(window, 'electronAPI', { configurable: true, value: { deviceLink: { invoke } } });
+  const session = (device: string) => ({ id: device, deviceLinkDeviceId: device, tags: [] } as unknown as Session);
+  const view = render(<TaskTagMenuSection session={session('A')} onMore={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'A' }));
+  view.rerender(<TaskTagMenuSection session={session('B')} onMore={() => {}} />);
+  await screen.findByRole('button', { name: 'B' });
+  await act(async () => { if (reject) fail(new Error('old failure')); else finish({ tags: [tag('A')], sessions: [] }); });
+  expect(screen.queryByRole('button', { name: 'A' })).toBeNull();
+  expect(screen.queryByText('taskTags.failed')).toBeNull();
+  expect(screen.getByRole('button', { name: 'B' })).toBeTruthy();
+});
 it.each([false, true])(
   'preserves drafts across catalog pushes (external rename: %s)',
   async (renamed) => {
@@ -39,12 +75,12 @@ it.each([false, true])(
     };
     const execute = vi.fn(async () => ({ tags: [tag], sessions: [] }));
     Object.defineProperty(window, 'electronAPI', {
-      configurable: true,
-      value: { localDb: { taskTags: { execute } } },
-    });
+    configurable: true,
+    value: { localDb: { taskTags: { execute } } },
+  });
     render(
-      <TaskTagEditor session={{ id: 'task', tags: [] } as unknown as Session} onClose={() => {}} />,
-    );
+    <TaskTagEditor session={{ id: 'task', tags: [] } as unknown as Session} onClose={() => {}} />,
+  );
     fireEvent.doubleClick(await screen.findByRole('button', { name: 'Work' }));
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My draft' } });
     act(() =>
@@ -60,6 +96,7 @@ it.each([false, true])(
         tagId: tag.id,
         revision: renamed ? 1 : 2,
         name: 'My draft',
+        nameCustomized: true,
         color: 'red',
       }),
     );
@@ -254,6 +291,7 @@ it('lets an old host rename an existing uncolored tag without requiring a new co
       tagId: 'old',
       revision: 1,
       name: 'Renamed',
+      nameCustomized: true,
       color: undefined,
     }),
   );
@@ -282,4 +320,40 @@ it.each(['menu', 'editor'])('retries a failed %s load without reopening', async 
   fireEvent.click(await screen.findByRole('button', { name: 'taskTags.retry' }));
   await screen.findByRole('button', { name: 'Recovered' });
   expect(execute).toHaveBeenCalledTimes(2);
+});
+
+it('opens the complete cached directory offline after menu unmount, with writes disabled', async () => {
+  const tags = Array.from({ length: 12 }, (_, i) => ({
+    id: `tag-${i}`,
+    name: `Label ${i}`,
+    color: 'blue' as const,
+    favoriteOrder: null,
+    sortOrder: i,
+    revision: 1,
+  }));
+  const invoke = vi.fn(async () => ({ tags, sessions: [] }));
+  Object.defineProperty(window, 'electronAPI', {
+    configurable: true,
+    value: { deviceLink: { invoke } },
+  });
+  const session = {
+    id: 'task',
+    deviceLinkDeviceId: 'remote',
+    deviceLinkConnectionStatus: 'connected',
+    tags: [],
+  } as unknown as Session;
+  const view = render(<TaskTagMenuSection session={session} onMore={() => {}} />);
+  await screen.findByRole('button', { name: 'Label 0' });
+  view.unmount();
+  const offline = { ...session, deviceLinkConnectionStatus: 'disconnected' } as Session;
+  const more = vi.fn();
+  const menu = render(<TaskTagMenuSection session={offline} onMore={more} />);
+  fireEvent.click(screen.getByRole('button', { name: 'More labels' }));
+  expect(more).toHaveBeenCalledOnce();
+  menu.unmount();
+  render(<TaskTagEditor session={offline} onClose={() => {}} />);
+  expect((screen.getByRole('button', { name: 'Label 11' }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
+  expect(invoke).toHaveBeenCalledTimes(1);
 });

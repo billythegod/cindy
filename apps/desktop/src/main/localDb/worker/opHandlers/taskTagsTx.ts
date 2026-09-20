@@ -40,9 +40,13 @@ export function runTaskTagsTransaction(db: Database.Database, raw: unknown): Tas
   const allTags = () =>
     db
       .prepare(
-        'SELECT id,name,color,favorite_order AS favoriteOrder,sort_order AS sortOrder,revision FROM task_tags ORDER BY sort_order IS NULL,sort_order,favorite_order IS NULL,favorite_order,name,id',
+        'SELECT id,name,name_customized AS nameCustomized,color,favorite_order AS favoriteOrder,sort_order AS sortOrder,revision FROM task_tags ORDER BY sort_order IS NULL,sort_order,favorite_order IS NULL,favorite_order,name,id',
       )
-      .all() as TaskTag[];
+      .all()
+      .map((row) => ({
+        ...(row as TaskTag),
+        nameCustomized: !!(row as TaskTag).nameCustomized,
+      })) as TaskTag[];
   const tag = (id: string) => {
     const found = allTags().find((t) => t.id === id);
     return found ?? fail('NOT_FOUND');
@@ -62,9 +66,13 @@ export function runTaskTagsTransaction(db: Database.Database, raw: unknown): Tas
       sessionId,
       tags: db
         .prepare(
-          'SELECT t.id,t.name,t.color,t.favorite_order AS favoriteOrder,t.sort_order AS sortOrder,t.revision FROM task_tags t JOIN session_task_tags s ON s.tag_id=t.id WHERE s.session_id=? ORDER BY t.sort_order IS NULL,t.sort_order,t.favorite_order IS NULL,t.favorite_order,t.name,t.id',
+          'SELECT t.id,t.name,t.name_customized AS nameCustomized,t.color,t.favorite_order AS favoriteOrder,t.sort_order AS sortOrder,t.revision FROM task_tags t JOIN session_task_tags s ON s.tag_id=t.id WHERE s.session_id=? ORDER BY t.sort_order IS NULL,t.sort_order,t.favorite_order IS NULL,t.favorite_order,t.name,t.id',
         )
-        .all(sessionId) as TaskTag[],
+        .all(sessionId)
+        .map((row) => ({
+          ...(row as TaskTag),
+          nameCustomized: !!(row as TaskTag).nameCustomized,
+        })) as TaskTag[],
     }));
   return db.transaction(() => {
     if (!body || typeof body !== 'object') return fail('INVALID_PARAMS');
@@ -134,6 +142,11 @@ export function runTaskTagsTransaction(db: Database.Database, raw: unknown): Tas
         if (body.revision !== current.revision) return fail('CONFLICT');
         const name = body.name === undefined ? current.name : text(body.name, 80);
         if (
+          body.nameCustomized !== undefined &&
+          (body.nameCustomized !== true || body.name === undefined)
+        )
+          return fail('INVALID_PARAMS');
+        if (
           allTags().some(
             (t) => t.id !== id && t.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
           )
@@ -150,8 +163,14 @@ export function runTaskTagsTransaction(db: Database.Database, raw: unknown): Tas
           order = Math.max(-1, ...favorites.map((t) => t.favoriteOrder!)) + 1;
         }
         db.prepare(
-          'UPDATE task_tags SET name=?,color=?,favorite_order=?,revision=revision+1 WHERE id=?',
-        ).run(name, nextColor, order, id);
+          'UPDATE task_tags SET name=?,name_customized=?,color=?,favorite_order=?,revision=revision+1 WHERE id=?',
+        ).run(
+          name,
+          Number(current.nameCustomized || body.nameCustomized || name !== current.name),
+          nextColor,
+          order,
+          id,
+        );
         break;
       }
       case 'previewDelete': {

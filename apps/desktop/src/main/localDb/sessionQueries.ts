@@ -85,7 +85,7 @@ function sessionReadSelection() {
   return {
     session: sessions,
     tagsJson:
-      sql<string>`(SELECT coalesce(json_group_array(json_object('id',t.id,'name',t.name,'color',t.color,'favoriteOrder',t.favorite_order,'sortOrder',t.sort_order,'revision',t.revision)), '[]') FROM task_tags t JOIN session_task_tags st ON st.tag_id=t.id WHERE st.session_id=${OUTER_SESSION_ID_SQL})`.as(
+      sql<string>`(SELECT coalesce(json_group_array(json_object('id',t.id,'name',t.name,'nameCustomized',json(CASE WHEN t.name_customized THEN 'true' ELSE 'false' END),'color',t.color,'favoriteOrder',t.favorite_order,'sortOrder',t.sort_order,'revision',t.revision)), '[]') FROM task_tags t JOIN session_task_tags st ON st.tag_id=t.id WHERE st.session_id=${OUTER_SESSION_ID_SQL})`.as(
         'tags_json',
       ),
     messageCount: SESSION_MESSAGE_COUNT_SQL,

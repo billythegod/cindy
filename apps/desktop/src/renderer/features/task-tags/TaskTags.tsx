@@ -1,5 +1,5 @@
 import './taskTags.css';
-import { subscribeTaskTagCatalog } from './taskTagEvents';
+import { subscribeTaskTagCatalog, readTaskTagCatalog, captureTaskTagScope } from './taskTagEvents';
 import { useEffect, useLayoutEffect, useState, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Check, X, MoreHorizontal, Plus, Pencil, GripVertical, ArrowLeft } from 'lucide-react';
@@ -58,17 +58,32 @@ export function TaskTagDots({ tags = [] }: { tags?: TaskTag[] }) {
 }
 async function execute(session: Session, request: TaskTagRequest): Promise<TaskTagResult> {
   if (isRemoteSessionWriteBlocked(session)) throw new Error('OFFLINE');
-  return session.deviceLinkDeviceId
+  const scope = captureTaskTagScope(session.deviceLinkDeviceId);
+  const result = await (session.deviceLinkDeviceId
     ? ((await window.electronAPI.deviceLink.invoke(
         session.deviceLinkDeviceId,
         'local-db:task-tags:execute',
         [request],
       )) as TaskTagResult)
-    : window.electronAPI.localDb.taskTags.execute(request);
+    : window.electronAPI.localDb.taskTags.execute(request));
+  scope.store(result.tags, result.supportedColors);
+  const catalog = scope.current() ? readTaskTagCatalog(session.deviceLinkDeviceId) : undefined;
+  return catalog
+    ? {
+        ...result,
+        tags: catalog.tags,
+        sessions: result.sessions.map(row => ({ ...row, tags: reconcileTaskTags(row.tags, catalog.tags) })),
+      }
+    : result;
 }
 export function TaskTagMenuSection({ session, onMore }: { session: Session; onMore: () => void }) {
   const { t } = useTranslation();
-  const [tags, setTags] = useState<TaskTag[]>([]);
+  const target = JSON.stringify([session.deviceLinkDeviceId, session.id]);
+  const currentTarget = useRef(target);
+  currentTarget.current = target;
+  const [tags, setTags] = useState<TaskTag[]>(
+    () => readTaskTagCatalog(session.deviceLinkDeviceId)?.tags ?? [],
+  );
   const [reload, setReload] = useState(0);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [selected, setSelected] = useState(session.tags ?? []);
@@ -102,11 +117,17 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
     let alive = true;
     const catalogAtStart = catalogGeneration.current;
     const selectionAtStart = selectionGeneration.current;
-    if (blocked) return;
+    const scope = captureTaskTagScope(session.deviceLinkDeviceId);
+    setTags(readTaskTagCatalog(session.deviceLinkDeviceId)?.tags ?? []);
+    if (blocked) {
+      setBusy(false);
+      return;
+    }
     setError('');
     setBusy(true);
     execute(session, { action: 'get', sessionIds: [session.id] })
       .then((r) => {
+        if (!scope.current()) return;
         if (alive && catalogAtStart === catalogGeneration.current) setTags(r.tags);
         if (alive && selectionAtStart === selectionGeneration.current) {
           const row = r.sessions.find((item) => item.sessionId === session.id);
@@ -114,7 +135,7 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
         }
       })
       .catch((e) => {
-        if (alive) setError(taskTagErrorKey(e, 'get'));
+        if (alive && scope.current()) setError(taskTagErrorKey(e, 'get'));
       })
       .finally(() => {
         if (alive) setBusy(false);
@@ -173,20 +194,21 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
                     setError('');
                     const catalogAtStart = catalogGeneration.current;
                     const selectionAtStart = selectionGeneration.current;
+                    const scope = captureTaskTagScope(session.deviceLinkDeviceId);
                     try {
                       const r = await execute(session, {
                         action: selected.some((v) => v.id === tag.id) ? 'detach' : 'attach',
                         sessionIds: [session.id],
                         tagIds: [tag.id],
                       });
-                      if (!alive.current) return null;
+                      if (!alive.current || !scope.current() || currentTarget.current !== target) return null;
                       if (catalogAtStart === catalogGeneration.current) setTags(r.tags);
                       if (selectionAtStart === selectionGeneration.current)
                         setSelected(r.sessions[0]?.tags ?? []);
                     } catch (e) {
-                      setError(taskTagErrorKey(e, 'attach'));
+                      if (alive.current && scope.current() && currentTarget.current === target) setError(taskTagErrorKey(e, 'attach'));
                     } finally {
-                      setBusy(false);
+                      if (alive.current && scope.current() && currentTarget.current === target) setBusy(false);
                     }
                   }}
                 >
@@ -218,7 +240,9 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
             className="group/tag flex h-7 w-6 shrink-0 items-center justify-center rounded-full focus-visible:outline disabled:opacity-40"
             aria-label={t('taskTags.more')}
             title={t('taskTags.more')}
-            disabled={blocked || error === 'unavailable'}
+            disabled={
+              (blocked && !readTaskTagCatalog(session.deviceLinkDeviceId)) || error === 'unavailable'
+            }
             onClick={onMore}
           >
             <span className="flex h-4 w-4 items-center justify-center rounded-full border-[0.5px] border-[var(--border-default)] text-[var(--text-secondary)] transition-transform duration-[var(--motion-instant)] ease-[var(--motion-ease-move)] motion-reduce:transition-none group-hover/tag:scale-150 group-focus-visible/tag:scale-150">
@@ -247,7 +271,9 @@ export function TaskTagMenuSection({ session, onMore }: { session: Session; onMo
 }
 export function TaskTagEditor({ session, onClose }: { session: Session; onClose: () => void }) {
   const { t } = useTranslation();
-  const [tags, setTags] = useState<TaskTag[]>([]);
+  const [tags, setTags] = useState<TaskTag[]>(
+    () => readTaskTagCatalog(session.deviceLinkDeviceId)?.tags ?? [],
+  );
   const [selected, setSelected] = useState<TaskTag[]>(session.tags ?? []);
   const requestGeneration = useRef(0);
   const selectionGeneration = useRef(0);
@@ -378,10 +404,13 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
   const nameInput = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState<TaskTag | null>(null);
   const [name, setName] = useState('');
+  const editName = useRef('');
   const [color, setColor] = useState<TaskTagColor>('blue');
   const [formOpen, setFormOpen] = useState(false);
   const [supportedColors, setSupportedColors] = useState<readonly TaskTagColor[]>(
-    TASK_TAG_COLORS.slice(0, 7),
+    () =>
+      readTaskTagCatalog(session.deviceLinkDeviceId)?.supportedColors ??
+      TASK_TAG_COLORS.slice(0, 7),
   );
   const clickTimer = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const [pendingAttach, setPendingAttach] = useState<string | null>(null);
@@ -403,6 +432,7 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
     setSelected(session.tags ?? []);
   }, [session.tags]);
   async function run(request: TaskTagRequest) {
+    const scope = captureTaskTagScope(session.deviceLinkDeviceId);
     const generation = ++requestGeneration.current;
     const selectionAtStart = selectionGeneration.current;
     const catalogAtStart = catalogGeneration.current;
@@ -410,7 +440,7 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
     setError('');
     try {
       const r = await execute(session, request);
-      if (!alive.current || generation !== requestGeneration.current) return null;
+      if (!alive.current || !scope.current() || generation !== requestGeneration.current) return null;
       if (catalogAtStart === catalogGeneration.current) {
         latestCatalog.current = r.tags;
         setTags(r.tags);
@@ -426,14 +456,18 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
       }
       return r;
     } catch (e) {
-      if (!alive.current || generation !== requestGeneration.current) return null;
+      if (!alive.current || !scope.current() || generation !== requestGeneration.current) return null;
       setError(taskTagErrorKey(e, request.action));
       return null;
     } finally {
-      if (alive.current && generation === requestGeneration.current) setBusy(false);
+      if (alive.current && scope.current() && generation === requestGeneration.current) setBusy(false);
     }
   }
   useEffect(() => {
+    const cached = readTaskTagCatalog(session.deviceLinkDeviceId);
+    latestCatalog.current = cached?.tags ?? [];
+    setTags(cached?.tags ?? []);
+    setSupportedColors(cached?.supportedColors ?? TASK_TAG_COLORS.slice(0, 7));
     if (!blocked) void run({ action: 'get', sessionIds: [session.id] });
     else setBusy(false);
     return () => {
@@ -450,7 +484,8 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
     if (tag) clearTimeout(clickTimer.current.get(tag.id));
     setFormOpen(true);
     setEditing(tag);
-    setName(tag ? tagName(tag, t) : '');
+    editName.current = tag ? tagName(tag, t) : '';
+    setName(editName.current);
     setColor(tag?.color === 'none' ? 'white' : (tag?.color ?? 'blue'));
     setDeletion(undefined);
     requestAnimationFrame(() => nameInput.current?.focus());
@@ -705,7 +740,8 @@ export function TaskTagEditor({ session, onClose }: { session: Session; onClose:
                         action: 'update',
                         tagId: editing.id,
                         revision: taskTagEditRevision(editing, latestCatalog.current),
-                        name: name === tagName(editing, t) ? editing.name : name,
+                        name: name === editName.current ? undefined : name,
+                        nameCustomized: name === editName.current ? undefined : true,
                         color:
                           editing.color === 'none' &&
                           color === 'white' &&

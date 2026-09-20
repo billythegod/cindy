@@ -31,8 +31,44 @@ describe('task labels transactions', () => {
       ),
     );
   });
+  beforeEach(() =>
+    db.exec(
+      readFileSync(
+        new URL('../../../../drizzle/0113_grey_cannonball.sql', import.meta.url),
+        'utf8',
+      ),
+    ),
+  );
   afterEach(() => db.close());
   const run = (input: unknown) => runTaskTagsTransaction(db, input);
+  it('persists explicit same-canonical rename while preserving legacy recoloring', () => {
+    let red = run({
+      action: 'update',
+      tagId: 'default:red',
+      revision: 1,
+      name: 'Red',
+      color: 'blue',
+    }).tags.find((t) => t.id === 'default:red')!;
+    expect(red.nameCustomized).toBe(false);
+    red = run({
+      action: 'update',
+      tagId: red.id,
+      revision: red.revision,
+      name: 'Red',
+      nameCustomized: true,
+    }).tags.find((t) => t.id === red.id)!;
+    expect(red.nameCustomized).toBe(true);
+    run({ action: 'update', tagId: red.id, revision: red.revision, color: 'green' });
+    run({ action: 'attach', sessionIds: ['a'], tagIds: [red.id] });
+    expect(run({ action: 'get', sessionIds: ['a'] }).sessions[0].tags[0]).toMatchObject({
+      name: 'Red',
+      nameCustomized: true,
+      color: 'green',
+    });
+    expect(() =>
+      run({ action: 'update', tagId: red.id, revision: 4, nameCustomized: true }),
+    ).toThrow();
+  });
   it('seeds exactly seven favorites, preserves unrelated tags and is idempotent', () => {
     expect(run({ action: 'list' }).tags).toHaveLength(7);
     run({ action: 'attach', sessionIds: ['a'], tagIds: ['default:red'] });

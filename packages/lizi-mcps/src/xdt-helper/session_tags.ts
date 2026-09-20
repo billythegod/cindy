@@ -115,6 +115,7 @@ export function registerSessionTagTools(
         tagId: a.tag_id,
         revision: a.revision,
         name: a.name,
+        nameCustomized: a.name === undefined ? undefined : true,
         color: a.color,
       }),
   );
