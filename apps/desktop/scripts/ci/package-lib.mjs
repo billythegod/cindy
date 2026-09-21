@@ -17,6 +17,14 @@ export const SUPPORTED_PLATFORMS = Object.freeze(['win32', 'darwin', 'linux']);
 export const SUPPORTED_REGIONS = Object.freeze(['cn', 'global', 'dev']);
 const VERSION_BUMP_KINDS = Object.freeze(['major', 'minor', 'patch']);
 
+/** Forge compiles Main and Renderer together; the default ~4 GiB heap is too small. */
+export function packageNodeOptions(env) {
+  const existing = env.NODE_OPTIONS?.trim() ?? '';
+  return /(?:^|\s)--max[-_]old[-_]space[-_]size(?:=|\s)/.test(existing)
+    ? existing
+    : [existing, '--max-old-space-size=8192'].filter(Boolean).join(' ');
+}
+
 export const PLATFORM_ARCHS = Object.freeze({
   win32: ['x64'],
   darwin: ['arm64', 'x64'],

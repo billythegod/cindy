@@ -6,13 +6,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 import {
   PLATFORM_ARCHS,
   VERSIONLESS_VERSION,
   debianArch,
   parsePackageArgs,
+  packageNodeOptions,
 } from '../../apps/desktop/scripts/ci/package-lib.mjs';
+
+test('the shared package environment gives Forge an 8 GiB heap without changing explicit limits', () => {
+  const clean = { NODE_OPTIONS: '--trace-warnings' };
+  const options = packageNodeOptions(clean);
+  const limit = Number(execFileSync(process.execPath,
+    ['-e', 'console.log(require("node:v8").getHeapStatistics().heap_size_limit)'],
+    { env: { ...process.env, NODE_OPTIONS: options }, encoding: 'utf8' },
+  ));
+  assert.ok(limit >= 8192 * 1024 * 1024);
+  assert.equal(clean.NODE_OPTIONS, '--trace-warnings');
+  for (const value of ['--max-old-space-size=4096', '--max_old_space_size=6144', '--max-old-space-size 12288'])
+    assert.equal(packageNodeOptions({ NODE_OPTIONS: value }), value);
+});
 
 test('Desktop 默认版本与 versionless 打包哨兵一致', () => {
   const desktopPackageJson = JSON.parse(fs.readFileSync(

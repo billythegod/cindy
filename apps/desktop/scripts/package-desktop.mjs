@@ -82,6 +82,7 @@ import {
   artifactBaseName,
   buildBuildInfo,
   debianArch,
+  packageNodeOptions,
 } from './ci/package-lib.mjs';
 import { applyMacSigningConfigToEnv, applyReleaseCdnBaseUrlToEnv } from './ci/release-regions.mjs';
 
@@ -186,6 +187,8 @@ function runForgeMake({ platform, arch, region, version, versionless, noSign, we
   console.log(`==> Running electron-forge make (${platform}-${arch}, region=${region})...`);
   const forgeEnv = {
     ...process.env,
+    // Shared by official and personal builds, including Make's clean child environment.
+    NODE_OPTIONS: packageNodeOptions(process.env),
     NODE_ENV: 'production',
     // 烘焙面只含 region + 端点清单自举基址,按 region 二选一。
     ...desktopClientBuildEnv({ allowEnvOverride: false, authRegion: region }),
