@@ -53,6 +53,21 @@ function workerKey(worker: Worker, index: number): string {
 // 显示成绿色 Done。记下产生未读的状态,提示语义才跟着来源走。
 const unreadWorkers = new Map<string, string>();
 const lastWorkerStatus = new Map<string, string>();
+/** 当前 store 归属的账号。换账号 / 登出即整体作废,见 resetWorkerAttentionScope。 */
+let attentionScope: string | null = null;
+
+/**
+ * 未读与已读状态属于**当前登录账号**。module 级 store 会跨登出与进程内换号存活,
+ * 而 key 只含 Lead / Worker id —— 同一台被控 Desktop 的另一账号可能出现相同 id,
+ * 从而继承上一个账号的未读/已读。切换作用域时整体清空,不做跨账号保留。
+ */
+function resetWorkerAttentionScope(scope: string): boolean {
+  if (attentionScope === scope) return false;
+  attentionScope = scope;
+  unreadWorkers.clear();
+  lastWorkerStatus.clear();
+  return true;
+}
 
 function attentionKey(leadSessionId: string, key: string): string {
   return `${leadSessionId}::${key}`;
@@ -99,10 +114,12 @@ function workersFrom(value: unknown): Worker[] {
   return [];
 }
 
-export function OrcaWorkerStatusCard({ leadSessionId, deviceId, maker, onOpenWorker }: {
+export function OrcaWorkerStatusCard({ leadSessionId, deviceId, accountScope, maker, onOpenWorker }: {
   leadSessionId: string;
   /** 被控设备 id;用于跟踪该 peer 的在线代次(见下方 unsupported 复位)。 */
   deviceId: string;
+  /** 当前登录账号的稳定身份;未读/已读状态按它隔离,登出或换号即作废。 */
+  accountScope: string;
   maker: MobileMakerTransport;
   /**
    * 打开该 Worker 的会话;只读口径由 collaboration.ts 按 orcaRole 判定。
@@ -133,6 +150,8 @@ export function OrcaWorkerStatusCard({ leadSessionId, deviceId, maker, onOpenWor
   }, []);
   // 未读只存在于 module 级 store(见上),这里只用一个计数器触发重渲染。
   const [, bumpAttention] = useReducer((value: number) => value + 1, 0);
+  // 渲染期同步作废:换账号后首帧就不能沿用上一个账号的未读,靠 effect 事后清会闪一帧。
+  resetWorkerAttentionScope(accountScope);
   // 换 Lead 时收起列表。快照不在此处清 —— 它由上面的 lead 比对同步失效,不依赖
   // effect 事后补刀。未读同样**不**重置:契约要求切走 / 切回不得让同一轮 done
   // 重新变未读。

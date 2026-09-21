@@ -96,6 +96,7 @@ async function render(workers: unknown[], onOpenWorker?: (id: string) => boolean
     root.render(
       createElement(OrcaWorkerStatusCard as any, {
         leadSessionId: lead,
+        accountScope: 'acct-1',
         deviceId: 'dev-1',
         maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
         onOpenWorker,
@@ -285,6 +286,7 @@ it('CHANNEL_NOT_ALLOWED 是永久兼容结果:只探一次即停轮询', async (
     root.render(
       createElement(OrcaWorkerStatusCard as any, {
         leadSessionId: lead,
+        accountScope: 'acct-1',
         deviceId: 'dev-1',
         maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
       }),
@@ -307,6 +309,7 @@ it('瞬时失败仍继续轮询,并在恢复后显示', async () => {
     root.render(
       createElement(OrcaWorkerStatusCard as any, {
         leadSessionId: lead,
+        accountScope: 'acct-1',
         deviceId: 'dev-1',
         maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
       }),
@@ -350,6 +353,7 @@ it('device-link 重连(connectionEpoch 变化)后重新探测通道', async () =
   const render1 = () => root.render(
     createElement(OrcaWorkerStatusCard as any, {
       leadSessionId: lead,
+        accountScope: 'acct-1',
       deviceId: 'dev-1',
       maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
     }),
@@ -378,6 +382,7 @@ it('仅被控端重启(connectionEpoch 不变)也必须重探通道', async () =
   const draw = () => root.render(
     createElement(OrcaWorkerStatusCard as any, {
       leadSessionId: lead,
+        accountScope: 'acct-1',
       deviceId: 'dev-1',
       maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
     }),
@@ -412,6 +417,7 @@ it('peer 确定离线时暂停轮询,不再每 5 秒撞 DEVICE_OFFLINE', async (
     root.render(
       createElement(OrcaWorkerStatusCard as any, {
         leadSessionId: lead,
+        accountScope: 'acct-1',
         deviceId: 'dev-1',
         maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
       }),
@@ -427,6 +433,7 @@ it('peer 回到在线后恢复轮询', async () => {
   const draw = () => root.render(
     createElement(OrcaWorkerStatusCard as any, {
       leadSessionId: lead,
+        accountScope: 'acct-1',
       deviceId: 'dev-1',
       maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
     }),
@@ -472,6 +479,7 @@ it('relay 掉线时暂停轮询,即便逐设备 availability 仍停在 true', as
     root.render(
       createElement(OrcaWorkerStatusCard as any, {
         leadSessionId: lead,
+        accountScope: 'acct-1',
         deviceId: 'dev-1',
         maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
       }),
@@ -487,6 +495,7 @@ it('relay 恢复在线后继续轮询', async () => {
   const draw = () => root.render(
     createElement(OrcaWorkerStatusCard as any, {
       leadSessionId: lead,
+        accountScope: 'acct-1',
       deviceId: 'dev-1',
       maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
     }),
@@ -513,6 +522,7 @@ it('error 未读在 worker 转回 running 后仍显示错误色,不退化成绿�
     root.render(
       createElement(OrcaWorkerStatusCard as any, {
         leadSessionId: lead,
+        accountScope: 'acct-1',
         deviceId: 'dev-1',
         maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
       }),
@@ -544,6 +554,7 @@ async function mountAndAdvance(statuses: string[]) {
     root.render(
       createElement(OrcaWorkerStatusCard as any, {
         leadSessionId: lead,
+        accountScope: 'acct-1',
         deviceId: 'dev-1',
         maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
       }),
@@ -568,4 +579,44 @@ it('未读 error 之后转 done:不降级,失败不被后来的成功掩盖', as
   await mountAndAdvance(['error', 'running', 'done']);
   expect(attentionDot()).not.toBeNull();
   expect(backgroundColorOf(attentionDot())).toBe('ERROR');
+});
+
+it('未读与已读按账号隔离:换账号不得继承上一个账号的状态', async () => {
+  vi.useFakeTimers();
+  const workers = [{ id: 'a', label: 'w', status: 'done', sessionId: 's-a' }];
+  h.listOrcaWorkersByLead.mockResolvedValue(workers);
+  const mount = async (accountScope: string) => {
+    await act(async () => {
+      root.render(
+        createElement(OrcaWorkerStatusCard as any, {
+          leadSessionId: lead,
+          accountScope,
+          deviceId: 'dev-1',
+          maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
+          onOpenWorker: () => true,
+        }),
+      );
+    });
+  };
+
+  // 账号 A:done 产生未读,查看后清除。
+  await mount('acct-A');
+  expect(attentionDot()).not.toBeNull();
+  await act(async () => toggle().click());
+  await act(async () => {
+    (container.querySelector(
+      '[data-testid="session.orcaWorkers.worker.s-a"]',
+    ) as HTMLButtonElement).click();
+  });
+  await act(async () => toggle().click());
+  expect(attentionDot()).toBeNull();
+
+  // 换到账号 B:同样的 Lead / Worker id,但不得继承 A 的「已查看」。
+  await act(async () => root.unmount());
+  container.remove();
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await mount('acct-B');
+  expect(attentionDot()).not.toBeNull();
 });
