@@ -215,6 +215,29 @@ describe('Git safety settings wiring', () => {
     expect(getGitSafetyAutoSnapshotEnabled()).toBe(false);
   });
 
+  it('does not overwrite a legacy opt-out when migration write fails', async () => {
+    localStorage.setItem('gitSafety.autoSnapshotEnabled', 'false');
+    const api = installGitSafetyApi({
+      gitSafetyGet: async () => ({
+        mode: 'existing-git',
+        autoSnapshotEnabled: true,
+        isCustomized: false,
+        defaultAutoSnapshotEnabled: true,
+      }),
+      gitSafetySet: async () => {
+        throw new Error('disk full');
+      },
+    });
+
+    await bootstrapGitSafetySettingsFromMain();
+
+    expect(api.gitSafetySet).toHaveBeenCalledWith('off');
+    expect(api.gitSafetyGet).not.toHaveBeenCalled();
+    expect(localStorage.getItem('gitSafety.mode')).toBeNull();
+    expect(localStorage.getItem('gitSafety.autoSnapshotEnabled')).toBe('false');
+    expect(getGitSafetyMode()).toBe('off');
+  });
+
   it('does not treat never-configured users as an opt-out', async () => {
     const api = installGitSafetyApi({
       gitSafetyGet: async () => ({

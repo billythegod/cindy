@@ -20,8 +20,14 @@ import {
 
 let emptyHooksDir: Promise<string> | null = null;
 
-const DRIVER_SETTING =
-  /^(filter\.[^=]+\.(?:clean|smudge|process|required)|diff\.external|diff\.[^=]+\.(?:textconv|command)|merge\.[^=]+\.driver)=/i;
+function isExecutableDriverKey(key: string): boolean {
+  return (
+    /^diff\.external$/i.test(key) ||
+    /^filter\..+\.(?:clean|smudge|process|required)$/i.test(key) ||
+    /^diff\..+\.(?:textconv|command)$/i.test(key) ||
+    /^merge\..+\.driver$/i.test(key)
+  );
+}
 
 export class SnapshotGitIsolationError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -86,7 +92,11 @@ async function discoveredDriverIsolationArgs(
 ): Promise<string[]> {
   let stdout: string;
   try {
-    ({ stdout } = await gitExec([...isolation, 'config', '--list'], cwd, opts));
+    ({ stdout } = await gitExec(
+      [...isolation, 'config', '--null', '--name-only', '--list'],
+      cwd,
+      opts,
+    ));
   } catch (cause) {
     throw new SnapshotGitIsolationError(
       'snapshot git isolation could not read repository config; aborting automatic snapshot',
@@ -94,10 +104,9 @@ async function discoveredDriverIsolationArgs(
     );
   }
   const overrides = new Map<string, string>();
-  for (const line of stdout.split('\n')) {
-    const match = line.match(DRIVER_SETTING);
-    if (!match) continue;
-    overrides.set(match[1], overrideValue(match[1]));
+  for (const key of stdout.split('\0')) {
+    if (!key || !isExecutableDriverKey(key)) continue;
+    overrides.set(key, overrideValue(key));
   }
   const args: string[] = [];
   for (const [key, value] of overrides) {

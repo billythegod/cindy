@@ -23,7 +23,7 @@ describe('isolatedGitExec', () => {
 
     expect(gitExecMock).toHaveBeenCalledTimes(2);
     const listArgs = gitExecMock.mock.calls[0][0] as string[];
-    expect(listArgs.slice(-2)).toEqual(['config', '--list']);
+    expect(listArgs.slice(-4)).toEqual(['config', '--null', '--name-only', '--list']);
     const [args, cwd] = gitExecMock.mock.calls[1] as [string[], string];
     expect(cwd).toBe('/repo');
     expect(args).toContain('core.fsmonitor=');
@@ -42,12 +42,13 @@ describe('isolatedGitExec', () => {
       if (args.includes('config')) {
         return {
           stdout: [
-            'filter.evil.process=./evil.sh',
-            'filter.evil.required=true',
-            'diff.evil.textconv=./evil.sh',
-            'filter.lfs.required=true',
-            'user.name=x',
-          ].join('\n'),
+            'filter.evil.process',
+            'filter.evil.required',
+            'filter.evil=x.process',
+            'diff.evil.textconv',
+            'filter.lfs.required',
+            'user.name',
+          ].join('\0'),
           stderr: '',
         };
       }
@@ -59,6 +60,7 @@ describe('isolatedGitExec', () => {
     const commandArgs = gitExecMock.mock.calls[1][0] as string[];
     expect(commandArgs).toContain('filter.evil.process=');
     expect(commandArgs).toContain('filter.evil.required=false');
+    expect(commandArgs).toContain('filter.evil=x.process=');
     expect(commandArgs).toContain('diff.evil.textconv=');
     expect(commandArgs).toContain('filter.lfs.required=false');
     expect(commandArgs.slice(-2)).toEqual(['add', '-A']);
@@ -77,7 +79,12 @@ describe('isolatedGitExec', () => {
       SnapshotGitIsolationError,
     );
     expect(gitExecMock).toHaveBeenCalledTimes(1);
-    expect((gitExecMock.mock.calls[0][0] as string[]).slice(-2)).toEqual(['config', '--list']);
+    expect((gitExecMock.mock.calls[0][0] as string[]).slice(-4)).toEqual([
+      'config',
+      '--null',
+      '--name-only',
+      '--list',
+    ]);
   });
 
   it('keeps isolation args ahead of the git subcommand', () => {

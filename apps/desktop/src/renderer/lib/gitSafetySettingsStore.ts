@@ -98,19 +98,22 @@ function hasExplicitLegacyOptOut(): boolean {
  * any GET can overwrite the mirror with the new default.
  */
 export async function persistLegacyGitSafetyOptOut(): Promise<boolean> {
-  try {
-    if (!hasExplicitLegacyOptOut()) return false;
-    await window.electronAPI.maker.gitSafetySet('off');
-    setGitSafetyMode('off');
-    return true;
-  } catch {
-    return false;
-  }
+  if (!hasExplicitLegacyOptOut()) return false;
+  await window.electronAPI.maker.gitSafetySet('off');
+  setGitSafetyMode('off');
+  return true;
 }
 
 export async function bootstrapGitSafetySettingsFromMain(): Promise<void> {
   try {
-    if (await persistLegacyGitSafetyOptOut()) return;
+    if (hasExplicitLegacyOptOut()) {
+      try {
+        await persistLegacyGitSafetyOptOut();
+      } catch {
+        // Keep the legacy opt-out marker; do not GET the new default.
+      }
+      return;
+    }
     const settings = await window.electronAPI.maker.gitSafetyGet();
     const mode =
       settings.mode === 'off' || settings.mode === 'existing-git' || settings.mode === 'all-projects'

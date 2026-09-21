@@ -93,11 +93,15 @@ export function useGitSafetySettings(): {
   const [isCustomized, setIsCustomized] = useState(false);
 
   const refresh = useCallback(async (isCancelled: () => boolean = () => false) => {
-    if (await persistLegacyGitSafetyOptOut()) {
-      if (isCancelled()) return;
-      setModeState('off');
-      setEnabledState(false);
-      setIsCustomized(true);
+    try {
+      if (await persistLegacyGitSafetyOptOut()) {
+        if (isCancelled()) return;
+        setModeState('off');
+        setEnabledState(false);
+        setIsCustomized(true);
+        return;
+      }
+    } catch {
       return;
     }
     const settings = await window.electronAPI.maker.gitSafetyGet();
