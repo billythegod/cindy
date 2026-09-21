@@ -22,6 +22,7 @@ import { SystemNavigationBack, useSystemNavigationBack } from '@/platform/chrome
  */
 import * as Clipboard from 'expo-clipboard';
 import { useAdaptiveWindow } from '@/platform/AdaptiveWindowContext';
+import { Image } from 'expo-image';
 import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -30,7 +31,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Image,
   Pressable,
   StyleSheet,
   View,
@@ -1278,7 +1278,7 @@ function ImagePreviewPage({
       testID="filePreview.imagePage"
     >
       {displayUri ? (
-        <Image resizeMode="contain" source={{ uri: displayUri }} style={styles.imageFull} />
+        <Image contentFit="contain" recyclingKey={displayUri} source={{ uri: displayUri }} style={styles.imageFull} />
       ) : failure ? (
         <View style={styles.imageStateWrap} testID="filePreview.imageError">
           <GenericGlyph name={item.name} />

@@ -29,26 +29,27 @@ const bindings = {
 const Card = new Function(...Object.keys(bindings), `${compiled}; return OrcaCollabCard;`)(...Object.values(bindings));
 
 describe('worker card reading state', () => {
-  it('keeps a collapse through route destruction and preloading, independently per card/account', async () => {
+  it.each(['report', 'dispatch'])('remembers %s toggles across remounts, independently per card/account', async (variant) => {
+    const defaultExpanded = variant === 'dispatch';
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     __test_internals.reset(); generation = 1;
     const container = document.createElement('div');
     const root = createRoot(container);
     const show = async (key: string) => act(async () => root.render(<Card blockKey={key}
-      card={{ variant: 'report', title: 'Worker', body: 'Long report' }} />));
+      card={{ variant, title: 'Worker', body: 'Long report' }} />));
     try {
       await show('pc/task/a');
-      expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe('true');
+      expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe(String(defaultExpanded));
       await act(async () => container.querySelector('button')!.click());
       await act(async () => root.render(null));
       await show('pc/task/b');
-      expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe('true');
+      expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe(String(defaultExpanded));
       await act(async () => root.render(null));
       await show('pc/task/a');
-      expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe('false');
-      expect(container.textContent).not.toContain('Long report');
+      expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe(String(!defaultExpanded));
+      expect(container.textContent?.includes('Long report')).toBe(!defaultExpanded);
       generation = 2; await show('pc/task/a');
-      expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe('true');
+      expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe(String(defaultExpanded));
     } finally { await act(async () => root.unmount()); __test_internals.reset(); }
   });
 });
