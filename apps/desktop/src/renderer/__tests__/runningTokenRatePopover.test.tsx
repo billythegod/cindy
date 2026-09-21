@@ -32,7 +32,9 @@ it('expires the displayed rate without losing history, including after remount',
     const view = render(<Probe tokens={0} />);
     view.rerender(<Probe tokens={100} />);
     expect(screen.getByTestId('rate').textContent).toBe('100:1');
-    act(() => vi.advanceTimersByTime(30_000));
+    act(() => vi.advanceTimersByTime(59_999));
+    expect(screen.getByTestId('rate').textContent).toBe('100:1');
+    act(() => vi.advanceTimersByTime(1));
     expect(screen.getByTestId('rate').textContent).toBe('waiting:1');
     view.unmount();
     const again = render(<Probe tokens={100} />);

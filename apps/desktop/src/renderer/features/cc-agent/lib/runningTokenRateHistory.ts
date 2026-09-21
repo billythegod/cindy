@@ -11,7 +11,7 @@ export interface RateSample extends RateCounters {
 
 // Millisecond-scale usage batches are not meaningful throughput measurements.
 const MIN_SAMPLE_DURATION_MS = 1000;
-export const RATE_SAMPLE_FRESH_MS = 30_000;
+export const RATE_SAMPLE_FRESH_MS = 60_000;
 
 export interface RateHistory {
   startedAt: number | null;
