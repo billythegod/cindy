@@ -101,6 +101,7 @@ const fixture = vi.hoisted(() => ({
   reload: vi.fn(),
   message: null as null | ((e: unknown) => void),
   size: { width: 390, height: 844 },
+  displaySize: null as { width: number; height: number } | null,
   canControl: true,
   systemAudio: false,
   playback: vi.fn(async (_enabled: boolean) => {}),
@@ -161,7 +162,7 @@ vi.mock("react-native", async () => {
         return { remove() {} };
       },
     },
-    Dimensions: { get: () => fixture.size },
+    Dimensions: { get: (kind: string) => kind === "screen" ? fixture.displaySize ?? fixture.size : fixture.size },
     useWindowDimensions: () => fixture.size,
     Platform: {
       get Version() { return fixture.iosVersion; },
@@ -406,6 +407,7 @@ beforeEach(async () => {
   fixture.canControl = true;
   fixture.trickleIce = false;
   fixture.size = { width: 390, height: 844 };
+  fixture.displaySize = null;
   fixture.openLink.mockResolvedValue({});
   fixture.apiFetch
     .mockReset()
@@ -2680,6 +2682,25 @@ describe("remote desktop controls", () => {
     expect(
       host.querySelector('[data-testid="remoteDesktop.toolbarPosition"]'),
     ).not.toBe(firstToolbar);
+  });
+  it("keeps Android portrait fit when the IME shrinks the window, but follows real rotation", async () => {
+    fixture.platform = "android";
+    fixture.displaySize = { width: 390, height: 640 };
+    fixture.size = { width: 390, height: 616 };
+    act(() => root.render(<RemoteDesktopScreen />));
+    await connect();
+    expect(sent().find(message => message.type === "init")).toMatchObject({ fillHeight: false });
+    const viewer = host.querySelector('[data-testid="remoteDesktop.viewer"]');
+    for (const height of [300, 616, 280]) {
+      fixture.size = { width: 390, height };
+      act(() => root.render(<RemoteDesktopScreen />));
+      expect(sent().filter(message => message.type === "viewport").at(-1)).toMatchObject({ fillHeight: false });
+      expect(host.querySelector('[data-testid="remoteDesktop.viewer"]')).toBe(viewer);
+    }
+    fixture.displaySize = { width: 640, height: 390 };
+    fixture.size = { width: 640, height: 200 };
+    act(() => root.render(<RemoteDesktopScreen />));
+    expect(sent().filter(message => message.type === "viewport").at(-1)).toMatchObject({ fillHeight: true });
   });
   it("restores the portrait top inset while the native safe area still reports landscape", async () => {
     await connect();

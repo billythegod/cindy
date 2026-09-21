@@ -171,7 +171,13 @@ describe('resident five-task message lists outside route lifetimes', () => {
     expect(home).not.toContain('useRecentTaskPreload');
     expect(home).not.toContain('router.prefetch');
     const layout = readFileSync(resolve(process.cwd(), 'app/_layout.tsx'), 'utf8');
-    expect(layout.indexOf('<RecentMessageHistoriesProvider>')).toBeLessThan(layout.indexOf('<Stack\n'));
+    // Source structure is independent of checkout line endings.
+    for (const source of [layout.replace(/\r\n/g, '\n'), layout.replace(/\r?\n/g, '\r\n')]) {
+      const provider = source.indexOf('<RecentMessageHistoriesProvider>');
+      const stack = source.search(/<Stack\s/);
+      expect(provider).toBeGreaterThanOrEqual(0);
+      expect(stack).toBeGreaterThan(provider);
+    }
   });
   it('clears all instances at an account boundary', async () => {
     await show('a'); await show('b');

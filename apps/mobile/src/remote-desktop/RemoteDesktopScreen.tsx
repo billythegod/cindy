@@ -270,7 +270,10 @@ export function RemoteDesktopSession({
   const tableRegion = division && division.first.height >= 160 && division.second.height >= 160 && division.first.width >= 160 && division.second.width >= 160 ? division : null;
 
   const systemSideRail = Platform.OS === 'ios' && !tableRegion && (geometry.barEdge !== 'none' || (geometry.reservedRegionsSupported && geometry.regularWidth && windowSize.width > windowSize.height));
-  const landscape = systemSideRail || (!tableRegion && windowSize.width > windowSize.height);
+  // Android adjustResize shrinks the window for the IME, not the display.
+  // Keep its device orientation stable; iOS/Duo still use the adaptive window.
+  const orientationSize = Platform.OS === 'android' ? Dimensions.get('screen') : windowSize;
+  const landscape = systemSideRail || (!tableRegion && orientationSize.width > orientationSize.height);
   const sideRailWidth = Math.max(60, geometry.insets.right + spacing.md);
   // The native status/navigation center sits 6pt inward from the safe strip center.
   // Use the reported status reservation for vertical clearance when available.
