@@ -66,7 +66,16 @@ export function subscribeGitSafetyAutoSnapshotEnabled(cb: Subscriber): () => voi
 
 export function subscribeGitSafetyMode(cb: ModeSubscriber): () => void {
   modeSubscribers.add(cb);
-  return () => modeSubscribers.delete(cb);
+  const storageHandler = (e: StorageEvent) => {
+    if (e.key !== STORAGE_KEY && e.key !== LEGACY_STORAGE_KEY) return;
+    cb(getGitSafetyMode());
+  };
+  window.addEventListener('storage', storageHandler);
+
+  return () => {
+    modeSubscribers.delete(cb);
+    window.removeEventListener('storage', storageHandler);
+  };
 }
 
 export async function bootstrapGitSafetySettingsFromMain(): Promise<void> {

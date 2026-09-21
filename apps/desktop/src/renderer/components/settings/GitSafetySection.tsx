@@ -6,10 +6,11 @@ import { toast } from '@/lib/toast';
 import { useGitSafetySettings } from '@/hooks/useGitSafetySettings';
 import type { GitSafetyMode } from '@/lib/gitSafetySettingsStore';
 import { SegmentedControl } from '@/components/ui/segmented-control';
+import { DefaultOverrideControls } from './DefaultOverrideControls';
 
 export function GitSafetySection() {
   const { t } = useTranslation();
-  const { mode, setMode } = useGitSafetySettings();
+  const { mode, setMode, reset, isCustomized } = useGitSafetySettings();
   const [saving, setSaving] = useState(false);
 
   const handleModeChange = useCallback(
@@ -24,6 +25,16 @@ export function GitSafetySection() {
     },
     [saving, setMode, t],
   );
+
+  const handleReset = useCallback(() => {
+    if (saving) return;
+    setSaving(true);
+    void reset()
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : t('settings.defaults.restoreFailed'));
+      })
+      .finally(() => setSaving(false));
+  }, [reset, saving, t]);
 
   return (
     <div className="flex flex-col gap-[14px]">
@@ -58,6 +69,7 @@ export function GitSafetySection() {
             ] satisfies ReadonlyArray<{ value: GitSafetyMode; label: string }>}
             fullWidth
           />
+          <DefaultOverrideControls isCustomized={isCustomized} disabled={saving} onReset={handleReset} />
         </div>
       </div>
     </div>
