@@ -21,7 +21,7 @@ import {
 let emptyHooksDir: Promise<string> | null = null;
 
 const DRIVER_SETTING =
-  /^(filter\.[^=]+\.(?:clean|smudge|process|required)|diff\.[^=]+\.(?:textconv|command)|merge\.[^=]+\.driver)=/i;
+  /^(filter\.[^=]+\.(?:clean|smudge|process|required)|diff\.external|diff\.[^=]+\.(?:textconv|command)|merge\.[^=]+\.driver)=/i;
 
 export class SnapshotGitIsolationError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -60,6 +60,8 @@ export function snapshotGitIsolationArgs(hooksPath: string): string[] {
     'filter.lfs.process=',
     '-c',
     'filter.lfs.required=false',
+    '-c',
+    'diff.external=',
   ];
 }
 
@@ -67,10 +69,14 @@ function overrideValue(key: string): string {
   return /\.required$/i.test(key) ? 'false' : '';
 }
 
-function withNoTextconv(args: readonly string[]): string[] {
+function withDisabledExternalDiffHelpers(args: readonly string[]): string[] {
   const idx = args.indexOf('diff');
-  if (idx === -1 || args.includes('--no-textconv')) return [...args];
-  return [...args.slice(0, idx + 1), '--no-textconv', ...args.slice(idx + 1)];
+  if (idx === -1) return [...args];
+  const extra: string[] = [];
+  if (!args.includes('--no-textconv')) extra.push('--no-textconv');
+  if (!args.includes('--no-ext-diff')) extra.push('--no-ext-diff');
+  if (extra.length === 0) return [...args];
+  return [...args.slice(0, idx + 1), ...extra, ...args.slice(idx + 1)];
 }
 
 async function discoveredDriverIsolationArgs(
@@ -107,7 +113,7 @@ export async function isolatedGitExec(
 ): Promise<GitExecResult> {
   const hooksPath = await getEmptyHooksDir();
   const isolation = snapshotGitIsolationArgs(hooksPath);
-  const command = withNoTextconv(args);
+  const command = withDisabledExternalDiffHelpers(args);
   if (command[0] === 'config') {
     return gitExec([...isolation, ...command], cwd, opts);
   }

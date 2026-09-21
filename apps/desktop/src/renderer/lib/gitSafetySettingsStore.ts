@@ -10,6 +10,7 @@
 export type GitSafetyMode = 'off' | 'existing-git' | 'all-projects';
 const STORAGE_KEY = 'gitSafety.mode';
 const LEGACY_STORAGE_KEY = 'gitSafety.autoSnapshotEnabled';
+const SYNC_KEY = 'gitSafety.sync';
 
 type Subscriber = (value: boolean) => void;
 type ModeSubscriber = (value: GitSafetyMode, source: 'local' | 'storage') => void;
@@ -42,6 +43,9 @@ export function setGitSafetyAutoSnapshotEnabled(next: boolean): void {
 export function setGitSafetyMode(next: GitSafetyMode): void {
   try {
     localStorage.setItem(STORAGE_KEY, next);
+    // Same-mode writes still need a storage event so other Settings windows
+    // refresh isCustomized. Bump an unrelated key instead of adding a bus.
+    localStorage.setItem(SYNC_KEY, String(Date.now()));
   } catch {
     // localStorage unavailable — ignore; callers still get main IPC errors.
   }
@@ -53,7 +57,7 @@ export function subscribeGitSafetyAutoSnapshotEnabled(cb: Subscriber): () => voi
   subscribers.add(cb);
 
   const storageHandler = (e: StorageEvent) => {
-    if (e.key !== STORAGE_KEY && e.key !== LEGACY_STORAGE_KEY) return;
+    if (e.key !== STORAGE_KEY && e.key !== LEGACY_STORAGE_KEY && e.key !== SYNC_KEY) return;
     cb(getGitSafetyAutoSnapshotEnabled());
   };
   window.addEventListener('storage', storageHandler);
@@ -67,7 +71,7 @@ export function subscribeGitSafetyAutoSnapshotEnabled(cb: Subscriber): () => voi
 export function subscribeGitSafetyMode(cb: ModeSubscriber): () => void {
   modeSubscribers.add(cb);
   const storageHandler = (e: StorageEvent) => {
-    if (e.key !== STORAGE_KEY && e.key !== LEGACY_STORAGE_KEY) return;
+    if (e.key !== STORAGE_KEY && e.key !== LEGACY_STORAGE_KEY && e.key !== SYNC_KEY) return;
     cb(getGitSafetyMode(), 'storage');
   };
   window.addEventListener('storage', storageHandler);

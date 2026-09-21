@@ -64,10 +64,11 @@ describe('isolatedGitExec', () => {
     expect(commandArgs.slice(-2)).toEqual(['add', '-A']);
   });
 
-  it('injects --no-textconv for snapshot diffs', async () => {
+  it('injects --no-textconv and --no-ext-diff for snapshot diffs', async () => {
     await isolatedGitExec(['diff', '--cached'], '/repo');
     const commandArgs = gitExecMock.mock.calls[1][0] as string[];
-    expect(commandArgs.slice(-3)).toEqual(['diff', '--no-textconv', '--cached']);
+    expect(commandArgs).toContain('diff.external=');
+    expect(commandArgs.slice(-4)).toEqual(['diff', '--no-textconv', '--no-ext-diff', '--cached']);
   });
 
   it('aborts when repository config cannot be listed', async () => {

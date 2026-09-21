@@ -256,4 +256,25 @@ describe('Git safety settings wiring', () => {
     expect(result.current.autoSnapshotEnabled).toBe(false);
     expect(getGitSafetyAutoSnapshotEnabled()).toBe(false);
   });
+
+  it('refreshes customized state when another window re-selects the same mode', async () => {
+    const api = installGitSafetyApi({
+      gitSafetyGet: async () => ({
+        mode: 'existing-git',
+        autoSnapshotEnabled: true,
+        isCustomized: true,
+        defaultAutoSnapshotEnabled: true,
+      }),
+    });
+
+    const { result } = renderHook(() => useGitSafetySettings());
+    await waitFor(() => expect(api.gitSafetyGet).toHaveBeenCalledTimes(1));
+    expect(result.current.isCustomized).toBe(true);
+
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'gitSafety.sync', newValue: '2' }));
+    });
+
+    await waitFor(() => expect(api.gitSafetyGet).toHaveBeenCalledTimes(2));
+  });
 });
