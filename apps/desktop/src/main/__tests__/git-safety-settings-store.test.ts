@@ -24,4 +24,14 @@ describe('git safety settings migration', () => {
     expect(__testing.normalize({ mode: 'existing-git' })).toEqual({ mode: 'existing-git' });
     expect(__testing.normalize({ mode: 'all-projects' })).toEqual({ mode: 'all-projects' });
   });
+
+  it('keeps an explicit selection of the current default mode', () => {
+    expect(
+      __testing.mergeOverrides({
+        patch: { mode: 'existing-git' },
+        next: { mode: 'existing-git' },
+        overrides: { mode: 'off' },
+      }),
+    ).toEqual({ mode: 'existing-git' });
+  });
 });

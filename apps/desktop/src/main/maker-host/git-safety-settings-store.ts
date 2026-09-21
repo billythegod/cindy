@@ -70,19 +70,30 @@ function derive(persisted: PersistedGitSafetySettings): GitSafetySettings {
   };
 }
 
+function mergeOverrides({
+  patch,
+  next,
+  overrides,
+}: {
+  patch: Partial<PersistedGitSafetySettings>;
+  next: PersistedGitSafetySettings;
+  overrides: Record<string, unknown>;
+}): Record<string, unknown> {
+  const updated = { ...overrides };
+  if (Object.prototype.hasOwnProperty.call(patch, 'mode')) {
+    // Keep an explicit selection even when it matches today's default. This
+    // preserves the user's choice if the default changes in a later release.
+    updated.mode = next.mode;
+    delete updated.autoSnapshotEnabled;
+  }
+  return updated;
+}
+
 const store = createOverrideSettingsFile<PersistedGitSafetySettings>({
   filePath: settingsFilePath,
   defaults: DEFAULTS,
   normalize,
-  mergeOverrides: ({ patch, next, defaults, overrides }) => {
-    const updated = { ...overrides };
-    if (Object.prototype.hasOwnProperty.call(patch, 'mode')) {
-      if (next.mode === defaults.mode) delete updated.mode;
-      else updated.mode = next.mode;
-      delete updated.autoSnapshotEnabled;
-    }
-    return updated;
-  },
+  mergeOverrides,
   log,
   label: 'git safety',
 });
@@ -119,4 +130,4 @@ export function resetGitSafetySettings(): GitSafetySettings {
   return derive(store.reset());
 }
 
-export const __testing = { normalize };
+export const __testing = { mergeOverrides, normalize };
