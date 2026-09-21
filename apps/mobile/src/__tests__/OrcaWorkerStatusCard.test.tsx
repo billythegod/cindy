@@ -534,3 +534,38 @@ it('卡片使用抬层背景 surfaceElevated,而非页面级 surface', async () 
   const card = container.querySelector('div[data-style]');
   expect(backgroundColorOf(card)).toBe('SURFACE_ELEVATED');
 });
+
+async function mountAndAdvance(statuses: string[]) {
+  vi.useFakeTimers();
+  h.listOrcaWorkersByLead.mockResolvedValue([
+    { id: 'a', label: 'w', status: statuses[0], sessionId: 's-a' },
+  ]);
+  await act(async () => {
+    root.render(
+      createElement(OrcaWorkerStatusCard as any, {
+        leadSessionId: lead,
+        deviceId: 'dev-1',
+        maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
+      }),
+    );
+  });
+  for (const status of statuses.slice(1)) {
+    h.listOrcaWorkersByLead.mockResolvedValue([
+      { id: 'a', label: 'w', status, sessionId: 's-a' },
+    ]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  }
+}
+
+it('未读 done 的 worker 复用后转 error:提示升级为错误色', async () => {
+  // done 未读 → 被复用跑起来 → 再次失败。全程未查看。
+  await mountAndAdvance(['done', 'running', 'error']);
+  expect(attentionDot()).not.toBeNull();
+  expect(backgroundColorOf(attentionDot())).toBe('ERROR');
+});
+
+it('未读 error 之后转 done:不降级,失败不被后来的成功掩盖', async () => {
+  await mountAndAdvance(['error', 'running', 'done']);
+  expect(attentionDot()).not.toBeNull();
+  expect(backgroundColorOf(attentionDot())).toBe('ERROR');
+});

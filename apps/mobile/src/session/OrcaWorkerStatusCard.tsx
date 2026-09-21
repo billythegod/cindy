@@ -68,7 +68,12 @@ function applyWorkerAttentionEdges(leadSessionId: string, workers: Worker[]): bo
     lastWorkerStatus.set(key, status);
     if (previous === status) return;
     // 跳变进终态才标未读;离开终态自然不再是未读来源。
-    if (attentionStatuses.has(status) && !unreadWorkers.has(key)) {
+    if (!attentionStatuses.has(status)) return;
+    const recorded = unreadWorkers.get(key);
+    // 已未读时不重复标记,但**严重度可升级**:worker 被复用后由 done 转 error,
+    // 未读仍未被查看,提示必须跟着变红;否则一次更新的失败会被旧的绿色 Done 盖住。
+    // 反向(error → done)不降级:未看过的失败不该被后来的成功掩盖。
+    if (recorded === undefined || (recorded !== 'error' && status === 'error')) {
       unreadWorkers.set(key, status);
       changed = true;
     }
