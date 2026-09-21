@@ -101,6 +101,13 @@ Registry 字段或原生协议枚举。LKG/内置兜底不能当作兼容方案�
 递增版本；在上述发布条件完成前，新增目录资料只在本地配置/内置路径生效。
 
 
+OpenAI 授权登录的图像能力统一显示为 **GPT Image Gen**，由托管 `image_generation` 工具选择底层型号，
+不从公共 API 目录推导订阅型号。内部保留各连接原有的 `gpt-image-2` ID，兼容 Art/Core
+已有选择与显示开关；该 ID 不再作为图像 `model` 参数发送。Responses 顶层的宿主模型
+仍保留。配置 Images API key 时，内置 OpenAI 连接继续使用公共 API 的真实模型名单和
+`model` 参数；独立订阅账号不受该 key 影响。切换凭证后重算活动目录，发现失败也不
+改变用户选择的接入方式。实现见 `active-catalog.ts`、`codexImageClient.ts`。
+
 本地离线目录把 OpenAI GPT Image 2.5 Sunburst / Flare（以及旧代 GPT Image 2）、Gemini/xAI 图像、xAI 视频资料纳入 Registry，并补入
 已有音频、识别、实时与向量型号的公共资料。公共音频/向量资料不虚构订阅接入路由。
 请求尺寸、时长、音色、返回格式仍归现有执行协议；统一目录不提供通用媒体参数表单，
