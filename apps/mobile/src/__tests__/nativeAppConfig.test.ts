@@ -71,6 +71,8 @@ describe('mobile native app config', () => {
     ['wx-test-mobile', 'http://login.example.com/wechat/'],
     ['wx-test-mobile', 'not-a-url'],
     ['wx-test-mobile', 'https://user:pass@login.example.com/wechat/'],
+    ['wx-test-mobile', 'https://login.example.com/wechat/?source=build'],
+    ['wx-test-mobile', 'https://login.example.com/wechat/#callback'],
   ])('rejects incomplete or invalid WeChat config before native generation (%s, %s)', (appId, link) => {
     const buildConfig = require(resolve(process.cwd(), 'app.config.js'));
     process.env.EXPO_PUBLIC_CINDY_AUTH_REGION = 'cn';

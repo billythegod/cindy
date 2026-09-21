@@ -210,8 +210,17 @@ function withNativeAuthPlugins(plugins, env, region) {
     } catch {
       throw new Error('EXPO_PUBLIC_CINDY_WECHAT_UNIVERSAL_LINK must be an https URL');
     }
-    if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password) {
-      throw new Error('EXPO_PUBLIC_CINDY_WECHAT_UNIVERSAL_LINK must be an https URL without credentials');
+    if (
+      parsed.protocol !== 'https:' ||
+      !parsed.hostname ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      throw new Error(
+        'EXPO_PUBLIC_CINDY_WECHAT_UNIVERSAL_LINK must be an https URL without credentials, query, or fragment',
+      );
     }
     next.push([
       'xdt-wechat-login/plugin',
