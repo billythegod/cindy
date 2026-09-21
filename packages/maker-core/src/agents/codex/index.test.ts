@@ -7053,6 +7053,45 @@ describe('CodexAgent MCP thread context hooks', () => {
     await handle.close();
   });
 
+  it('closes an in-flight turn when external dispose retires its host', async () => {
+    const agent = new CodexAgent(createDeps());
+    const handle = await agent.startSession({
+      sessionId: 'session-dispose-active-turn',
+      model: 'gpt-5.4',
+      workingDir: '/repo-local',
+    });
+    const iterator = handle.events()[Symbol.asyncIterator]();
+    const transport = createdTransports[0];
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+
+    transport.emitMockLine({
+      method: 'turn/started',
+      params: { threadId: 'thread-1', turn: { id: 'turn-dispose-active' } },
+    });
+    await waitForExpectation(() => {
+      expect(handle.isTurnRunning?.()).toBe(true);
+    });
+
+    await agent.dispose();
+
+    expect(clearIntervalSpy).toHaveBeenCalledOnce();
+    expect(handle.isTurnRunning?.()).toBe(false);
+    await expect(nextEvent(iterator)).resolves.toMatchObject({
+      type: 'error',
+      data: expect.objectContaining({
+        isTerminal: true,
+        willRetry: false,
+        message: expect.stringContaining('app-server force-retired'),
+      }),
+    });
+    await expect(nextEvent(iterator)).resolves.toMatchObject({
+      type: 'status',
+      data: expect.objectContaining({ status: 'Done', isRunning: false }),
+    });
+
+    await handle.close();
+  });
+
   it('force-retires one shared local Host under the credential guard and blocks its lazy replacement', async () => {
     const getRemoteCodexTransport = vi.fn(() => {
       const transport = new MockCodexTransport();

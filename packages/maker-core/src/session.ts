@@ -2776,6 +2776,7 @@ export class Session {
    * 后两条是误杀防护(见 DEFAULT_TURN_STALL_MS)。
    */
   private armTurnStallWatchdog(): void {
+    const wasArmed = this.turnStallTimer !== null;
     this.clearTurnStallWatchdog();
     if (this.turnStallMs <= 0) return;
     if (this.status !== 'active') return;
@@ -2784,6 +2785,11 @@ export class Session {
     if (this.pendingInteractions > 0) return;
     if (this.hasRunningBackgroundTasks()) return;
     this.turnStallRemainingMs = this.turnStallMs;
+    // Activity refreshes the budget on every delta; only log the transition
+    // into monitoring so diagnostics do not grow with token volume.
+    if (!wasArmed) {
+      this.logger.info('turn stall watchdog armed', { timeoutMs: this.turnStallMs });
+    }
     this.armTurnStallSlice();
   }
 
