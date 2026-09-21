@@ -915,12 +915,12 @@ describe('ModelSelector trigger variants', () => {
     };
     const view = render(React.createElement(ModelSelectorContent, props));
     let pane = view.container.querySelector('[data-unified-model-panel]') as HTMLElement;
-    expect(pane.className).toContain('max-w-[min(420px,calc(100vw-48px))]');
+    expect(pane.className).toContain('max-w-[min(460px,calc(100vw-48px))]');
 
     view.rerender(React.createElement(ModelSelectorContent, { ...props, fluidWidth: true }));
     pane = view.container.querySelector('[data-unified-model-panel]') as HTMLElement;
     expect(pane.className).toContain('w-full min-w-0');
-    expect(pane.className).not.toContain('420px');
+    expect(pane.className).not.toContain('460px');
   });
 
   it('keeps the session Agent explicit when Claude Code uses an OpenAI-branded model', () => {
