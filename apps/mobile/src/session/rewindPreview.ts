@@ -125,6 +125,12 @@ export function isCommitReadyRewindState(state: RewindPreviewState): state is Co
   return state.kind === 'default' || state.kind === 'empty';
 }
 
+export function rewindCommitBindOpts(
+  state: CommitReadyRewindState,
+): { allowFileRestore: false } | undefined {
+  return state.kind === 'empty' ? { allowFileRestore: false } : undefined;
+}
+
 function normalizeRewindPreviewPayload(value: unknown): RewindPreviewPayload | null {
   const record = readRecord(value);
   if (!record || typeof record.canRewind !== 'boolean') return null;

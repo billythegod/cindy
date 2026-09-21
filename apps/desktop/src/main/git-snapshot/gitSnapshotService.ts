@@ -1016,7 +1016,7 @@ async function removeRenameOldPaths(
 
 async function resetCommittedPaths(repoPath: string, pathspecs: readonly string[]): Promise<void> {
   for (const chunk of chunkPathspecArgs(pathspecs)) {
-    await gitExec(['reset', '-q', '--', ...chunk], repoPath);
+    await isolatedGitExec(['reset', '-q', '--', ...chunk], repoPath);
   }
 }
 

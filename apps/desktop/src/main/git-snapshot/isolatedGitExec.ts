@@ -3,8 +3,10 @@
  *
  * Turn-start snapshots now run by default on existing Git directories. A
  * complete attacker-supplied `.git/config` can set `core.fsmonitor`,
- * `core.hooksPath`, or LFS `filter.*.clean/process` to relative executables.
- * Every snapshot `git` call therefore overrides those keys.
+ * `core.hooksPath`, or arbitrary `filter.*.clean/process` drivers. Every
+ * snapshot `git` call therefore overrides hooks, fsmonitor, LFS, and any
+ * discovered filter drivers — including `filter.*.required=false` so
+ * emptying LFS commands does not fail `git add`.
  */
 
 import { promises as fs } from 'node:fs';
@@ -18,6 +20,9 @@ import {
 } from '../worktree/gitExec';
 
 let emptyHooksDir: Promise<string> | null = null;
+
+const FILTER_SETTING =
+  /^filter\.([^=]+)\.(clean|smudge|process|required)=/i;
 
 function toGitConfigPath(filePath: string): string {
   return filePath.replace(/\\/g, '/');
@@ -44,7 +49,40 @@ export function snapshotGitIsolationArgs(hooksPath: string): string[] {
     'filter.lfs.smudge=',
     '-c',
     'filter.lfs.process=',
+    '-c',
+    'filter.lfs.required=false',
   ];
+}
+
+async function discoveredFilterIsolationArgs(
+  isolation: readonly string[],
+  cwd?: string,
+  opts?: GitExecOpts,
+): Promise<string[]> {
+  if (!cwd) return [];
+  try {
+    const { stdout } = await gitExec(
+      [...isolation, 'config', '--list'],
+      cwd,
+      opts,
+    );
+    const overrides = new Map<string, string>();
+    for (const line of stdout.split('\n')) {
+      const match = line.match(FILTER_SETTING);
+      if (!match) continue;
+      const name = match[1];
+      const field = match[2].toLowerCase();
+      const key = `filter.${name}.${field}`;
+      overrides.set(key, field === 'required' ? 'false' : '');
+    }
+    const args: string[] = [];
+    for (const [key, value] of overrides) {
+      args.push('-c', `${key}=${value}`);
+    }
+    return args;
+  } catch {
+    return [];
+  }
 }
 
 export async function isolatedGitExec(
@@ -53,5 +91,10 @@ export async function isolatedGitExec(
   opts?: GitExecOpts,
 ): Promise<GitExecResult> {
   const hooksPath = await getEmptyHooksDir();
-  return gitExec([...snapshotGitIsolationArgs(hooksPath), ...args], cwd, opts);
+  const isolation = snapshotGitIsolationArgs(hooksPath);
+  if (args[0] === 'config') {
+    return gitExec([...isolation, ...args], cwd, opts);
+  }
+  const filters = await discoveredFilterIsolationArgs(isolation, cwd, opts);
+  return gitExec([...isolation, ...filters, ...args], cwd, opts);
 }
