@@ -1221,6 +1221,7 @@ describe('commitRewindAtMessage', () => {
     await blocker;
     await expect(preview).resolves.toEqual({
       canRewind: true,
+      conversationOnly: true,
       filesChanged: [],
       insertions: 0,
       deletions: 0,

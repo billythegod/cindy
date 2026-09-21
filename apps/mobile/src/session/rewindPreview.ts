@@ -4,6 +4,8 @@ import type { ComposerDocument } from '@/session/composerDocument';
 
 export interface RewindPreviewPayload {
   canRewind: boolean;
+  conversationOnly?: boolean;
+  gitSafetyDisabled?: boolean;
   error?: string;
   filesChanged?: string[];
   insertions?: number;
@@ -91,7 +93,21 @@ export function buildRewindPreviewState(
   }
 
   if (payload.canRewind) {
-    return { kind: 'empty', clientId, draftText, draftQuotes, ...orderedDraft, ...documentDraft };
+    return {
+      kind: 'empty',
+      clientId,
+      draftText,
+      draftQuotes,
+      ...orderedDraft,
+      ...documentDraft,
+      ...(payload.conversationOnly
+        ? {
+            note: payload.gitSafetyDisabled
+              ? i18n.t('interaction.rewind.gitSafetyDisabledNote')
+              : i18n.t('interaction.rewind.conversationOnlyNote'),
+          }
+        : {}),
+    };
   }
 
   return {
@@ -114,6 +130,8 @@ function normalizeRewindPreviewPayload(value: unknown): RewindPreviewPayload | n
   if (!record || typeof record.canRewind !== 'boolean') return null;
   return {
     canRewind: record.canRewind,
+    conversationOnly: record.conversationOnly === true,
+    gitSafetyDisabled: record.gitSafetyDisabled === true,
     error: typeof record.error === 'string' ? record.error : undefined,
     filesChanged: readStringArray(record.filesChanged),
     insertions: readFiniteNumber(record.insertions),

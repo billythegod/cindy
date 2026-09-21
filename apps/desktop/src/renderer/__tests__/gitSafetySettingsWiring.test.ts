@@ -95,7 +95,7 @@ describe('Git safety settings wiring', () => {
       await result.current.setAutoSnapshotEnabled(true);
     });
 
-    expect(api.gitSafetySet).toHaveBeenCalledWith(true);
+    expect(api.gitSafetySet).toHaveBeenCalledWith('all-projects');
     expect(result.current.autoSnapshotEnabled).toBe(true);
     expect(result.current.isCustomized).toBe(true);
     expect(getGitSafetyAutoSnapshotEnabled()).toBe(true);

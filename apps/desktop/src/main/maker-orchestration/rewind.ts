@@ -27,6 +27,7 @@ import { getDbClient } from '../localDb/client/current';
 import { sessions, messages } from '../localDb/schema';
 import { sessionToCamel } from '../localDb/mapper';
 import { getMaker } from '../maker-host/index.js';
+import { readGitSafetySettings } from '../maker-host/git-safety-settings-store.js';
 import type { Session } from '../../renderer/lib/ccAgent.types';
 import type { RewindFilesResult } from '@cindy/maker-core';
 
@@ -398,6 +399,7 @@ export async function previewRewindAtMessage(
     // 老 Claude 消息没有 user uuid：文件层面没有可预览 checkpoint，仅截断对话历史。
     return {
       canRewind: true,
+      conversationOnly: true,
       filesChanged: [],
       insertions: 0,
       deletions: 0,
@@ -410,7 +412,18 @@ export async function previewRewindAtMessage(
 
 async function previewCodexFileRewindPlan(plan: CodexRewindPlan): Promise<RewindFilesResult> {
   if (plan.mode === 'file-restore') return previewCodexFileRestorePlan(plan);
-  if (plan.mode !== 'file-rewind') return { canRewind: true, filesChanged: [], insertions: 0, deletions: 0 };
+  if (plan.mode !== 'file-rewind') {
+    const gitSafetyDisabled =
+      plan.fallbackReason !== 'remote-session' && !readGitSafetySettings().autoSnapshotEnabled;
+    return {
+      canRewind: true,
+      conversationOnly: true,
+      ...(gitSafetyDisabled ? { gitSafetyDisabled: true } : {}),
+      filesChanged: [],
+      insertions: 0,
+      deletions: 0,
+    };
+  }
   const files = new Set<string>(); let insertions = 0; let deletions = 0;
   for (const commit of plan.revertCommitsNewestFirst) {
     const { stdout } = await gitExec(['show', '--format=', '--numstat', commit], plan.repoRoot);

@@ -1,27 +1,27 @@
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { useGitSafetySettings } from '@/hooks/useGitSafetySettings';
+import type { GitSafetyMode } from '@/lib/gitSafetySettingsStore';
 
 export function GitSafetySection() {
   const { t } = useTranslation();
-  const { autoSnapshotEnabled, setAutoSnapshotEnabled } = useGitSafetySettings();
+  const { mode, setMode } = useGitSafetySettings();
   const [saving, setSaving] = useState(false);
 
-  const handleToggle = useCallback(
-    (next: boolean) => {
+  const handleModeChange = useCallback(
+    (next: GitSafetyMode) => {
       if (saving) return;
       setSaving(true);
-      void setAutoSnapshotEnabled(next)
+      void setMode(next)
         .catch((err: unknown) => {
           toast.error(err instanceof Error ? err.message : t('settings.gitSafety.saveFailed'));
         })
         .finally(() => setSaving(false));
     },
-    [saving, setAutoSnapshotEnabled, t],
+    [saving, setMode, t],
   );
 
   return (
@@ -42,16 +42,20 @@ export function GitSafetySection() {
             <p className="text-13 font-medium text-[var(--settings-section-sublabel)]">
               {t('settings.gitSafety.autoSnapshotTitle')}
             </p>
-            <p className="text-12 leading-[1.4] text-[var(--settings-section-sublabel)] opacity-70">
-              {t('settings.gitSafety.description')}
-            </p>
+            <p className="text-12 leading-[1.4] text-[var(--settings-section-sublabel)] opacity-70">{t('settings.gitSafety.description')}</p>
           </div>
 
-          <Switch
-            checked={autoSnapshotEnabled}
-            onCheckedChange={handleToggle}
-            aria-label={t('settings.gitSafety.toggleAria')}
-          />
+          <select
+            value={mode}
+            onChange={(event) => handleModeChange(event.target.value as GitSafetyMode)}
+            disabled={saving}
+            aria-label={t('settings.gitSafety.modeAria')}
+            className="min-w-[180px] rounded-lg border border-[var(--settings-theme-card-border)] bg-[var(--settings-theme-card-bg)] px-2 py-1.5 text-12 text-[var(--settings-section-sublabel)]"
+          >
+            <option value="off">{t('settings.gitSafety.modes.off')}</option>
+            <option value="existing-git">{t('settings.gitSafety.modes.existingGit')}</option>
+            <option value="all-projects">{t('settings.gitSafety.modes.allProjects')}</option>
+          </select>
         </div>
       </div>
     </div>
