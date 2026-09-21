@@ -234,7 +234,7 @@ export class GitSnapshotCoordinator {
     if (!ctx?.workingDir) return null;
 
     let repoRoot = await this.deps.detectRepoRoot(ctx.workingDir);
-    if (!repoRoot && this.deps.initializeProjectGit) {
+    if (!repoRoot && autoInitProjectGit && this.deps.initializeProjectGit) {
       const bootstrap = await this.deps.initializeProjectGit?.(sessionId, ctx, {
         autoSnapshotEnabled,
         autoInitProjectGit,

@@ -5,6 +5,7 @@ import {
   getGitSafetyAutoSnapshotEnabled,
   setGitSafetyMode,
   subscribeGitSafetyAutoSnapshotEnabled,
+  subscribeGitSafetyMode,
 } from '@/lib/gitSafetySettingsStore';
 import type { GitSafetyMode } from '@/lib/gitSafetySettingsStore';
 
@@ -129,9 +130,16 @@ export function useGitSafetySettings(): {
     const unsubscribe = subscribeGitSafetyAutoSnapshotEnabled((next) => {
       if (!cancelled) setEnabledState(next);
     });
+    const unsubscribeMode = subscribeGitSafetyMode((next) => {
+      if (!cancelled) {
+        setModeState(next);
+        setEnabledState(next !== 'off');
+      }
+    });
     return () => {
       cancelled = true;
       unsubscribe();
+      unsubscribeMode();
     };
   }, [refresh]);
 
