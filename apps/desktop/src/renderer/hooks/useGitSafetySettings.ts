@@ -130,10 +130,13 @@ export function useGitSafetySettings(): {
     const unsubscribe = subscribeGitSafetyAutoSnapshotEnabled((next) => {
       if (!cancelled) setEnabledState(next);
     });
-    const unsubscribeMode = subscribeGitSafetyMode((next) => {
+    const unsubscribeMode = subscribeGitSafetyMode((next, source) => {
       if (!cancelled) {
         setModeState(next);
         setEnabledState(next !== 'off');
+        // The mode mirror cannot carry isCustomized. Refresh main's complete
+        // wire state so Settings windows also converge on override/reset changes.
+        if (source === 'storage') void refresh(() => cancelled).catch(() => undefined);
       }
     });
     return () => {

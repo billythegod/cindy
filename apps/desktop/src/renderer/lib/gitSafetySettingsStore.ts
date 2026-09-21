@@ -12,7 +12,7 @@ const STORAGE_KEY = 'gitSafety.mode';
 const LEGACY_STORAGE_KEY = 'gitSafety.autoSnapshotEnabled';
 
 type Subscriber = (value: boolean) => void;
-type ModeSubscriber = (value: GitSafetyMode) => void;
+type ModeSubscriber = (value: GitSafetyMode, source: 'local' | 'storage') => void;
 const subscribers = new Set<Subscriber>();
 const modeSubscribers = new Set<ModeSubscriber>();
 
@@ -46,7 +46,7 @@ export function setGitSafetyMode(next: GitSafetyMode): void {
     // localStorage unavailable — ignore; callers still get main IPC errors.
   }
   subscribers.forEach((cb) => cb(next !== 'off'));
-  modeSubscribers.forEach((cb) => cb(next));
+  modeSubscribers.forEach((cb) => cb(next, 'local'));
 }
 
 export function subscribeGitSafetyAutoSnapshotEnabled(cb: Subscriber): () => void {
@@ -68,7 +68,7 @@ export function subscribeGitSafetyMode(cb: ModeSubscriber): () => void {
   modeSubscribers.add(cb);
   const storageHandler = (e: StorageEvent) => {
     if (e.key !== STORAGE_KEY && e.key !== LEGACY_STORAGE_KEY) return;
-    cb(getGitSafetyMode());
+    cb(getGitSafetyMode(), 'storage');
   };
   window.addEventListener('storage', storageHandler);
 
