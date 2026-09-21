@@ -14557,7 +14557,7 @@ export class CodexAgent extends BaseAgent {
     // host silently clears its subscribers; without the same structured
     // notification used by `retireHostKey(..., failIfActive: false)`, an
     // in-flight Computer Use turn remains busy forever after its transport
-    // disappears.  Notify each host exactly once before retirement so the
+    // disappears. Notify hosts before retirement so the
     // session can emit its terminal interruption and release its input/turn
     // ownership.
     const hostsToRetire = new Map<string, AppServerHost>();
