@@ -12,6 +12,7 @@ import path from 'node:path';
 
 import { createLogger } from '../logger';
 import { gitExec, GitExecError } from '../worktree/gitExec';
+import { isolatedGitExec, snapshotGitIsolationArgs } from './isolatedGitExec';
 import { gitPathOutput } from '../worktree/gitPathOutput';
 import {
   buildSnapshotFilePlan,
@@ -196,8 +197,7 @@ export async function createSnapshotMarker(
     await withDisabledHooks((hooksPath) =>
       gitExec(
         [
-          '-c',
-          `core.hooksPath=${toGitConfigPath(hooksPath)}`,
+          ...snapshotGitIsolationArgs(hooksPath),
           ...(input.author
             ? ['-c', `user.name=${input.author.name}`, '-c', `user.email=${input.author.email}`]
             : []),
@@ -256,7 +256,7 @@ export async function createSnapshotDetailed(
   const result = await withTemporaryIndex(repoPath, async (extraEnv) => {
     if (stagePathspecs.length > 0) {
       await withPathspecFile(stagePathspecs, (pathspecFile) =>
-        gitExec(
+        isolatedGitExec(
           ['add', '-A', '--pathspec-from-file', pathspecFile, '--pathspec-file-nul'],
           repoPath,
           { extraEnv },
@@ -295,8 +295,7 @@ export async function createSnapshotDetailed(
     await withDisabledHooks((hooksPath) =>
       gitExec(
         [
-          '-c',
-          `core.hooksPath=${toGitConfigPath(hooksPath)}`,
+          ...snapshotGitIsolationArgs(hooksPath),
           ...(input.author
             ? ['-c', `user.name=${input.author.name}`, '-c', `user.email=${input.author.email}`]
             : []),
@@ -504,7 +503,7 @@ export async function createShadowSavepoint(
   return withTemporaryIndex(repoPath, async (extraEnv) => {
     if (stagePathspecs.length > 0) {
       await withPathspecFile(stagePathspecs, (pathspecFile) =>
-        gitExec(
+        isolatedGitExec(
           ['add', '-A', '--pathspec-from-file', pathspecFile, '--pathspec-file-nul'],
           repoPath,
           { extraEnv },
@@ -997,10 +996,6 @@ async function withDisabledHooks<T>(fn: (hooksPath: string) => Promise<T>): Prom
   } finally {
     await fs.rm(hooksPath, { recursive: true, force: true });
   }
-}
-
-function toGitConfigPath(filePath: string): string {
-  return filePath.replace(/\\/g, '/');
 }
 
 function isUnbornHeadError(err: GitExecError): boolean {

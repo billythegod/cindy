@@ -9304,6 +9304,7 @@
       "editCancel": "取消",
       "editSend": "傳送",
       "editRollbackHint": "傳送將撤銷上一輪對 {{count}} 個檔案的改動",
+      "editConversationOnlyHint": "傳送不會恢復專案檔案，上一輪的檔案改動會保留",
       "forkErrors": {
         "unsupportedHistory": "目標位置對應的歷史引擎會話已不可用，無法從這裡開啟新任務",
         "noPriorAssistant": "請在 AI 回覆之後的訊息上開啟新任務",
@@ -9343,7 +9344,7 @@
         "continueWillTruncate": "繼續後會移除這則訊息之後的對話記錄",
         "noPerFileDiff": "該 SDK 版本不支援單檔案 diff 預覽",
         "summaryDefault": "後續訊息會被丟棄，工作目錄裡的 {{count}} 個檔案會回退到那一刻。",
-        "summaryRunning": "當前執行會被停止；後續訊息和對應檔案改動會被回退。",
+        "summaryRunning": "當前任務會被停止；這則訊息之後的對話會被回退。停止前無法確認專案檔案是否會恢復。",
         "summaryEmpty": "這則訊息之後沒有偵測到專案檔案改動，繼續後會移除後續對話記錄。",
         "summaryEmptyWithNote": "後續訊息會被丟棄。",
         "runningNotice": "任務仍在執行。確認後會先停止任務，再按最新狀態執行回退。",

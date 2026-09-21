@@ -78,11 +78,35 @@ export function subscribeGitSafetyMode(cb: ModeSubscriber): () => void {
   };
 }
 
+function hasExplicitLegacyOptOut(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY) === null
+      && localStorage.getItem(LEGACY_STORAGE_KEY) === 'false';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Old `writePatch({ autoSnapshotEnabled: false })` deleted the main override,
+ * so explicit opt-out looks like "never configured" on disk. The renderer
+ * legacy key is the remaining durable marker; persist it to main *before*
+ * any GET can overwrite the mirror with the new default.
+ */
+export async function persistLegacyGitSafetyOptOut(): Promise<boolean> {
+  try {
+    if (!hasExplicitLegacyOptOut()) return false;
+    await window.electronAPI.maker.gitSafetySet('off');
+    setGitSafetyMode('off');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function bootstrapGitSafetySettingsFromMain(): Promise<void> {
   try {
-    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
-    const explicitLegacyOff =
-      localStorage.getItem(STORAGE_KEY) === null && legacy === 'false';
+    if (await persistLegacyGitSafetyOptOut()) return;
     const settings = await window.electronAPI.maker.gitSafetyGet();
     const mode =
       settings.mode === 'off' || settings.mode === 'existing-git' || settings.mode === 'all-projects'
@@ -90,14 +114,6 @@ export async function bootstrapGitSafetySettingsFromMain(): Promise<void> {
         : settings.autoSnapshotEnabled
           ? 'all-projects'
           : 'off';
-    if (explicitLegacyOff && mode === 'existing-git') {
-      // The old renderer mirror is the only durable marker for users who
-      // explicitly turned the old switch off; the old main override removed
-      // the false default and is therefore indistinguishable from no override.
-      await window.electronAPI.maker.gitSafetySet('off');
-      setGitSafetyMode('off');
-      return;
-    }
     setGitSafetyMode(mode);
   } catch {
     // preload unavailable / IPC failed — keep local fallback.

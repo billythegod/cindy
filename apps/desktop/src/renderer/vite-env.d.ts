@@ -6489,7 +6489,7 @@ interface ElectronAPI {
     rewindCommit: (
       sessionId: string,
       clientId: string,
-      opts?: { requireLatestUser?: boolean; stopIfRunning?: boolean },
+      opts?: { requireLatestUser?: boolean; stopIfRunning?: boolean; allowFileRestore?: boolean },
     ) => Promise<import('@/lib/ccAgent.types').Session>;
     forkStripEncrypted: (sourceSessionId: string) => Promise<import('@/lib/ccAgent.types').Session>;
     /**

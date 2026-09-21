@@ -632,7 +632,7 @@ async function loadCodexRewindNativeBoundary(
 export async function commitRewindAtMessage(
   sessionId: string,
   clientId: string,
-  opts?: { requireLatestUser?: boolean },
+  opts?: { requireLatestUser?: boolean; allowFileRestore?: boolean },
 ): Promise<Session> {
   const ctx = await loadRewindContext(sessionId, clientId, opts);
 
@@ -648,7 +648,6 @@ export async function commitRewindAtMessage(
   let rewindResult: Awaited<ReturnType<typeof makerSession.commitRewindFiles>> | undefined;
   let nativeForkAnchorSessionMap: Array<[string, string]> | undefined;
   if (ctx.agentKind === 'codex' || ctx.agentKind === 'pi') {
-    const filePlan = await buildCodexFilePlanForSession(sessionId, clientId, ctx.codexUserMessages ?? [], makerSession);
     // Codex 分页线程拒绝 thread/rollback(#4421):把 target 之前的原生 turn 边界
     // (持久化锚点或事件时间戳)一并交给 maker-core,遇拒绝时改走 thread/fork。
     const { sdkSessionId: previousSdkSessionId, ...nativeBoundary } =
@@ -664,21 +663,28 @@ export async function commitRewindAtMessage(
         error: compErr instanceof Error ? compErr.message : String(compErr),
       });
     };
-    // shadow 保存点走文件恢复执行器,legacy 保存点走原 revert 执行器;
-    // conversation-only 计划两个执行器都会直接透传 thread rollback。
-    const result =
-      filePlan.mode === 'file-restore'
-        ? await executeCodexFileRestorePlanWithThreadRollback(filePlan, sessionId, {
-            commitThreadRollback,
-            onCompensationError: (compErr, execution) =>
-              logCompensationError(compErr, execution.rollbackCommit),
-          })
-        : await executeCodexFileRewindPlanWithThreadRollback(filePlan, sessionId, {
-            commitThreadRollback,
-            onCompensationError: (compErr, execution) =>
-              logCompensationError(compErr, execution.rollbackCommit),
-          });
-    rewindResult = result.threadRollback;
+    // Preview that told the user files would not change must not later restore
+    // them if a savepoint appears between preview and confirm.
+    if (opts?.allowFileRestore === false) {
+      rewindResult = await commitThreadRollback();
+    } else {
+      const filePlan = await buildCodexFilePlanForSession(sessionId, clientId, ctx.codexUserMessages ?? [], makerSession);
+      // shadow 保存点走文件恢复执行器,legacy 保存点走原 revert 执行器;
+      // conversation-only 计划两个执行器都会直接透传 thread rollback。
+      const result =
+        filePlan.mode === 'file-restore'
+          ? await executeCodexFileRestorePlanWithThreadRollback(filePlan, sessionId, {
+              commitThreadRollback,
+              onCompensationError: (compErr, execution) =>
+                logCompensationError(compErr, execution.rollbackCommit),
+            })
+          : await executeCodexFileRewindPlanWithThreadRollback(filePlan, sessionId, {
+              commitThreadRollback,
+              onCompensationError: (compErr, execution) =>
+                logCompensationError(compErr, execution.rollbackCommit),
+            });
+      rewindResult = result.threadRollback;
+    }
     // thread/rollback 或分页 fork 换出新 thread id 时,保留消息里的 nativeForkAnchor
     // 仍指向旧 thread,下一次回退/fork 会把它们判为异线程锚点丢弃(#4423 review
     // P2)。与 fork.session 一样在同一事务里把 sdkSessionId 重映射到新 thread。
@@ -690,11 +696,13 @@ export async function commitRewindAtMessage(
     ) {
       nativeForkAnchorSessionMap = [[previousSdkSessionId, rewindResult.sdkSessionId]];
     }
-  } else if (ctx.userUuid) {
+  } else if (ctx.userUuid && opts?.allowFileRestore !== false) {
     rewindResult = await makerSession.commitRewindFiles(ctx.userUuid, ctx.assistantUuid!);
   } else {
     log.info(
-      `[rewind commit] sid=${sessionId.slice(0, 8)} userUuid missing — skip SDK rewindFiles, only set pendingRewindTo via empty userUuid path`,
+      opts?.allowFileRestore === false
+        ? `[rewind commit] sid=${sessionId.slice(0, 8)} allowFileRestore=false — skip SDK rewindFiles`
+        : `[rewind commit] sid=${sessionId.slice(0, 8)} userUuid missing — skip SDK rewindFiles, only set pendingRewindTo via empty userUuid path`,
     );
     // 走一遍仅为了让 maker-core 设 pendingRewindTo. 它内部 rewindFiles('') 会 SDK 报错,
     // 我们 catch 了 warn + 继续 (close + 设标记仍执行)。这与老链路 "userUuid 缺时跳过

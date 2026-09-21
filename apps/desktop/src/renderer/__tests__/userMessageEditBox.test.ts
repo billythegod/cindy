@@ -430,4 +430,16 @@ describe('UserMessageEditBox — 取消与键盘', () => {
     const { findByText } = renderBox();
     expect(await findByText('chat.userMessage.editRollbackHint')).toBeTruthy();
   });
+
+  it('preview 为 conversation-only 时明确提示文件不会恢复', async () => {
+    previewMock.mockResolvedValueOnce({
+      canRewind: true,
+      conversationOnly: true,
+      filesChanged: [],
+      insertions: 0,
+      deletions: 0,
+    });
+    const { findByText } = renderBox();
+    expect(await findByText('chat.userMessage.editConversationOnlyHint')).toBeTruthy();
+  });
 });

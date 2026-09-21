@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   getGitSafetyMode,
   getGitSafetyAutoSnapshotEnabled,
+  persistLegacyGitSafetyOptOut,
   setGitSafetyMode,
   subscribeGitSafetyAutoSnapshotEnabled,
   subscribeGitSafetyMode,
@@ -92,6 +93,13 @@ export function useGitSafetySettings(): {
   const [isCustomized, setIsCustomized] = useState(false);
 
   const refresh = useCallback(async (isCancelled: () => boolean = () => false) => {
+    if (await persistLegacyGitSafetyOptOut()) {
+      if (isCancelled()) return;
+      setModeState('off');
+      setEnabledState(false);
+      setIsCustomized(true);
+      return;
+    }
     const settings = await window.electronAPI.maker.gitSafetyGet();
     if (isCancelled()) return;
     const nextMode = modeFromWire(settings);

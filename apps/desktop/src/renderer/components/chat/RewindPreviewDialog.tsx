@@ -12,6 +12,7 @@
  *               └─ canRewind=false 或抛错        → Error（红色 alert + "知道了"）
  *
  *   Confirm 点击（Running / Default / Empty）→ 调 rewindCommit(stopIfRunning=true)
+ *             Empty 额外传 allowFileRestore:false，绑定预览时的 conversation-only 承诺
  *                                             → 成功后 onCommitted(session)
  *                                                  → 失败 toast.error 但保持弹窗开
  *
@@ -154,7 +155,10 @@ export function RewindPreviewDialog({
     if (state.kind !== 'running' && state.kind !== 'default' && state.kind !== 'empty') return;
     setCommitting(true);
     try {
-      const session = await rewindCommit(sessionId, clientId, { stopIfRunning: true });
+      const session = await rewindCommit(sessionId, clientId, {
+        stopIfRunning: true,
+        ...(state.kind === 'empty' ? { allowFileRestore: false } : {}),
+      });
       onCommitted(session);
       onOpenChange(false);
     } catch (err) {

@@ -1307,6 +1307,39 @@ describe('commitRewindAtMessage', () => {
     expect(result.id).toBe('sess-1');
   });
 
+  it('Codex commit: allowFileRestore=false skips file restore even if savepoints exist', async () => {
+    useFakeSession('codex');
+    detectCwdMock.mockResolvedValueOnce({ gitInstalled: true, isGitRepo: true, repoRoot: '/repo', isInsideWorktree: false });
+    listShadowSavepointsMock.mockResolvedValueOnce([
+      {
+        commit: 'sc1',
+        sessionId: 'sess-1',
+        kind: 'after-edit',
+        source: 'cindy',
+        parentCount: 1,
+        anchor: 'client-id',
+        baselineCommit: 'base1',
+        label: '本轮修改',
+        time: '2026-08-04T00:00:00+08:00',
+      },
+    ]);
+    commitRewindFilesMock.mockResolvedValueOnce({ sdkSessionId: 'conversation-thread-id' });
+    selectQueue.push(
+      [makeUserMessageRow({ agentMeta: null })],
+      [],
+      [makeUserMessageRow({ clientId: 'client-id', createdAt: 3000 })],
+      [],
+      [makeSessionRow({ agentKind: 'codex' })],
+    );
+
+    await commitRewindAtMessage('sess-1', 'client-id', { allowFileRestore: false });
+
+    expect(executeCodexFileRestorePlanWithThreadRollbackMock).not.toHaveBeenCalled();
+    expect(executeCodexFileRewindPlanWithThreadRollbackMock).not.toHaveBeenCalled();
+    expect(listShadowSavepointsMock).not.toHaveBeenCalled();
+    expect(commitRewindFilesMock).toHaveBeenCalledWith('', '', { tailTurnsToDrop: 1 });
+  });
+
   it('Codex commit: legacy file-rewind 计划仍分发给 revert 执行器', async () => {
     useFakeSession('codex');
     detectCwdMock.mockResolvedValueOnce({ gitInstalled: true, isGitRepo: true, repoRoot: '/repo', isInsideWorktree: false });

@@ -9305,6 +9305,7 @@
       "editCancel": "取消",
       "editSend": "发送",
       "editRollbackHint": "发送将撤销上一轮对 {{count}} 个文件的改动",
+      "editConversationOnlyHint": "发送不会恢复项目文件，上一轮的文件改动会保留",
       "forkErrors": {
         "unsupportedHistory": "目标位置对应的历史引擎会话已不可用，无法从这里开启新任务",
         "noPriorAssistant": "请在 AI 回复之后的消息上开启新任务",
@@ -9344,7 +9345,7 @@
         "continueWillTruncate": "继续后会移除这条消息之后的对话记录",
         "noPerFileDiff": "该 SDK 版本不支持单文件 diff 预览",
         "summaryDefault": "后续消息会被丢弃，工作目录里的 {{count}} 个文件会回退到那一刻。",
-        "summaryRunning": "当前执行会被停止；后续消息和对应文件改动会被回退。",
+        "summaryRunning": "当前任务会被停止；这条消息之后的对话会被回退。停止前无法确认项目文件是否会恢复。",
         "summaryEmpty": "这条消息之后没有检测到项目文件改动，继续后会移除后续对话记录。",
         "summaryEmptyWithNote": "后续消息会被丢弃。",
         "runningNotice": "任务仍在运行。确认后会先停止任务，再按最新状态执行回退。",
