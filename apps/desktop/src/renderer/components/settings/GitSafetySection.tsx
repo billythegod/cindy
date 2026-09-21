@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { useGitSafetySettings } from '@/hooks/useGitSafetySettings';
 import type { GitSafetyMode } from '@/lib/gitSafetySettingsStore';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 
 export function GitSafetySection() {
   const { t } = useTranslation();
@@ -45,17 +46,18 @@ export function GitSafetySection() {
             <p className="text-12 leading-[1.4] text-[var(--settings-section-sublabel)] opacity-70">{t('settings.gitSafety.description')}</p>
           </div>
 
-          <select
+          <SegmentedControl
             value={mode}
-            onChange={(event) => handleModeChange(event.target.value as GitSafetyMode)}
+            onValueChange={handleModeChange}
             disabled={saving}
             aria-label={t('settings.gitSafety.modeAria')}
-            className="min-w-[180px] rounded-lg border border-[var(--settings-theme-card-border)] bg-[var(--settings-theme-card-bg)] px-2 py-1.5 text-12 text-[var(--settings-section-sublabel)]"
-          >
-            <option value="off">{t('settings.gitSafety.modes.off')}</option>
-            <option value="existing-git">{t('settings.gitSafety.modes.existingGit')}</option>
-            <option value="all-projects">{t('settings.gitSafety.modes.allProjects')}</option>
-          </select>
+            options={[
+              { value: 'off', label: t('settings.gitSafety.modes.off') },
+              { value: 'existing-git', label: t('settings.gitSafety.modes.existingGit') },
+              { value: 'all-projects', label: t('settings.gitSafety.modes.allProjects') },
+            ] satisfies ReadonlyArray<{ value: GitSafetyMode; label: string }>}
+            fullWidth
+          />
         </div>
       </div>
     </div>

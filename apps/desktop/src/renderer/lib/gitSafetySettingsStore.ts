@@ -24,7 +24,8 @@ export function getGitSafetyMode(): GitSafetyMode {
   try {
     const value = localStorage.getItem(STORAGE_KEY);
     if (value === 'off' || value === 'existing-git' || value === 'all-projects') return value;
-    return modeFromLegacy(localStorage.getItem(LEGACY_STORAGE_KEY));
+    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+    return legacy === null ? 'existing-git' : modeFromLegacy(legacy);
   } catch {
     return 'off';
   }
@@ -70,6 +71,9 @@ export function subscribeGitSafetyMode(cb: ModeSubscriber): () => void {
 
 export async function bootstrapGitSafetySettingsFromMain(): Promise<void> {
   try {
+    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+    const explicitLegacyOff =
+      localStorage.getItem(STORAGE_KEY) === null && legacy === 'false';
     const settings = await window.electronAPI.maker.gitSafetyGet();
     const mode =
       settings.mode === 'off' || settings.mode === 'existing-git' || settings.mode === 'all-projects'
@@ -77,6 +81,14 @@ export async function bootstrapGitSafetySettingsFromMain(): Promise<void> {
         : settings.autoSnapshotEnabled
           ? 'all-projects'
           : 'off';
+    if (explicitLegacyOff && mode === 'existing-git') {
+      // The old renderer mirror is the only durable marker for users who
+      // explicitly turned the old switch off; the old main override removed
+      // the false default and is therefore indistinguishable from no override.
+      await window.electronAPI.maker.gitSafetySet('off');
+      setGitSafetyMode('off');
+      return;
+    }
     setGitSafetyMode(mode);
   } catch {
     // preload unavailable / IPC failed — keep local fallback.

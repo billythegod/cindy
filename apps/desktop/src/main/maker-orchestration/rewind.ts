@@ -414,7 +414,7 @@ async function previewCodexFileRewindPlan(plan: CodexRewindPlan): Promise<Rewind
   if (plan.mode === 'file-restore') return previewCodexFileRestorePlan(plan);
   if (plan.mode !== 'file-rewind') {
     const gitSafetyDisabled =
-      plan.fallbackReason !== 'remote-session' && !readGitSafetySettings().autoSnapshotEnabled;
+      plan.fallbackReason === 'no-savepoints' && !readGitSafetySettings().autoSnapshotEnabled;
     return {
       canRewind: true,
       conversationOnly: true,
