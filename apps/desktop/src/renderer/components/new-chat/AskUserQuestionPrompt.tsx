@@ -542,7 +542,10 @@ function AskUserQuestionForm({
       headerLeading={
         currentQ?.header ? (
           <Tip text={currentQ.header}>
-            <span className="mr-3 inline-block min-w-0 truncate rounded-[6px] bg-[var(--ask-header-chip-bg)] px-[8px] py-[2px] text-12 font-medium text-[var(--ask-badge-text)]">
+            <span
+              tabIndex={0}
+              className="mr-3 inline-block min-w-0 truncate rounded-[6px] bg-[var(--ask-header-chip-bg)] px-[8px] py-[2px] text-12 font-medium text-[var(--ask-badge-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+            >
               {currentQ.header}
             </span>
           </Tip>
