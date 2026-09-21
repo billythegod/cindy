@@ -2463,7 +2463,6 @@ function HomeScreenContent({ width, onDismiss, newSessionInSystemBar = false, on
   // top/left/right 三边不用原生 SafeAreaView 而是手动 padding:原生实现旋转时有概率
   // 漏更新,横屏 insets 残留到竖屏导致整页错位几秒(残留判定与取舍见 screenEdgeInsets.ts)。
   const edgePadding = useScreenEdgePadding({
-    legacyPhoneLayout: Platform.OS === "ios" && !Platform.isPad && Number.parseInt(String(Platform.Version), 10) < 27,
     insets,
     windowHeight: screenHeight,
     windowWidth: screenWidth,

@@ -1,3 +1,4 @@
+import { HomeHeaderGlassButton } from '@/session/HomeHeaderGlassButton';
 import { HomeNewTaskButton } from '@/session/HomeNewTaskButton';
 import { RecentMessageHistories, MessageHistoryOverlay } from '@/session/RecentMessageHistories';
 import { rememberRecentTask } from '@/session/recentTasks';
@@ -31,6 +32,7 @@ import {
   List,
   ListTodo,
   Monitor,
+  Menu,
   Mic,
   Pencil,
   Pin,
@@ -2694,7 +2696,7 @@ export default function SessionScreen() {
   const composerTouchLayout = useMemo(() => buildComposerTouchLayout({
     screenWidth: detailViewport.width,
   }), [detailViewport.width]);
-  // All nonpersistent windows offer quick switching separately from back navigation.
+  // Wide nonpersistent windows offer quick switching separately from back navigation.
   const wideSessionNav = useMemo(() => buildWideSessionNavLayout({
     iosPad: Platform.OS === 'ios' && Platform.isPad,
     platform: Platform.OS,
@@ -2715,6 +2717,11 @@ export default function SessionScreen() {
   // pending 只能拦住「首击本身就是导航」的连点;遮罩/back/左滑/当前任务先关闭时 pending
   // 仍为空。closing 从任一关闭入口同步置 true,完整覆盖退场 commit 前的快速二次点击。
   const sessionListDrawerClosingRef = useRef(false);
+  const openSessionListDrawer = useCallback(() => {
+    if (!wideSessionNav.enabled || paneLayout.persistent || sessionListDrawerClosingRef.current) return;
+    setSessionListDrawerOverlayMounted(true);
+    setSessionListDrawerOpen(true);
+  }, [paneLayout.persistent, wideSessionNav.enabled]);
   const closeSessionListDrawer = useCallback(() => {
     if (!sessionListDrawerOverlayMounted) return;
     if (sessionListDrawerClosingRef.current) return;
@@ -8945,6 +8952,7 @@ export default function SessionScreen() {
               messageCount={Math.max(messages.length, currentSession?._count?.messages ?? 0)}
               messageOnly={sessionManagedByHost}
               onBack={sessionListDrawerOverlayMounted ? closeSessionListDrawer : goBackToHome}
+              onOpenSessionList={!paneLayout.persistent && wideSessionNav.enabled ? openSessionListDrawer : undefined}
               onNewSession={paneLayout.persistent ? handleDrawerNewSession : undefined}
               onOpenFiles={() => {
                 if (!currentSession?.workingDir) return;
@@ -9778,6 +9786,7 @@ function SessionHeaderBar({
   messageOnly,
   onBack,
   onNewSession,
+  onOpenSessionList,
   onOpenFiles,
   onOpenSettings,
   onOpenUsage,
@@ -9806,6 +9815,7 @@ function SessionHeaderBar({
   messageOnly: boolean;
   onBack(): void;
   onNewSession?: () => void;
+  onOpenSessionList?: () => void;
   onOpenFiles(): void;
   onOpenSettings(): void;
   onOpenUsage(): void;
@@ -9857,6 +9867,12 @@ function SessionHeaderBar({
   });
   const nativeHeader = Platform.OS === 'ios';
   const systemBack = useSystemNavigationBack();
+  const sessionListButton = onOpenSessionList ? (
+    <HomeHeaderGlassButton accessibilityLabel={t('home.drawer.openA11y')}
+      onPress={onOpenSessionList} testID="session.sessionListButton">
+      <Menu color={colors.textPrimary} size={iconSize.action} strokeWidth={iconStroke.regular} />
+    </HomeHeaderGlassButton>
+  ) : null;
 
   // Let UINavigationBar align controls with the system status area, including Duo portrait.
   if (horizontalSystemHeader) {
@@ -9874,6 +9890,7 @@ function SessionHeaderBar({
         ),
       }} />
       <Stack.Toolbar placement="left">
+        {sessionListButton ? <Stack.Toolbar.View hidesSharedBackground>{sessionListButton}</Stack.Toolbar.View> : null}
         <Stack.Toolbar.View hidesSharedBackground>
           <SessionHeaderNativeBack label={t('shared.back')} onPress={onBack} />
         </Stack.Toolbar.View>
@@ -9910,6 +9927,7 @@ function SessionHeaderBar({
   return (
     <View style={[styles.sessionHeaderBar, nativeHeader && styles.sessionHeaderBarNative]} testID="session.summary">
       <SystemNavigationBack label={t('shared.back')} onPress={onBack} />
+      {sessionListButton}
       {systemBack ? <Stack.Toolbar placement="right">
         <Stack.Toolbar.Button icon={require('../../assets/navigation/monitor.png')} iconRenderingMode="template"
           accessibilityLabel={t('remoteDesktop.title')} disabled={!currentSession} onPress={onOpenRemoteDesktop} />

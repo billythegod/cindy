@@ -260,7 +260,6 @@ export function RemoteDesktopSession({
   const insets = useSafeAreaInsets();
   const windowSize = useWindowDimensions();
   const edgePadding = useScreenEdgePadding({
-    legacyPhoneLayout: Platform.OS === "ios" && !Platform.isPad && Number.parseInt(String(Platform.Version), 10) < 27,
     insets,
     windowWidth: windowSize.width,
     windowHeight: windowSize.height,

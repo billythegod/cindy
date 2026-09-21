@@ -23,7 +23,7 @@ export function buildWideSessionNavLayout(
   input: WideSessionNavLayoutInput,
 ): WideSessionNavLayout {
   const windowWidth = normalizeDimension(input.windowWidth);
-  const enabled = windowWidth > 0;
+  const enabled = windowWidth >= 600;
   if (!enabled) return { drawerWidth: 0, enabled };
   const drawerWidth = Math.min(
     Math.max(0, windowWidth - 24),

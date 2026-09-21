@@ -1,6 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('react-native', () => ({
+  Platform: { OS: 'android', Version: 36 },
+  Dimensions: { get: () => ({ width: 400, height: 800 }) },
+}));
 import {
   getStablePortraitTopMemory,
+  isLegacyPhoneWindow,
   recordStablePortraitTop,
   resetStablePortraitTopMemoryForTests,
   resolveScreenEdgePadding,
@@ -94,5 +99,28 @@ describe('screenEdgeInsets', () => {
       windowHeight: 874,
       windowWidth: 402,
     })).toEqual({ paddingLeft: 0, paddingRight: 0, paddingTop: 59 });
+  });
+});
+
+
+describe('legacy phone window eligibility', () => {
+  const phone = { platform: 'android', version: 36, iosPad: false,
+    windowWidth: 400, windowHeight: 776, screenWidth: 400, screenHeight: 800 };
+  it('repairs Android full-screen single-cutout rotation residue', () => {
+    expect(resolveScreenEdgePadding({ legacyPhoneLayout: isLegacyPhoneWindow(phone),
+      fallbackPortraitTop: 24, insets: { top: 0, left: 30, right: 0 },
+      windowWidth: 400, windowHeight: 776,
+    })).toEqual({ paddingLeft: 0, paddingRight: 0, paddingTop: 24 });
+  });
+  it.each([
+    { windowWidth: 320 }, { windowHeight: 400 },
+    { screenWidth: 800, screenHeight: 1000, windowWidth: 800, windowHeight: 1000 },
+    { platform: 'ios', version: 27 }, { platform: 'ios', version: 26, iosPad: true },
+    { platform: 'web' },
+  ])('keeps independent edges outside legacy phone windows: %o', (overrides) => {
+    expect(isLegacyPhoneWindow({ ...phone, ...overrides })).toBe(false);
+  });
+  it('retains the pre-27 iPhone workaround', () => {
+    expect(isLegacyPhoneWindow({ ...phone, platform: 'ios', version: 26 })).toBe(true);
   });
 });

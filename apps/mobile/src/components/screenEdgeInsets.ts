@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { Dimensions, Platform } from 'react-native';
 
 /** Four edges are independent on resizable displays. The old rotation workaround
  * is opt-in for legacy phone layouts, never inferred from an inset's shape alone. */
@@ -10,6 +11,22 @@ export interface ScreenEdgeInsetsInput {
   insets: { top: number; left: number; right: number };
   windowHeight: number;
   windowWidth: number;
+}
+
+/** Only a compact, full-display Android window uses the legacy phone workaround.
+ * Split/freeform windows and tablet/foldable interiors retain independent edges. */
+export function isLegacyPhoneWindow(input: {
+  platform: string; iosPad: boolean; version: string | number;
+  windowWidth: number; windowHeight: number;
+  screenWidth: number; screenHeight: number;
+}): boolean {
+  if (input.platform === 'ios') return !input.iosPad && Number.parseInt(String(input.version), 10) < 27;
+  if (input.platform !== 'android') return false;
+  const { screenWidth, screenHeight, windowWidth, windowHeight } = input;
+  return Math.min(screenWidth, screenHeight) > 0 && Math.min(screenWidth, screenHeight) < 600
+    && Math.abs(windowWidth - screenWidth) < 1
+    // Android may exclude status/navigation bars from the application window.
+    && screenHeight >= windowHeight && screenHeight - windowHeight <= 96;
 }
 
 export interface ScreenEdgePadding {
@@ -71,7 +88,11 @@ export function useScreenEdgePadding(input: {
     recordStablePortraitTop({ top: insets.top, windowHeight, windowWidth });
   }, [insets.top, windowHeight, windowWidth]);
   return resolveScreenEdgePadding({
-    legacyPhoneLayout: input.legacyPhoneLayout,
+    legacyPhoneLayout: input.legacyPhoneLayout ?? isLegacyPhoneWindow({
+      platform: Platform.OS, iosPad: Platform.OS === 'ios' && Platform.isPad,
+      version: Platform.Version, windowWidth, windowHeight,
+      screenWidth: Dimensions.get('screen').width, screenHeight: Dimensions.get('screen').height,
+    }),
     fallbackPortraitTop: getStablePortraitTopMemory(),
     insets,
     windowHeight,

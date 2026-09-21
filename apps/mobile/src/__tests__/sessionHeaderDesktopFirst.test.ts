@@ -94,8 +94,11 @@ describe('mobile session header desktop-first surface', () => {
     const source = readTextLf(resolve(process.cwd(), 'app/sessions/[sessionId].tsx'), 'utf8');
 
     // 窄窗口仅保留返回；主页列仅在宽窗口常驻。
-    expect(source).not.toContain('onOpenSessionList');
-    expect(source).not.toContain('session.sessionListButton');
+    expect(source).toContain('onOpenSessionList={!paneLayout.persistent && wideSessionNav.enabled ? openSessionListDrawer : undefined}');
+    expect(source).toContain('setSessionListDrawerOverlayMounted(true);');
+    expect(source).toContain('setSessionListDrawerOpen(true);');
+    expect(source).toContain('session.sessionListButton');
+    expect(source).toContain('{sessionListButton ? <Stack.Toolbar.View hidesSharedBackground>{sessionListButton}</Stack.Toolbar.View> : null}');
     expect(source).toContain("import { buildWideSessionNavLayout } from '@/session/wideSessionNav';");
     expect(source).toContain("import { SessionListDrawer } from '@/session/SessionListDrawer';");
     expect(source).toContain('switchDrawerSessionInPlace,');
