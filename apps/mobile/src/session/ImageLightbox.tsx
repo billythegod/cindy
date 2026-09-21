@@ -422,7 +422,8 @@ export const ImageLightbox = memo(function ImageLightbox({
   const handleShare = useCallback(() => {
     if (!activeImage || !activeUri || !onShareImage || sharingRef.current || submittingRef.current) return;
     const state = resolveMap[activeImage.url];
-    const mimeType = state?.status === 'ready' ? state.media.mimeType : undefined;
+    const mimeType = (state?.status === 'ready' ? state.media.mimeType : undefined)
+      ?? activeImage.payload.media.mimeType;
     const sizeBytes = state?.status === 'ready' ? state.media.size : undefined;
     sharingRef.current = true;
     setSharing(true);
@@ -439,11 +440,11 @@ export const ImageLightbox = memo(function ImageLightbox({
       });
   }, [activeImage, activeUri, onShareImage, resolveMap]);
 
-  // 活跃页 mime(取件结果优先,兜底 uri 后缀):gif / svg 不开放画笔(烧录只留首帧)。
+  // 活跃页 MIME:取件结果优先,保留附件已知类型,最后兜底 URI 后缀。
   const activeResolveState = activeImage ? resolveMap[activeImage.url] : undefined;
-  const activeMimeType = activeResolveState?.status === 'ready'
+  const activeMimeType = ((activeResolveState?.status === 'ready'
     ? activeResolveState.media.mimeType
-    : undefined;
+    : undefined) ?? activeImage?.payload.media.mimeType)?.split(';', 1)[0].trim().toLowerCase();
   const activeLooksGif = !!activeUri && /\.gif(?:[?#]|$)/i.test(activeUri.split('?')[0] ?? activeUri);
   const activeLooksSvg = !!activeUri && (/\.svg(?:[?#]|$)/i.test(activeUri) || /^data:image\/svg\+xml[;,]/i.test(activeUri));
   const annotateVisible = !!annotation

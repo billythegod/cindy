@@ -2,6 +2,8 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildAttachmentPayload } from '@/session/messagePayload';
+import { svgAttachmentForDisplay } from '@/session/messageAttachments';
 import {
   ImageLightbox,
   type ImageLightboxProps,
@@ -28,7 +30,8 @@ const runtime = vi.hoisted(() => ({
 vi.mock("expo-router", () => ({
   useNavigation: () => ({ setOptions: () => undefined }),
 }));
-vi.mock("react-i18next", () => ({
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...await importOriginal<typeof import('react-i18next')>(),
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 vi.mock("@/session/remoteMedia", () => ({
@@ -219,6 +222,26 @@ function mount(overrides: Partial<ImageLightboxProps> = {}) {
 }
 
 describe('SVG images in the shared lightbox', () => {
+  it.each([
+    { name: 'diagram', mimeType: 'image/svg+xml; charset=utf-8' },
+    { name: 'diagram.svg' },
+  ])('keeps opaque SVG attachment URLs unannotatable: %j', async (metadata) => {
+    const url = 'https://example.invalid/download?id=1';
+    const attachment = svgAttachmentForDisplay({
+      kind: 'file', path: url, previewable: false, ...metadata,
+    });
+    const payload = buildAttachmentPayload(attachment);
+    if (payload.kind !== 'media') throw new Error('Expected an image payload');
+    const onShareImage = vi.fn();
+    mount({
+      images: [{ key: 'svg', title: attachment.name, url, payload }], initialUrl: url,
+      annotation: { submitLabel: 'Send', onSubmit: vi.fn() }, onShareImage,
+    });
+    expect(runtime.nodes.has('message.imageLightboxAnnotateButton')).toBe(false);
+    await act(async () => runtime.nodes.get('message.imageLightboxShareButton').onPress());
+    expect(onShareImage).toHaveBeenCalledWith(payload.media, url, 'image/svg+xml', undefined);
+  });
+
   it.each([
     'https://example.invalid/diagram.svg?version=2',
     'data:image/svg+xml;base64,PHN2Zy8+',

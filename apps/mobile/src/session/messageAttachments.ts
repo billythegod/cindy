@@ -17,7 +17,7 @@ export function svgAttachmentForDisplay(
   if (!source) return attachment;
   const uri = mobileMarkdownImageUrlForWorkdir(source, workdir, messageKey, remoteHostId, sessionId);
   if (!uri) return attachment;
-  return { ...attachment, kind: 'image', uri, previewable: isMobileMarkdownImageDirectUrl(uri) };
+  return { ...attachment, kind: 'image', mimeType: 'image/svg+xml', uri, previewable: isMobileMarkdownImageDirectUrl(uri) };
 }
 
 export interface PartitionedMessageAttachments {
