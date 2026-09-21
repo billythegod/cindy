@@ -127,9 +127,9 @@
   },
   "rewind": {
     "readError": "無法讀取回退預覽結果，請重新同步後再試。",
-    "noFilesNote": "這則訊息之後沒有偵測到專案檔案改動，繼續後會移除後續聊天記錄。",
-    "conversationOnlyNote": "目前無法恢復專案檔案，因為沒有可用的 Git 保存點；繼續後會移除這則訊息之後的聊天記錄，專案檔案不會回到之前的狀態。",
-    "gitSafetyDisabledNote": "Git 安全保存點未開啟，因此目前無法恢復專案檔案。請在電腦端設定中開啟；繼續後會移除這則訊息之後的聊天記錄。",
+    "noFilesNote": "這則訊息之後沒有偵測到專案檔案改動，繼續後會移除後續對話記錄。",
+    "conversationOnlyNote": "目前無法恢復專案檔案，因為沒有可用的 Git 保存點；繼續後會移除這則訊息之後的對話記錄，專案檔案不會回到之前的狀態。",
+    "gitSafetyDisabledNote": "Git 安全保存點未開啟，因此目前無法恢復專案檔案。請在電腦端設定中開啟；繼續後會移除這則訊息之後的對話記錄。",
     "moreFiles": "另有 {{count}} 個檔案",
     "stats": "{{count}} 個檔案 · +{{insertions}} / -{{deletions}} 行",
     "gotIt": "知道了",

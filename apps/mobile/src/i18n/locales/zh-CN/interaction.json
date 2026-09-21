@@ -127,9 +127,9 @@
   },
   "rewind": {
     "readError": "无法读取回退预览结果，请重新同步后再试。",
-    "noFilesNote": "这条消息之后没有检测到项目文件改动，继续后会移除后续聊天记录。",
-    "conversationOnlyNote": "当前无法恢复项目文件，因为没有可用的 Git 保存点；继续后会移除这条消息之后的聊天记录，项目文件不会回到之前的状态。",
-    "gitSafetyDisabledNote": "Git 安全保存点未开启，因此当前无法恢复项目文件。请在电脑端设置中开启；继续后会移除这条消息之后的聊天记录。",
+    "noFilesNote": "这条消息之后没有检测到项目文件改动，继续后会移除后续对话记录。",
+    "conversationOnlyNote": "当前无法恢复项目文件，因为没有可用的 Git 保存点；继续后会移除这条消息之后的对话记录，项目文件不会回到之前的状态。",
+    "gitSafetyDisabledNote": "Git 安全保存点未开启，因此当前无法恢复项目文件。请在电脑端设置中开启；继续后会移除这条消息之后的对话记录。",
     "moreFiles": "另有 {{count}} 个文件",
     "stats": "{{count}} 个文件 · +{{insertions}} / -{{deletions}} 行",
     "gotIt": "知道了",
