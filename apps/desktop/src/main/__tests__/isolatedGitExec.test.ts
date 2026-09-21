@@ -6,7 +6,11 @@ vi.mock('../worktree/gitExec', () => ({
   gitExec: (...args: unknown[]) => gitExecMock(...args),
 }));
 
-import { isolatedGitExec, snapshotGitIsolationArgs } from '../git-snapshot/isolatedGitExec';
+import {
+  isolatedGitExec,
+  snapshotGitIsolationArgs,
+  SnapshotGitIsolationError,
+} from '../git-snapshot/isolatedGitExec';
 
 describe('isolatedGitExec', () => {
   beforeEach(() => {
@@ -33,13 +37,14 @@ describe('isolatedGitExec', () => {
     expect(args.slice(-2)).toEqual(['--porcelain=v1', '-z']);
   });
 
-  it('overrides arbitrary discovered filter drivers and clears required', async () => {
+  it('overrides arbitrary discovered filter and textconv drivers', async () => {
     gitExecMock.mockImplementation(async (args: readonly string[]) => {
       if (args.includes('config')) {
         return {
           stdout: [
             'filter.evil.process=./evil.sh',
             'filter.evil.required=true',
+            'diff.evil.textconv=./evil.sh',
             'filter.lfs.required=true',
             'user.name=x',
           ].join('\n'),
@@ -54,8 +59,24 @@ describe('isolatedGitExec', () => {
     const commandArgs = gitExecMock.mock.calls[1][0] as string[];
     expect(commandArgs).toContain('filter.evil.process=');
     expect(commandArgs).toContain('filter.evil.required=false');
+    expect(commandArgs).toContain('diff.evil.textconv=');
     expect(commandArgs).toContain('filter.lfs.required=false');
     expect(commandArgs.slice(-2)).toEqual(['add', '-A']);
+  });
+
+  it('injects --no-textconv for snapshot diffs', async () => {
+    await isolatedGitExec(['diff', '--cached'], '/repo');
+    const commandArgs = gitExecMock.mock.calls[1][0] as string[];
+    expect(commandArgs.slice(-3)).toEqual(['diff', '--no-textconv', '--cached']);
+  });
+
+  it('aborts when repository config cannot be listed', async () => {
+    gitExecMock.mockRejectedValueOnce(new Error('maxBuffer length exceeded'));
+    await expect(isolatedGitExec(['add', '-A'], '/repo')).rejects.toBeInstanceOf(
+      SnapshotGitIsolationError,
+    );
+    expect(gitExecMock).toHaveBeenCalledTimes(1);
+    expect((gitExecMock.mock.calls[0][0] as string[]).slice(-2)).toEqual(['config', '--list']);
   });
 
   it('keeps isolation args ahead of the git subcommand', () => {

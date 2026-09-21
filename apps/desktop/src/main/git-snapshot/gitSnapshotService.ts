@@ -872,7 +872,7 @@ async function safeGitStdout(
   extraEnv: Record<string, string>,
 ): Promise<string> {
   try {
-    const { stdout } = await gitExec(args, repoPath, { extraEnv });
+    const { stdout } = await isolatedGitExec(args, repoPath, { extraEnv });
     return stdout;
   } catch (err) {
     log.debug('[createSnapshot] git read failed, degrade to empty', {
@@ -902,7 +902,7 @@ async function hasStagedChanges(
   extraEnv: Record<string, string>,
 ): Promise<boolean> {
   try {
-    await gitExec(['diff', '--cached', '--quiet'], repoPath, { extraEnv });
+    await isolatedGitExec(['diff', '--cached', '--quiet'], repoPath, { extraEnv });
   } catch (err) {
     if (err instanceof GitExecError && err.exitCode === 1) return true;
     throw err;

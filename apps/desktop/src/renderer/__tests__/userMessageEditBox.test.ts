@@ -442,4 +442,21 @@ describe('UserMessageEditBox — 取消与键盘', () => {
     const { findByText } = renderBox();
     expect(await findByText('chat.userMessage.editConversationOnlyHint')).toBeTruthy();
   });
+
+  it('conversation-only 发送把 allowFileRestore=false 传到 rewind commit', async () => {
+    previewMock.mockResolvedValueOnce({
+      canRewind: true,
+      conversationOnly: true,
+      filesChanged: [],
+      insertions: 0,
+      deletions: 0,
+    });
+    const { findByText, sendBtn } = renderBox();
+    await findByText('chat.userMessage.editConversationOnlyHint');
+    fireEvent.click(sendBtn);
+    await waitFor(() => expect(commitMock).toHaveBeenCalledTimes(1));
+    expect(commitMock.mock.calls[0][0]).toMatchObject({
+      allowFileRestore: false,
+    });
+  });
 });

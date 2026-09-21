@@ -2,11 +2,10 @@
  * Snapshot Git invocations must not honor repository-local executable config.
  *
  * Turn-start snapshots now run by default on existing Git directories. A
- * complete attacker-supplied `.git/config` can set `core.fsmonitor`,
- * `core.hooksPath`, or arbitrary `filter.*.clean/process` drivers. Every
- * snapshot `git` call therefore overrides hooks, fsmonitor, LFS, and any
- * discovered filter drivers — including `filter.*.required=false` so
- * emptying LFS commands does not fail `git add`.
+ * complete attacker-supplied `.git/config` can set hooks, fsmonitor, filter
+ * drivers, or diff textconv. Every snapshot `git` call overrides those keys.
+ * Config enumeration is fail-closed: if drivers cannot be listed, the
+ * snapshot is aborted instead of running unisolated Git.
  */
 
 import { promises as fs } from 'node:fs';
@@ -21,8 +20,18 @@ import {
 
 let emptyHooksDir: Promise<string> | null = null;
 
-const FILTER_SETTING =
-  /^filter\.([^=]+)\.(clean|smudge|process|required)=/i;
+const DRIVER_SETTING =
+  /^(filter\.[^=]+\.(?:clean|smudge|process|required)|diff\.[^=]+\.(?:textconv|command)|merge\.[^=]+\.driver)=/i;
+
+export class SnapshotGitIsolationError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = 'SnapshotGitIsolationError';
+    if (options?.cause !== undefined) {
+      (this as Error & { cause?: unknown }).cause = options.cause;
+    }
+  }
+}
 
 function toGitConfigPath(filePath: string): string {
   return filePath.replace(/\\/g, '/');
@@ -54,35 +63,41 @@ export function snapshotGitIsolationArgs(hooksPath: string): string[] {
   ];
 }
 
-async function discoveredFilterIsolationArgs(
+function overrideValue(key: string): string {
+  return /\.required$/i.test(key) ? 'false' : '';
+}
+
+function withNoTextconv(args: readonly string[]): string[] {
+  const idx = args.indexOf('diff');
+  if (idx === -1 || args.includes('--no-textconv')) return [...args];
+  return [...args.slice(0, idx + 1), '--no-textconv', ...args.slice(idx + 1)];
+}
+
+async function discoveredDriverIsolationArgs(
   isolation: readonly string[],
-  cwd?: string,
+  cwd: string,
   opts?: GitExecOpts,
 ): Promise<string[]> {
-  if (!cwd) return [];
+  let stdout: string;
   try {
-    const { stdout } = await gitExec(
-      [...isolation, 'config', '--list'],
-      cwd,
-      opts,
+    ({ stdout } = await gitExec([...isolation, 'config', '--list'], cwd, opts));
+  } catch (cause) {
+    throw new SnapshotGitIsolationError(
+      'snapshot git isolation could not read repository config; aborting automatic snapshot',
+      { cause },
     );
-    const overrides = new Map<string, string>();
-    for (const line of stdout.split('\n')) {
-      const match = line.match(FILTER_SETTING);
-      if (!match) continue;
-      const name = match[1];
-      const field = match[2].toLowerCase();
-      const key = `filter.${name}.${field}`;
-      overrides.set(key, field === 'required' ? 'false' : '');
-    }
-    const args: string[] = [];
-    for (const [key, value] of overrides) {
-      args.push('-c', `${key}=${value}`);
-    }
-    return args;
-  } catch {
-    return [];
   }
+  const overrides = new Map<string, string>();
+  for (const line of stdout.split('\n')) {
+    const match = line.match(DRIVER_SETTING);
+    if (!match) continue;
+    overrides.set(match[1], overrideValue(match[1]));
+  }
+  const args: string[] = [];
+  for (const [key, value] of overrides) {
+    args.push('-c', `${key}=${value}`);
+  }
+  return args;
 }
 
 export async function isolatedGitExec(
@@ -92,9 +107,15 @@ export async function isolatedGitExec(
 ): Promise<GitExecResult> {
   const hooksPath = await getEmptyHooksDir();
   const isolation = snapshotGitIsolationArgs(hooksPath);
-  if (args[0] === 'config') {
-    return gitExec([...isolation, ...args], cwd, opts);
+  const command = withNoTextconv(args);
+  if (command[0] === 'config') {
+    return gitExec([...isolation, ...command], cwd, opts);
   }
-  const filters = await discoveredFilterIsolationArgs(isolation, cwd, opts);
-  return gitExec([...isolation, ...filters, ...args], cwd, opts);
+  if (!cwd) {
+    throw new SnapshotGitIsolationError(
+      'snapshot git isolation requires a repository path',
+    );
+  }
+  const drivers = await discoveredDriverIsolationArgs(isolation, cwd, opts);
+  return gitExec([...isolation, ...drivers, ...command], cwd, opts);
 }

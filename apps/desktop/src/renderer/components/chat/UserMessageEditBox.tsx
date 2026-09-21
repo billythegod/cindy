@@ -238,6 +238,7 @@ export function UserMessageEditBox({
           ...(preservedAgentReferences ? { agentReferences: preservedAgentReferences } : {}),
           ...(preservedPastedTextRanges ? { pastedTextRanges: preservedPastedTextRanges } : {}),
           ...(preservedSlashCommandRanges !== undefined ? { slashCommandRanges: preservedSlashCommandRanges } : {}),
+          ...(rollbackHint?.kind === 'conversation-only' ? { allowFileRestore: false } : {}),
         });
       }
       submittingRef.current = false;
@@ -262,7 +263,7 @@ export function UserMessageEditBox({
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [sessionId, messageClientId, text, initialText, initialSubmitText, images, files, workingDir, quotesEncoded, agentReferences, pastedTextRanges, slashCommandRanges, onSent, onCommitOverride, t]);
+  }, [sessionId, messageClientId, text, initialText, initialSubmitText, images, files, workingDir, quotesEncoded, agentReferences, pastedTextRanges, slashCommandRanges, rollbackHint, onSent, onCommitOverride, t]);
 
   const handleSend = useCallback(() => {
     if (!canSend || submittingRef.current) return;
