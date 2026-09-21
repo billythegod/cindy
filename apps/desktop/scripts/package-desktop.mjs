@@ -82,7 +82,6 @@ import {
   artifactBaseName,
   buildBuildInfo,
   debianArch,
-  packageNodeOptions,
 } from './ci/package-lib.mjs';
 import { applyMacSigningConfigToEnv, applyReleaseCdnBaseUrlToEnv } from './ci/release-regions.mjs';
 
@@ -187,8 +186,6 @@ function runForgeMake({ platform, arch, region, version, versionless, noSign, we
   console.log(`==> Running electron-forge make (${platform}-${arch}, region=${region})...`);
   const forgeEnv = {
     ...process.env,
-    // Shared by official and personal builds, including Make's clean child environment.
-    NODE_OPTIONS: packageNodeOptions(process.env),
     NODE_ENV: 'production',
     // 烘焙面只含 region + 端点清单自举基址,按 region 二选一。
     ...desktopClientBuildEnv({ allowEnvOverride: false, authRegion: region }),
@@ -220,7 +217,9 @@ function runForgeMake({ platform, arch, region, version, versionless, noSign, we
   // --no-sign:摘掉 CINDY_WIN_SIGN_CMD,让 forge postPackage 的内部 exe 签名一并
   // 跳过(forge.config.ts 只认这个 env;不摘的话外部签名命令失败会挂整个 make)。
   if (noSign) delete forgeEnv.CINDY_WIN_SIGN_CMD;
-  execSync(`npx electron-forge make --platform ${platform} --arch ${arch}`, {
+  execFileSync(process.execPath, [
+    path.join(__dirname, 'forge-cli.mjs'), 'make', '--platform', platform, '--arch', arch,
+  ], {
     cwd: DESKTOP_ROOT,
     stdio: 'inherit',
     env: forgeEnv,
