@@ -58,6 +58,7 @@ import {
   type CustomProviderConfig,
   type PiModelApi as NativePiModelApi,
   type Provider,
+  type ProviderMediaModel,
   type ProviderWireProtocol,
 } from '@cindy/model-providers';
 
@@ -1691,27 +1692,28 @@ function computeMerged(): Catalog {
   const modelRegistry = b.modelRegistry
     ? { ...b.modelRegistry, localModels: effectiveLocalModels }
     : undefined;
+  const userMediaMetadata = (provider: Provider, modelId: string, mediaModel: ProviderMediaModel) => {
+    const catalogId = providerCatalogId(provider);
+    const catalogModelId = catalogId !== provider.id && modelId.startsWith(`${provider.id}/`)
+      ? `${catalogId}/${modelId.slice(provider.id.length + 1)}` : modelId;
+    const identity =
+      findModelRegistryRoute(b.modelRegistry, catalogId, catalogModelId)?.entry.modelRef ??
+      findBaseModel(b.modelRegistry, catalogModelId)?.id;
+    const key = `${encodeURIComponent(provider.id)}:${modelId}`;
+    const userModel =
+      provider.source === 'user' && mediaModel.sourceAgent
+        ? provider.models[mediaModel.sourceAgent]
+            ?.find((m) => m.id === modelId)?.userModelConfig
+        : undefined;
+    return {
+      ...(identity ? localOverrides.baseModels?.[identity] : {}),
+      ...(userModel ? runtimeUserModelMetadata(userModel) : {}),
+      ...pickModelMetadata(localOverrides.patches[key]?.base),
+    };
+  };
   providers = providers.map((provider) =>
     projectProviderMediaModels(provider, b.modelRegistry, {
-      userMetadata: (modelId, mediaModel) => {
-        const catalogId = providerCatalogId(provider);
-        const catalogModelId = catalogId !== provider.id && modelId.startsWith(`${provider.id}/`)
-          ? `${catalogId}/${modelId.slice(provider.id.length + 1)}` : modelId;
-        const identity =
-          findModelRegistryRoute(b.modelRegistry, catalogId, catalogModelId)?.entry.modelRef ??
-          findBaseModel(b.modelRegistry, catalogModelId)?.id;
-        const key = `${encodeURIComponent(provider.id)}:${modelId}`;
-        const userModel =
-          provider.source === 'user' && mediaModel.sourceAgent
-            ? provider.models[mediaModel.sourceAgent]
-                ?.find((m) => m.id === modelId)?.userModelConfig
-            : undefined;
-        return {
-          ...(identity ? localOverrides.baseModels?.[identity] : {}),
-          ...(userModel ? runtimeUserModelMetadata(userModel) : {}),
-          ...pickModelMetadata(localOverrides.patches[key]?.base),
-        };
-      },
+      userMetadata: (modelId, mediaModel) => userMediaMetadata(provider, modelId, mediaModel),
     }),
   );
   // Subscription image_generation is one hosted capability, not the Platform model list.
@@ -1722,16 +1724,19 @@ function computeMerged(): Catalog {
         provider.imageModels?.length === 0) return provider;
     const id = `${provider.id}/gpt-image-2`;
     const previous = provider.imageModels?.find((model) => model.id === id);
-    const name = localOverrides.patches[`${encodeURIComponent(provider.id)}:${id}`]?.base?.name;
+    const defaults: ProviderMediaModel = {
+      id,
+      name: 'GPT Image Gen',
+      mode: 'image_generation',
+      modalities: { input: ['text', 'image'], output: ['image'] },
+      ...(previous?.defaultEnabled !== undefined ? { defaultEnabled: previous.defaultEnabled } : {}),
+      ...(previous?.disabled !== undefined ? { disabled: previous.disabled } : {}),
+    };
     return {
       ...provider,
       imageModels: [{
-        id,
-        name: name ?? 'GPT Image Gen',
-        mode: 'image_generation' as const,
-        modalities: { input: ['text', 'image'], output: ['image'] },
-        ...(previous?.defaultEnabled !== undefined ? { defaultEnabled: previous.defaultEnabled } : {}),
-        ...(previous?.disabled !== undefined ? { disabled: previous.disabled } : {}),
+        ...defaults,
+        ...userMediaMetadata(provider, id, previous ?? defaults),
       }],
       imageDefaults: provider.imageDefaults ? { standard: id } : undefined,
     };

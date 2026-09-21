@@ -88,6 +88,42 @@ describe('OpenAI account catalog identity', () => {
     expect(getActiveCatalog().providers.find(p => p.id === 'openai')!.imageModels).toHaveLength(1);
   });
 
+  it('preserves public image metadata overrides beneath per-connection overrides and restores capability defaults', () => {
+    setActiveCatalog(BUNDLED_CATALOG);
+    setCustomProviders([account()]);
+    const publicMetadata = {
+      name: 'My image capability',
+      description: 'Public custom description',
+      officialDocs: 'https://docs.example.com/public-image',
+      modalities: { input: ['text'], output: ['image'] },
+    };
+    const publicOverrides = { baseModels: { 'openai/gpt-image-2': publicMetadata } };
+    const image = (id: string) => getActiveCatalog().providers.find((p) => p.id === id)!.imageModels![0]!;
+    setLocalCatalogOverrides(sanitizeModelCatalogOverrides(publicOverrides).overrides);
+    for (const id of ['openai', accountId]) {
+      expect(image(id)).toMatchObject({ id: `${id}/gpt-image-2`, ...publicMetadata });
+    }
+    const connectionMetadata = {
+      name: 'Account image capability',
+      officialDocs: 'https://docs.example.com/account-image',
+      modalities: { input: [], output: ['image'] },
+    };
+    setLocalCatalogOverrides(sanitizeModelCatalogOverrides({
+      ...publicOverrides,
+      patches: { [`${accountId}:${accountId}/gpt-image-2`]: { base: connectionMetadata } },
+    }).overrides);
+    expect(image('openai')).toMatchObject(publicMetadata);
+    expect(image(accountId)).toMatchObject({ ...publicMetadata, ...connectionMetadata });
+
+    setLocalCatalogOverrides(EMPTY_MODEL_CATALOG_OVERRIDES);
+    for (const id of ['openai', accountId]) {
+      expect(image(id)).toMatchObject({
+        name: 'GPT Image Gen', modalities: { input: ['text', 'image'], output: ['image'] },
+      });
+      expect(image(id).officialDocs).toBeUndefined();
+    }
+  });
+
   it('switches only the builtin image connection between subscription and Platform without changing saved IDs', () => {
     setActiveCatalog(BUNDLED_CATALOG);
     setCustomProviders([account()]);
