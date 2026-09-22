@@ -18,7 +18,8 @@
 SSH 保持仅展示经过存在性复核的工具产物，不把 Desktop 消息时间与 SSH 主机文件时间比较。
 历史变更在既有只读 `git-review:remote-op` 上追加 `turn-list` / `turn-get`，
 按被控端任务 ID 读取已保存的摘要和精确差异，沿用 gzip 与 OVERSIZE 边界，不截断补丁。
-`maker:turn-change-set:updated` 仅推摘要，归属 `session:<id>`，沿用账号和任务可见性复核。
+`maker:turn-change-set:updated` 仅向同账号设备推摘要，归属 `session:<id>`，沿用账号和任务可见性复核。
+共享任务访客不接收该推送（含离线补发），其既有读取与操作权限不变。
 旧主机不认识新 op 时保留原无卡片行为，不回落读取控制端本机记录；完整历史变更展示需要两台
 电脑升级。旧控制端忽略新增摘要推送，原行为不变。
 撤销／重新应用追加独立写通道 `maker:turn-change-set:apply`，参数为任务 ID、变更 ID 和
