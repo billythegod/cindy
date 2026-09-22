@@ -12,6 +12,7 @@
 
 import type { AutoReviewUserIntent } from './agents/shared/auto-review-decision.js';
 import { randomUUID } from 'node:crypto';
+import { ToolLoopGuard } from './agents/shared/loop-guard.js';
 import type { ReviewableAction } from './agents/shared/auto-review.js';
 import type { AutoReviewDecision } from './agents/shared/auto-review-decision.js';
 
@@ -361,6 +362,7 @@ export type SessionGracefulStopResult =
 
 type TurnControlState = {
   generation: number;
+  toolLoopGuard: ToolLoopGuard | null;
   activeToolIds: Set<string>;
   anonymousActiveTools: number;
   pendingInteractionToolIds: Map<string, number>;
@@ -2151,6 +2153,9 @@ export class Session {
   private beginTurnControl(generation: number): void {
     this.turnControlState = {
       generation,
+      // Claude owns per-sidechain guards before translation. Pi/Codex share
+      // the same detector here, paired with this product turn's lifecycle.
+      toolLoopGuard: this.agentKind === 'claude-code' ? null : new ToolLoopGuard(),
       activeToolIds: new Set(),
       anonymousActiveTools: 0,
       pendingInteractionToolIds: new Map(),
@@ -2731,6 +2736,44 @@ export class Session {
     } else if (isCurrentGeneration && isTurnWatchdogLivenessEvent(event)) {
       this.armTurnStallWatchdog();
     }
+    // Deliver the completed tool result before the loop error; never discard
+    // evidence or count both full and summary projections of the same result.
+    if (isCurrentGeneration) this.observeToolLoop(event, resolvedGeneration);
+  }
+
+  private observeToolLoop(event: AgentEvent, generation: number): void {
+    if (event.type !== 'tool_use' && event.type !== 'tool_result_full') return;
+    const control = this.turnControlState;
+    if (!control?.toolLoopGuard || control.generation !== generation ||
+      generation !== this.turnGeneration || this.status !== 'active' || this.closePromise ||
+      event.turnScope === 'background' || event.sessionInstanceId !== this.instanceId ||
+      this.pendingInteractions > 0 || control.gracefulStopState !== 'none') return;
+    const data = event.data && typeof event.data === 'object'
+      ? event.data as Record<string, unknown> : {};
+    if (data.runtimeActivity === 'snapshot' || typeof data.toolUseId !== 'string') return;
+    if (event.type === 'tool_use') {
+      control.toolLoopGuard.onToolUse(data.toolUseId, data.toolName, data.input);
+      return;
+    }
+    if (event.type !== 'tool_result_full' || typeof data.fullText !== 'string') return;
+    const verdict = control.toolLoopGuard.onToolResult(data.toolUseId, data.fullText, data.isError === true);
+    if (verdict.kind !== 'hard') return;
+    this.fanOutEvent({
+      type: 'error',
+      data: {
+        message: `Repeated tool calls (${verdict.count}) indicate a tool loop; this turn was interrupted. You can send the next message to continue.`,
+        isTerminal: true,
+        reason: 'tool_use_loop_detected',
+        toolLoop: { kind: verdict.reason, count: verdict.count },
+      },
+      source: this.agentKind,
+    });
+    // A listener can synchronously take over. Never interrupt its replacement.
+    if (generation !== this.turnGeneration) return;
+    // abort() already owns confirmation/rebuild fallback; no second watchdog.
+    void this.abort().catch((error) => {
+      this.logger.warn('tool loop interrupt failed', { error: String(error) });
+    });
   }
 
   private clearTurnStallWatchdog(refresh = false): void {
