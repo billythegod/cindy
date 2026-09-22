@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StartRemoteSessionPanel } from '@/components/settings/RemoteHostDetail';
 import { AddRemoteProjectDialog } from '@/components/new-chat/AddRemoteProjectDialog';
 import { SshModelSelectionError } from '@/features/cc-agent/sshSessionModelSelection';
-import { sshModel, sshProvider } from '@/features/cc-agent/__tests__/sshModelFixtures';
+import {
+  sshModel,
+  sshProvider,
+  sshNativeCodexProvider,
+} from '@/features/cc-agent/__tests__/sshModelFixtures';
 import {
   beginProvidersRefresh,
   commitProvidersSnapshot,
@@ -50,8 +54,8 @@ function publish(models = [sshModel('available-model')]) {
   commitProvidersSnapshot(beginProvidersRefresh(), {
     dataOwnerId: 'owner',
     ownerGeneration: 1,
-    providerOrder: ['source'],
-    providers: [sshProvider('source', models)],
+    providerOrder: ['openai'],
+    providers: [sshNativeCodexProvider(models)],
   });
 }
 function start() {
@@ -92,6 +96,7 @@ beforeEach(() => {
 describe('ordinary SSH creation error presentation', () => {
   it.each([
     ['no-route', 'noCompatibleModel'],
+    ['unsupported-codex-source', 'unsupportedCodexSource'],
     ['catalog-loading', 'modelCatalogLoading'],
     ['catalog-error', 'modelCatalogFailed'],
   ] as const)('preserves the %s reason through the project dialog', async (reason, key) => {
@@ -112,6 +117,40 @@ describe('ordinary SSH creation error presentation', () => {
 afterEach(cleanup);
 
 describe('settings remote Codex creation', () => {
+  it.each(['xd', 'custom-responses', 'openai-second'])(
+    'rejects the saved %s route before directory or database changes',
+    async (providerId) => {
+      mocks.prefs.mockReturnValue({ model: 'available-model', providerId, effort: 'low' });
+      start();
+      await waitFor(() =>
+        expect(mocks.error).toHaveBeenCalledWith(
+          'settings.remote.startSession.unsupportedCodexSource',
+        ),
+      );
+      expect(mocks.stat).not.toHaveBeenCalled();
+      expect(mocks.mkdir).not.toHaveBeenCalled();
+      expect(mocks.create).not.toHaveBeenCalled();
+      expect(mocks.navigate).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not create a gateway-only task even with no saved provider', async () => {
+    commitProvidersSnapshot(beginProvidersRefresh(), {
+      dataOwnerId: 'owner',
+      ownerGeneration: 1,
+      providerOrder: ['xd'],
+      providers: [sshProvider('xd', [sshModel('codex/gpt-5.6-luna')])],
+    });
+    start();
+    await waitFor(() =>
+      expect(mocks.error).toHaveBeenCalledWith(
+        'settings.remote.startSession.unsupportedCodexSource',
+      ),
+    );
+    expect(mocks.stat).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
   it('creates with a catalog model, pinned provider and calibrated tuning', async () => {
     start();
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/cc-agent/new-task'));
@@ -121,7 +160,7 @@ describe('settings remote Codex creation', () => {
       workspaceKind: 'project',
       permissionMode: 'auto',
       model: 'available-model',
-      providerId: 'source',
+      providerId: 'openai',
       effort: 'high',
       fastMode: false,
       remoteHostId: 'remote-mac',
@@ -130,12 +169,12 @@ describe('settings remote Codex creation', () => {
 
   it('keeps valid saved preferences', async () => {
     publish([sshModel('first'), sshModel('chosen', { supportsFastMode: true })]);
-    mocks.prefs.mockReturnValue({ model: 'chosen', providerId: 'source', effort: 'low' });
+    mocks.prefs.mockReturnValue({ model: 'chosen', providerId: 'openai', effort: 'low' });
     start();
     await waitFor(() => expect(mocks.create).toHaveBeenCalled());
     expect(mocks.create.mock.calls[0][0]).toMatchObject({
       model: 'chosen',
-      providerId: 'source',
+      providerId: 'openai',
       effort: 'low',
       fastMode: true,
     });
@@ -186,7 +225,7 @@ describe('settings remote Codex creation', () => {
     await waitFor(() => expect(mocks.create).toHaveBeenCalled());
     expect(mocks.create.mock.calls[0][0]).toMatchObject({
       model: 'new-catalog-model',
-      providerId: 'source',
+      providerId: 'openai',
     });
   });
 

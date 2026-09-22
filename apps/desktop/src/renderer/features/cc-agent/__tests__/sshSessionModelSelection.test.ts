@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CatalogModel, ProviderView } from '@cindy/model-providers';
 import { resolveSshSessionModelSelection } from '../sshSessionModelSelection';
-import { sshModel, sshProvider } from './sshModelFixtures';
+import { sshModel, sshProvider, sshNativeCodexProvider } from './sshModelFixtures';
 
 function resolve(
   providers: ProviderView[],
@@ -19,52 +19,69 @@ function resolve(
 
 describe('SSH creation model selection', () => {
   it('replaces a removed model with an actual catalog route without naming another default', () => {
-    expect(resolve([sshProvider('custom-account')])).toEqual({
+    expect(resolve([sshNativeCodexProvider()])).toEqual({
       ok: true,
       model: 'available-model',
-      providerId: 'custom-account',
+      providerId: 'openai',
       effort: 'high',
       fastMode: false,
     });
   });
 
-  it('preserves a valid preference and uses that source’s effort and Fast capabilities', () => {
+  it('preserves a native preference and uses its effort and Fast capabilities', () => {
     const preferred = {
       model: 'chosen',
-      providerId: 'second',
+      providerId: 'openai',
       effort: 'low',
       fastMode: true,
     } as const;
     expect(
       resolve(
         [
-          sshProvider('first', [sshModel('chosen')]),
-          sshProvider('second', [sshModel('chosen', { efforts: ['low'], supportsFastMode: true })]),
+          sshProvider('xd', [sshModel('chosen')]),
+          sshNativeCodexProvider([
+            sshModel('chosen', { efforts: ['low'], supportsFastMode: true }),
+          ]),
         ],
         { preferred },
       ),
     ).toEqual({ ok: true, ...preferred });
   });
 
-  it('replaces an invalid source preference and pins the compatible same-model route', () => {
-    const local = sshProvider('openai');
-    local.routing.codex!.wireProtocol = 'openai-chat';
+  it.each(['xd', 'custom-responses', 'openai-second', 'removed-account'])(
+    'rejects an explicit %s connection instead of silently switching accounts',
+    (providerId) => {
+      expect(
+        resolve([sshNativeCodexProvider(), sshProvider(providerId)], {
+          preferred: { model: 'available-model', providerId, effort: 'high', fastMode: false },
+        }),
+      ).toEqual({ ok: false, reason: 'unsupported-codex-source' });
+    },
+  );
+
+  it.each(['xd', 'custom-responses', 'openai-second', 'openai'])(
+    'does not treat the controller-only %s route as a remote default login',
+    (id) => {
+      const provider = sshProvider(id, [sshModel('codex/gpt-5.6-luna')]);
+      provider.routing.codex!.wireProtocol = 'openai-responses';
+      if (id === 'openai-second') provider.auth = { method: 'oauth', native: 'codex' };
+      expect(resolve([provider])).toEqual({ ok: false, reason: 'unsupported-codex-source' });
+    },
+  );
+
+  it('ignores gateway aliases when choosing a fallback from a mixed catalog', () => {
     expect(
-      resolve([local, sshProvider('remote-compatible')], {
-        preferred: {
-          model: 'available-model',
-          providerId: 'openai',
-          effort: 'high',
-          fastMode: true,
-        },
-      }),
-    ).toMatchObject({ ok: true, model: 'available-model', providerId: 'remote-compatible' });
+      resolve([
+        sshProvider('xd', [sshModel('codex/gpt-5.6-luna')]),
+        sshNativeCodexProvider([sshModel('native-model-from-discovery')]),
+      ]),
+    ).toMatchObject({ ok: true, providerId: 'openai', model: 'native-model-from-discovery' });
   });
 
   it.each(['chatgpt/only-local', 'xai/only-local'])(
     'rejects subscription bridge model %s',
     (id) => {
-      expect(resolve([sshProvider('source', [sshModel(id)])])).toEqual({
+      expect(resolve([sshNativeCodexProvider([sshModel(id)])])).toEqual({
         ok: false,
         reason: 'no-route',
       });
@@ -76,7 +93,7 @@ describe('SSH creation model selection', () => {
     bridge.routing.codex!.wireProtocol = 'openai-chat';
     const account = sshProvider('openai-second');
     account.auth = { method: 'oauth', native: 'codex' };
-    expect(resolve([bridge, account])).toEqual({ ok: false, reason: 'no-route' });
+    expect(resolve([bridge, account])).toEqual({ ok: false, reason: 'unsupported-codex-source' });
   });
 
   it.each([
@@ -84,34 +101,33 @@ describe('SSH creation model selection', () => {
     { status: 'retired' },
     { mode: 'image_generation' },
   ] satisfies Partial<CatalogModel>[])('rejects a non-selectable model: %j', (patch) => {
-    expect(resolve([sshProvider('source', [sshModel('bad', patch)])])).toEqual({
+    expect(resolve([sshNativeCodexProvider([sshModel('bad', patch)])])).toEqual({
       ok: false,
       reason: 'no-route',
     });
   });
 
-  it('excludes disconnected, suspended, failed-discovery and disabled runtimes', () => {
-    const disconnected = { ...sshProvider('disconnected'), connected: false };
-    const suspended = { ...sshProvider('suspended'), suspended: true };
-    const failed = {
-      ...sshProvider('failed'),
-      modelDiscoveryFailure: { kind: 'upstream' as const, at: '2026-09-22T00:00:00Z' },
-    };
-    const disabled = sshProvider('disabled');
-    disabled.routing.codex!.disabled = true;
-    expect(resolve([disconnected, suspended, failed, disabled])).toEqual({
-      ok: false,
-      reason: 'no-route',
-    });
-  });
+  it.each(['disconnected', 'suspended', 'failed-discovery', 'disabled'])(
+    'excludes the native login when %s',
+    (state) => {
+      const provider = sshNativeCodexProvider();
+      if (state === 'disconnected') provider.connected = false;
+      if (state === 'suspended') provider.suspended = true;
+      if (state === 'failed-discovery') {
+        provider.modelDiscoveryFailure = { kind: 'upstream', at: '2026-09-22T00:00:00Z' };
+      }
+      if (state === 'disabled') provider.routing.codex!.disabled = true;
+      expect(resolve([provider])).toEqual({ ok: false, reason: 'no-route' });
+    },
+  );
 
   it('does not confuse model visibility with route admission', () => {
     expect(
-      resolve([sshProvider('source', [sshModel('hidden', { defaultEnabled: false })])]),
+      resolve([sshNativeCodexProvider([sshModel('hidden', { defaultEnabled: false })])]),
     ).toMatchObject({
       ok: true,
       model: 'hidden',
-      providerId: 'source',
+      providerId: 'openai',
     });
   });
 
@@ -119,18 +135,18 @@ describe('SSH creation model selection', () => {
     const getPresetEffort = vi.fn(() => 'max' as const);
     const getPresetFast = vi.fn(() => true);
     expect(
-      resolve([sshProvider('source', [sshModel('available-model', { supportsFastMode: true })])], {
+      resolve([sshNativeCodexProvider([sshModel('available-model', { supportsFastMode: true })])], {
         getPresetEffort,
         getPresetFast,
       }),
     ).toMatchObject({ ok: true, effort: 'high', fastMode: true });
-    expect(getPresetEffort).toHaveBeenCalledWith('codex', 'source', 'available-model');
-    expect(getPresetFast).toHaveBeenCalledWith('codex', 'source', 'available-model');
+    expect(getPresetEffort).toHaveBeenCalledWith('codex', 'openai', 'available-model');
+    expect(getPresetFast).toHaveBeenCalledWith('codex', 'openai', 'available-model');
   });
 
   it('retains the ordinary draft policy when the catalog has no effort levels', () => {
     expect(
-      resolve([sshProvider('source', [sshModel('plain', { efforts: [], defaultEffort: null })])]),
+      resolve([sshNativeCodexProvider([sshModel('plain', { efforts: [], defaultEffort: null })])]),
     ).toMatchObject({
       ok: true,
       effort: 'medium',
@@ -143,7 +159,7 @@ describe('SSH creation model selection', () => {
     { loading: true, loadFailed: true, reason: 'catalog-error' },
     { loading: false, loadFailed: true, reason: 'catalog-error' },
   ])('never selects from unready/stale data: %j', ({ loading, loadFailed, reason }) => {
-    expect(resolve([sshProvider('source')], { loading, loadFailed })).toEqual({
+    expect(resolve([sshNativeCodexProvider()], { loading, loadFailed })).toEqual({
       ok: false,
       reason,
     });

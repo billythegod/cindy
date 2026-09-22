@@ -647,6 +647,7 @@
         "agentProxyEnvPending": "等待應用環境變數 → {{url}}（主機連線後自動生效）"
       },
       "startSession": {
+        "unsupportedCodexSource": "SSH Codex 目前僅支援預設 OpenAI 訂閱模型，不會轉送本機其他供應商的設定。請在新增任務頁選擇該來源的模型，並同步遠端登入狀態。",
         "title": "在這臺遠端開新 Codex 任務",
         "hint": "新建一個繫結到這臺機器的 Maker。Codex 跑在遠端，你在這裡和它聊。工作目錄支援 ~ 展開，不存在會確認後建立。",
         "start": "開始",

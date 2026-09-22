@@ -647,6 +647,7 @@
         "agentProxyEnvPending": "환경 변수 적용 대기 중 → {{url}} (호스트 연결 후 자동 적용)"
       },
       "startSession": {
+        "unsupportedCodexSource": "SSH Codex는 현재 기본 OpenAI 구독 모델만 지원하며, 다른 로컬 제공자 설정은 전달하지 않습니다. 새 작업 화면에서 해당 연결의 모델을 선택하고 원격 로그인 상태를 동기화하세요.",
         "title": "이 원격에서 Codex 세션 시작",
         "hint": "이 머신에 고정된 새 Maker 를 만듭니다. Codex 는 원격에서 실행되고 여기서 채팅합니다. 작업 디렉토리는 ~ 확장을 지원하며, 없으면 확인 후 생성합니다.",
         "start": "시작",

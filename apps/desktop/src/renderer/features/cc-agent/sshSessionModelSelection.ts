@@ -2,6 +2,7 @@ import {
   connectedProvidersForAgent,
   effectiveSourceIdForModel,
   getModel,
+  isOpenAiSubscriptionProvider,
   type AgentKind,
   type ProviderView,
 } from '@cindy/model-providers';
@@ -14,6 +15,7 @@ export const sshModelSelectionErrorKeys = {
   'catalog-loading': 'settings.remote.startSession.modelCatalogLoading',
   'catalog-error': 'settings.remote.startSession.modelCatalogFailed',
   'no-route': 'settings.remote.startSession.noCompatibleModel',
+  'unsupported-codex-source': 'settings.remote.startSession.unsupportedCodexSource',
 } as const;
 
 /** Preserve a local creation failure across the remote-folder dialog callback. */
@@ -24,7 +26,9 @@ export class SshModelSelectionError extends Error {
   }
 }
 
-/** Both SSH creation surfaces resolve a complete route from the controller catalog.
+/** Resolve catalog models within the SSH adapter's implemented routing boundary.
+ * Codex uses the remote default login: controller gateway/custom/account routes
+ * are not forwarded by maker-host, and thread/start sends the model unchanged.
  * This does not discover remote credentials or prove remote network connectivity. */
 export function resolveSshSessionModelSelection(args: {
   providers: ProviderView[];
@@ -40,8 +44,21 @@ export function resolveSshSessionModelSelection(args: {
   if (args.loadFailed) return { ok: false, reason: 'catalog-error' };
   if (args.loading) return { ok: false, reason: 'catalog-loading' };
   const { agentKind, preferred } = args;
+  // Do not silently move an explicitly selected connection to another account.
+  if (agentKind === 'codex' && preferred.providerId && preferred.providerId !== 'openai') {
+    return { ok: false, reason: 'unsupported-codex-source' };
+  }
+  const routeProviders =
+    agentKind === 'codex'
+      ? args.providers.filter(
+          (provider) => provider.id === 'openai' && isOpenAiSubscriptionProvider(provider),
+        )
+      : args.providers;
+  if (agentKind === 'codex' && routeProviders.length === 0) {
+    return { ok: false, reason: 'unsupported-codex-source' };
+  }
   const providers = filterChatBridgedCodexProviders(
-    connectedProvidersForAgent(args.providers, agentKind),
+    connectedProvidersForAgent(routeProviders, agentKind),
     agentKind,
     true,
   ).filter((provider) => !provider.modelDiscoveryFailure);

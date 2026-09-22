@@ -647,6 +647,7 @@
         "agentProxyEnvPending": "Waiting to apply env vars → {{url}} (takes effect automatically once the host connects)"
       },
       "startSession": {
+        "unsupportedCodexSource": "SSH Codex currently supports only default OpenAI subscription models; other local provider settings are not forwarded. Select a model from that source on the new task page and sync the remote login.",
         "title": "Start a remote Codex session",
         "hint": "Create a new Maker pinned to this machine. Codex runs on the remote, you chat from here. Working directory supports ~ expansion; if it doesn't exist you'll be asked to create it.",
         "start": "Start",

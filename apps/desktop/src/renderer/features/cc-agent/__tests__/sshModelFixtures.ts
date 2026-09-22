@@ -27,3 +27,13 @@ export function sshProvider(
     models: { [agent]: models },
   };
 }
+
+export function sshNativeCodexProvider(models = [sshModel('available-model')]): ProviderView {
+  const provider = sshProvider('openai', models);
+  provider.auth = { method: 'oauth' };
+  provider.routing.codex = {
+    upstream: 'https://chatgpt.com/backend-api/codex',
+    authStrategy: 'oauth-passthrough',
+  };
+  return provider;
+}
