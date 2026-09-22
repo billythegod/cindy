@@ -74,7 +74,7 @@ export function FileTypeTile({ name, mimeType }: FileVisualInput) {
             fontSize="10"
             fontWeight="500"
             letterSpacing="0.3"
-            fill={accent ? 'var(--file-badge-fg)' : 'var(--text-secondary)'}
+            fill={accent ? 'var(--file-badge-fg)' : 'var(--text-primary)'}
           >
             {label}
           </text>

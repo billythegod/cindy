@@ -2,8 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { FileTypeIcon } from '../components/ui/file-type-icon';
 import { FileTypeTile } from '../components/ui/file-type-tile';
+import { contrastRatio, parseCssColor } from '../../shared/theme-import/color';
+import { colorRegistry } from '../themes/color-registry';
+import '../themes/colors';
 
 describe('file identity at compact and tile sizes', () => {
+  it.each(['notes.txt', 'photo.png', 'sound.mp3', 'movie.mp4', 'bundle.zip', 'data.db'])(
+    'keeps the small neutral label readable in both themes: %s',
+    (name) => {
+      const html = renderToStaticMarkup(<FileTypeTile name={name} />);
+      expect(html).toMatch(/<text[^>]+fill="var\(--text-primary\)"/);
+      expect(html).toMatch(/<rect[^>]+fill="var\(--surface-chip\)"/);
+      for (const theme of ['light', 'dark'] as const) {
+        const foreground = parseCssColor(colorRegistry.resolveDefault('text-primary', theme)!);
+        const background = parseCssColor(colorRegistry.resolveDefault('surface-chip', theme)!);
+        expect(contrastRatio(foreground!, background!), theme).toBeGreaterThanOrEqual(4.5);
+      }
+    },
+  );
   it('keeps compact icons decorative, without an unreadable format label', () => {
     const html = renderToStaticMarkup(<FileTypeIcon name="report.pdf" size={12} />);
     expect(html).toContain('lucide-file-text');

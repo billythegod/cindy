@@ -11,7 +11,7 @@ export function FileTypeTile({ name, mimeType }: FileVisualInput) {
   return (
     <View accessible={false} style={{ alignItems: 'center', gap: spacing.xs }}>
       <FileTypeIcon name={name} mimeType={mimeType} size={iconSize.glyph} />
-      {label ? <Text style={{ color: colors.textSecondary, fontSize: typeScale.micro }}>{label}</Text> : null}
+      {label ? <Text style={{ color: colors.textPrimary, fontSize: typeScale.micro }}>{label}</Text> : null}
     </View>
   );
 }
