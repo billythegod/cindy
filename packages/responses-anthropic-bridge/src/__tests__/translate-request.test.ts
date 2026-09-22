@@ -966,8 +966,8 @@ describe('Responses → Anthropic request translation', () => {
     expect(result.request.thinking).toBeUndefined();
   });
 
-  it('cannot disable thinking on fable and mythos models', () => {
-    for (const model of ['claude-fable-5', 'claude-mythos-5']) {
+  it('cannot disable thinking on always-on models', () => {
+    for (const model of ['claude-fable-5', 'claude-mythos-5', 'claude-opus-5-5']) {
       const result = translateResponsesRequest({
         model,
         reasoning: { effort: 'none' },
@@ -975,6 +975,21 @@ describe('Responses → Anthropic request translation', () => {
       });
       expect(result.request.thinking).toEqual({ type: 'adaptive' });
       expect(result.request.output_config).toEqual({ effort: 'low' });
+    }
+  });
+
+  it('uses adaptive thinking for Opus 5.5 with default and explicit efforts', () => {
+    for (const model of ['claude-opus-5-5', 'anthropic/claude-opus-5.5', 'claude-opus-5-5-20260922']) {
+      for (const effort of [undefined, 'low', 'medium', 'high', 'xhigh', 'max']) {
+        const result = translateResponsesRequest({
+          model,
+          ...(effort ? { reasoning: { effort } } : {}),
+          input: [{ role: 'user', content: 'hi' }],
+        });
+        expect(result.request.thinking).toEqual({ type: 'adaptive' });
+        if (effort) expect(result.request.output_config).toEqual({ effort });
+        else expect(result.request.output_config).toBeUndefined();
+      }
     }
   });
 
