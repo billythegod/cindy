@@ -595,7 +595,7 @@
       "boundSessionA11y": "绑定任务 {{name}}",
       "intervalPlaceholder": "留空则使用 cron",
       "intervalHint": "分钟间隔请选择 1、2、3、4、5、6、10、12、15、20 或 30 分钟；60 分钟及以上请选择整小时。",
-      "intervalPreservedHint": "当前任务的精确间隔为每 {{count}} 分钟；未编辑或清空前会保留。",
+      "intervalPreservedHint": "当前任务的精确间隔为每 {{duration}}；未编辑或清空前会保留。",
       "workspace": {
         "project": "项目",
         "dialogue": "对话"

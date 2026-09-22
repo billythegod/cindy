@@ -595,7 +595,7 @@
       "boundSessionA11y": "세션 {{name}} 연결",
       "intervalPlaceholder": "비워 두면 cron 사용",
       "intervalHint": "분 간격은 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30분을 사용하세요. 60분 이상은 정수 시간으로 입력하세요.",
-      "intervalPreservedHint": "이 작업의 정확한 간격은 {{count}}분이며, 수정하거나 지우기 전까지 유지됩니다.",
+      "intervalPreservedHint": "이 작업의 정확한 간격은 {{duration}}이며, 수정하거나 지우기 전까지 유지됩니다.",
       "workspace": {
         "project": "프로젝트",
         "dialogue": "대화"
