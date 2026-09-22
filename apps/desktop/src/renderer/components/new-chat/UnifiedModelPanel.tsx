@@ -158,6 +158,8 @@ export interface UnifiedModelPanelProps {
     runtimeAgent?: AgentKind;
     /** 已登记、下一条消息才落地的切换目标。缺省 = 没有挂着的意图。 */
     pendingTarget?: AgentKind;
+    /** Configuration edits keep the menu open after applying the switch. */
+    onCrossEngineConfigure?: NonNullable<UnifiedModelPanelProps['sessionEngineFilter']>['onCrossEngineSelect'];
     /**
      * 返回 `false` = 调用方**没有**执行这次切换(典型:跨引擎确认弹窗被取消)。
      * 面板本身不消费返回值,但包在外面的 ModelSelector 靠它决定「收起面板」还是
