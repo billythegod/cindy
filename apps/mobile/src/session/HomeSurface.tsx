@@ -2632,7 +2632,7 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
               <Crown
                 accessibilityLabel={t('sharedTask.roleHost')}
                 accessibilityRole="image"
-                color={colors.textTertiary}
+                color={colors.warningFg}
                 size={iconSize.md}
                 strokeWidth={iconStroke.thin}
               />
@@ -4195,7 +4195,7 @@ function HomeSessionRowInner({
             <Crown
               accessibilityLabel={t('sharedTask.roleHost')}
               accessibilityRole="image"
-              color={colors.textTertiary}
+              color={colors.warningFg}
               size={iconSize.md}
               strokeWidth={iconStroke.thin}
             />

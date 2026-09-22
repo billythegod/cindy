@@ -188,9 +188,7 @@ export function SharedTasksSection({ activeSessionId, localSessions = [], runnin
           <FileText size={12} aria-hidden />
         </span>
         <span className="flex w-3 shrink-0 items-center justify-center" data-testid={`shared-task-role-slot-owned-${item.sessionId}`}>
-          <Crown size={12} strokeWidth={1.8} className={cn(
-            item.sessionId === activeSessionId ? 'text-sidebar-item-active-foreground' : 'text-sidebar-action-icon',
-          )} aria-label={t('sharedTask.roleHost')} />
+          <Crown size={12} strokeWidth={1.8} className="text-[var(--warning-fg)]" aria-label={t('sharedTask.roleHost')} />
         </span>
         <span className="truncate">{item.title}</span>
       </button>;

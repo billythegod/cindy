@@ -150,6 +150,7 @@ describe('shared role row wiring', () => {
     expect(row).not.toContain('importantForAccessibility');
     expect(row).toContain("accessibilityLabel={t('sharedTask.roleHost')}");
     expect(row).not.toContain('sharedRoleBadge');
+    expect(row).toContain('color={colors.warningFg}');
     expect(source).not.toContain('roleOwnedBadge');
     expect(source).not.toContain('roleJoinedBadge');
   });

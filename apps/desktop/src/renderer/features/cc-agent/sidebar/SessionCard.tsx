@@ -625,9 +625,7 @@ export const SessionCard = withSidebarNavigation<SessionCardProps>(function Sess
             <Crown
               size={12}
               strokeWidth={1.8}
-              className={cn(
-                isActive ? 'text-sidebar-item-active-foreground' : 'text-sidebar-action-icon',
-              )}
+              className="text-[var(--warning-fg)]"
               aria-label={t('sharedTask.roleHost')}
             />
           </span>

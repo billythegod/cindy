@@ -323,7 +323,9 @@ describe('SessionCard visual cases', () => {
     joined.unmount();
 
     const owned = renderRow('owned');
-    expect(owned.container.querySelector(`[data-testid="shared-task-role-slot-owned-${session.id}"]`)).toBeTruthy();
+    const ownerSlot = owned.container.querySelector(`[data-testid="shared-task-role-slot-owned-${session.id}"]`);
+    expect(ownerSlot).toBeTruthy();
+    expect(ownerSlot?.querySelector('svg')?.getAttribute('class')).toContain('text-[var(--warning-fg)]');
   });
 
   it.each([
