@@ -6,6 +6,7 @@ import { clearRateHistoryCache } from "@cindy/maker-shared/usage-format";
 import { RunningTokenRatePopover } from "@/session/RunningTokenRatePopover";
 
 const harness = vi.hoisted(() => ({
+  viewport: { x: 0, y: 0, width: 320, height: 800 },
   press: {} as Record<string, (...args: any[]) => void>,
   backdrop: {} as Record<string, (...args: any[]) => void>,
   card: {} as Record<string, (...args: any[]) => void>,
@@ -43,7 +44,7 @@ vi.mock("react-native-svg", () => ({
   Circle: () => null,
 }));
 vi.mock("@/platform/AdaptiveWindowContext", () => ({
-  usePaneViewport: () => ({ width: 320 }),
+  usePaneViewport: () => harness.viewport,
 }));
 vi.mock("@/theme", async () => {
   const { lightColors } = await import("@/theme/tokens");
@@ -84,6 +85,7 @@ const card = () => host.querySelector('[data-testid="session.tokenRate.card"]');
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   clearRateHistoryCache();
+  harness.viewport = { x: 0, y: 0, width: 320, height: 800 };
   host = document.createElement("div");
   root = createRoot(host);
 });
@@ -136,6 +138,27 @@ it("dismisses on outside tap, but not card taps or swipes", async () => {
   await gesture("onTouchCancel");
   expect(card()).toBeNull();
 });
+
+it.each(["x", "y", "width", "height"] as const)(
+  "dismisses when pane %s changes inside the same window",
+  async (dimension) => {
+    harness.viewport = { x: 0, y: 0, width: 240, height: 600 };
+    await render();
+    await gesture("onPress");
+    expect(card()).not.toBeNull();
+    await render({ outputTokens: 10 });
+    expect(card()).not.toBeNull();
+    harness.viewport = {
+      ...harness.viewport,
+      [dimension]: harness.viewport[dimension] + 40,
+    };
+    await render({ outputTokens: 10 });
+    expect(card()).toBeNull();
+    await gesture("onPressIn");
+    await gesture("onPress");
+    expect(card()).not.toBeNull();
+  },
+);
 
 it("uses paired generation samples, expires recent speed, and isolates a different task", async () => {
   vi.useFakeTimers();

@@ -2700,8 +2700,8 @@ export default function SessionScreen() {
   const horizontalSystemHeader = Platform.OS === 'ios' && adaptiveWindow.barEdge === 'none'
     && !paneLayout.persistent && !shareSelectionActive && !companionChat;
   const composerRegion = keyboardControlRegion(adaptiveWindow, keyboardState.height);
-  const detailViewport = useMemo(() => ({ width: paneLayout.detail.width, height: windowDimensions.height }),
-    [paneLayout.detail.width, windowDimensions.height]);
+  const detailViewport = useMemo(() => ({ x: paneLayout.detail.x, y: paneLayout.detail.y, width: paneLayout.detail.width, height: windowDimensions.height }),
+    [paneLayout.detail.x, paneLayout.detail.y, paneLayout.detail.width, windowDimensions.height]);
   const nativeShellLayout = useMemo(() => buildSessionNativeShellLayout({
     attachmentPickerOpen: false,
     keyboardHeight: keyboardState.height,

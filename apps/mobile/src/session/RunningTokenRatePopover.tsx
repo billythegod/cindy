@@ -65,7 +65,15 @@ export function RunningTokenRatePopover({
   const outsideTouch = useRef({ x: 0, y: 0, moved: false });
   const cardWidth = Math.min(304, viewport.width - spacing.xl * 2);
   const [mode, setMode] = useState<"closed" | "pinned" | "held">("closed");
-  useEffect(() => setMode("closed"), [window.width, window.height]);
+  // A pane can move or resize without changing the native window dimensions.
+  useEffect(() => setMode("closed"), [
+    window.width,
+    window.height,
+    viewport.x,
+    viewport.y,
+    viewport.width,
+    viewport.height,
+  ]);
   const longPressed = useRef(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const [history, setHistory] = useState(() => {
