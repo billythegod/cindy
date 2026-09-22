@@ -78,7 +78,7 @@ it('keeps undiscovered host tasks navigable and only hydrates from the matching 
   state.openLink.mockResolvedValue(undefined);
   const select = vi.fn();
   const { rerender } = render(<SharedTasksSection onSelect={select} />);
-  const fallback = await screen.findByRole('button', { name: item.title });
+  const fallback = await screen.findByRole('button', { name: item.title + ', sharedTask.roleHost' });
   expect(screen.queryByTestId('ordinary-list-row')).toBeNull();
   expect(screen.queryByText('sharedTask.otherDevice')).toBeNull();
   expect(screen.queryByText('Wrong preview')).toBeNull();
@@ -172,16 +172,25 @@ it('shows the owned group alone for a host, with local task navigation', async (
   expect(select).toHaveBeenCalledWith('host-task');
   expect(state.openLink).not.toHaveBeenCalled();
 });
-it('mixes roles by recent activity, then removes an owner row when sharing ends', async () => {
+it('mixes roles by the sidebar activity clock, then removes an owner row when sharing ends', async () => {
   state.account.mockResolvedValue([{ sharedTaskId: 'owned-1', sessionId: 'host-task', local: true, title: 'Hosted task' }]);
-  const local = { id: 'host-task', title: 'Hosted task', updatedAt: '2026-09-22T02:00:00.000Z' } as Session;
-  state.sessions = [{ ...guestTask, updatedAt: '2026-09-22T01:00:00.000Z' } as Session];
+  const local = {
+    id: 'host-task',
+    title: 'Hosted task',
+    userSendAt: '2026-09-22T01:00:00.000Z',
+    updatedAt: '2026-09-22T04:00:00.000Z',
+  } as Session;
+  state.sessions = [{
+    ...guestTask,
+    userSendAt: '2026-09-22T02:00:00.000Z',
+    updatedAt: '2026-09-22T03:00:00.000Z',
+  } as Session];
   const { rerender } = render(<SharedTasksSection localSessions={[local]} onSelect={vi.fn()} />);
   await screen.findByText('Hosted task');
   expect(screen.queryByRole('tablist')).toBeNull();
   expect(screen.getByText('Hosted task')).toBeTruthy();
   expect(screen.getByText('Joined task')).toBeTruthy();
-  expect(screen.getAllByTestId('ordinary-list-row').map(row => row.textContent)).toEqual(['Hosted task', 'Joined task']);
+  expect(screen.getAllByTestId('ordinary-list-row').map(row => row.textContent)).toEqual(['Joined task', 'Hosted task']);
   state.account.mockResolvedValue([]);
   window.dispatchEvent(new Event('cindy:shared-task-owned-changed'));
   await waitFor(() => expect(screen.queryByText('Hosted task')).toBeNull());

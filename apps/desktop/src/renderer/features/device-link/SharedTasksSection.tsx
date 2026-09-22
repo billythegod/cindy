@@ -5,6 +5,7 @@ import { isSharedTaskPeer, type SharedTaskOwnedItem } from '@cindy/device-link';
 import { Button } from '@/components/ui/button';
 import { SessionCard } from '@/features/cc-agent/sidebar/SessionCard';
 import { SessionItem } from '@/features/cc-agent/sidebar/SessionItem';
+import { sessionActivityMs } from '@/features/cc-agent/lib/dateSessionGrouping';
 import type { SessionMoveTarget } from '@/features/cc-agent/sidebar/sessionMoveTarget';
 import type { FolderPickerOption } from '@/components/new-chat/FolderPickerPopover';
 import { useSidebarMainViewMode } from '@/hooks/useSidebarCardMode';
@@ -29,12 +30,10 @@ type SharedTaskRow = {
   order: number;
 };
 
-function sharedTaskActivity(session?: Session): string | null {
+function sharedTaskActivity(session?: Session): number | null {
   if (!session) return null;
-  const activity = session.userSendAt && session.userSendAt > session.updatedAt
-    ? session.userSendAt
-    : session.updatedAt;
-  return typeof activity === 'string' ? activity : null;
+  const activity = sessionActivityMs(session);
+  return activity > 0 ? activity : null;
 }
 
 interface SharedTasksSectionProps {
@@ -108,7 +107,7 @@ export function SharedTasksSection({ activeSessionId, localSessions = [], runnin
       const rightActivity = sharedTaskActivity(right.session);
       if (leftActivity === null) return rightActivity === null ? left.order - right.order : 1;
       if (rightActivity === null) return -1;
-      return rightActivity.localeCompare(leftActivity) || left.order - right.order;
+      return rightActivity - leftActivity || left.order - right.order;
     });
   }, [joined, localSessions, owned, sessions]);
   const openOwned = async (item: SharedTaskOwnedItem) => {
@@ -180,7 +179,7 @@ export function SharedTasksSection({ activeSessionId, localSessions = [], runnin
       // without inventing a preview, activity timestamp or Agent identity.
       return <button key={row.key} type="button"
         aria-current={item.sessionId === activeSessionId ? 'page' : undefined} disabled={!!opening} aria-busy={opening === item.sharedTaskId || undefined}
-        onClick={() => void openOwned(item)} aria-label={item.title} title={item.title}
+        onClick={() => void openOwned(item)} aria-label={item.title + ', ' + t('sharedTask.roleHost')} title={item.title}
         className={cn('flex w-full items-center gap-2.5 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-soft)]',
           mode === 'list' ? 'min-h-14 rounded-lg px-2.5 py-2' : 'h-8 rounded-full pl-3 pr-2',
           item.sessionId === activeSessionId ? 'bg-sidebar-item-active text-sidebar-item-active-foreground' : 'text-foreground hover:bg-sidebar-item-hover')}>

@@ -2620,7 +2620,7 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
             return <Pressable
             key={row.key}
             accessibilityRole="button"
-            accessibilityLabel={row.task.title}
+            accessibilityLabel={row.task.title + ', ' + t('sharedTask.roleHost')}
             onPress={() => guardedPush({ pathname: '/shared-session', params: { sharedTaskId: row.task.sharedTaskId } })}
             style={({ pressed }) => [styles.sessionListRow, styles.sessionListRowSingleLine, styles.sessionListRowIndented, pressed && styles.pressed]}
             testID="home.sharedOwnerRow"
@@ -2630,8 +2630,7 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
             </View>
             <View style={[styles.sharedRoleSlot, styles.sharedRoleSlotSingleLine]} testID={`home.sharedRoleSlot.owned.${row.task.sessionId}`}>
               <Crown
-                accessibilityLabel={t('sharedTask.roleHost')}
-                accessibilityRole="image"
+                accessible={false}
                 color={colors.warningFg}
                 size={iconSize.md}
                 strokeWidth={iconStroke.thin}
@@ -4110,6 +4109,9 @@ function HomeSessionRowInner({
     if (primary) onOpenSession(primary);
   };
   const groupRowOpensPrimary = !!group && (attention || rightStatus === 'error') && !groupExpanded;
+  const accessibilityLabel = t('devices.list.a11y.openConversation', {
+    title: sharedRole === 'owned' ? item.title + ', ' + t('sharedTask.roleHost') : item.title,
+  });
   const handlePress = selectionMode && onPressSelection
     ? onPressSelection
     : group
@@ -4128,7 +4130,7 @@ function HomeSessionRowInner({
         accessibilityRole="button"
         accessibilityLabel={group
           ? groupRowOpensPrimary ? t('devices.list.a11y.openAutomationLatest', { title: item.title }) : t('devices.list.a11y.automationTask', { title: item.title })
-          : t('devices.list.a11y.openConversation', { title: item.title })}
+          : accessibilityLabel}
         accessibilityState={group ? { expanded: groupExpanded, selected: selected || active } : { selected: selected || active }}
         delayLongPress={400}
         onLongPress={
@@ -4193,8 +4195,7 @@ function HomeSessionRowInner({
             testID={`home.sharedRoleSlot.owned.${item.session.id}`}
           >
             <Crown
-              accessibilityLabel={t('sharedTask.roleHost')}
-              accessibilityRole="image"
+              accessible={false}
               color={colors.warningFg}
               size={iconSize.md}
               strokeWidth={iconStroke.thin}
