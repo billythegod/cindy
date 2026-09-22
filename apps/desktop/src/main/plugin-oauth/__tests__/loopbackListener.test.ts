@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { once } from 'node:events';
 import type { ListenOptions } from 'node:net';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { PluginOauthOffer } from '@cindy/device-link';
@@ -70,8 +71,12 @@ it.each(['127.0.0.1', '::1'])(
   async (first) => {
     const port = await unusedPort();
     const deliver = vi.fn(async () => {});
+    const createServer = vi.spyOn(http, 'createServer');
     const listener = await listenForOauthCallback(offer(port), deliver, () => {});
     resources.push(listener);
+    const servers = createServer.mock.results.map((result) => result.value as http.Server);
+    expect(servers).toHaveLength(2);
+    const closed = servers.map((server) => once(server, 'close'));
     for (const host of ['127.0.0.1', '::1']) {
       expect(await request(host, port, { authority: `evil.example:${port}` })).toBe(400);
       expect(await request(host, port, { path: '/callback?state=wrong&code=synthetic' })).toBe(400);
@@ -84,9 +89,13 @@ it.each(['127.0.0.1', '::1'])(
     expect(deliver).toHaveBeenCalledExactlyOnceWith({ state, error: 'access_denied' });
     listener.close();
     listener.close();
-    // Both ports are released, including on an idempotent cancellation.
-    await bind('127.0.0.1', port);
-    await bind('::1', port);
+    // Observe our actual listeners closing, not whether we can reclaim a port
+    // that concurrent tests may already have acquired after it was released.
+    await Promise.all(closed);
+    for (const server of servers) {
+      expect(server.listening).toBe(false);
+      expect(server.address()).toBeNull();
+    }
   },
 );
 
