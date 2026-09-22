@@ -89,6 +89,8 @@ import { createLogger } from '../logger';
 import { projectMobileMessagePage, projectMobileToolPush } from './mobileToolProjection';
 import { normalizeSessionProviderId } from '../maker-host/session-provider-store.js';
 import { readDeviceLinkSettings } from './settings-store';
+import { PLUGIN_OAUTH_CHANNEL } from '@cindy/device-link';
+import { requestPluginOauth, invalidatePluginOauth } from '../plugin-oauth/runtime.js';
 import { dispatchLocalInvoke } from './invoke-registry';
 import {
   assertRemoteBotInvocationAllowed, projectRemoteSessionResult, projectRemoteBotPush,
@@ -309,6 +311,15 @@ export function setRemoteWorkingDirGuard(
 
 export function setRemoteReviewInputGuard(guard: RemoteReviewInputGuard | null): void {
   remoteReviewInputGuard = guard;
+}
+
+// Local renderer IPC keeps its sender guard; remote mutations enter the shared action here.
+type RemoteTurnChangeAction = (
+  sessionId: unknown, id: unknown, action: unknown, assertAccess: () => Promise<void>,
+) => Promise<unknown>;
+let remoteTurnChangeAction: RemoteTurnChangeAction | null = null;
+export function setRemoteTurnChangeAction(handler: RemoteTurnChangeAction): void {
+  remoteTurnChangeAction = handler;
 }
 
 /**
@@ -2278,6 +2289,7 @@ async function handleFrame(client: DeviceLinkClient, env: Envelope): Promise<voi
       }
       clearRemoteInvokeStateFor(src);
       stopFilePeers(src);
+      invalidatePluginOauth(src);
       remoteDesktop.stop(src);
       void remoteCredentialHost.close(src).catch(() => remoteCredentialHost.dispose());
       offlinePushQueue.clear(src);
@@ -3704,6 +3716,11 @@ async function executeRemoteInvoke(src: string, payload: InvokePayload | undefin
     try { return { ok: true, result: await requestFilePeer(src, payload.args?.[0]) }; }
     catch { return { ok: false, error: { code: 'IPC_ERROR', message: 'FILE_PEER_UNAVAILABLE' } }; }
   }
+  if (payload.channel === PLUGIN_OAUTH_CHANNEL) {
+    if (payload.args?.length !== 1) return { ok: false, error: { code: 'IPC_ERROR', message: '[INVALID_PARAMS] Invalid OAuth transaction' } };
+    try { return { ok: true, result: await requestPluginOauth(src, payload.args[0]) }; }
+    catch { return { ok: false, error: { code: 'IPC_ERROR', message: '[PRECONDITION_FAILED] Remote authorization unavailable' } }; }
+  }
   if (payload.channel === REMOTE_DESKTOP_CHANNEL) {
     try { return { ok: true, result: await requestRemoteDesktop(src, payload.args?.[0]) }; }
     catch (error) { return { ok: false, error: { code: 'IPC_ERROR', message: error instanceof Error ? error.message : 'DESKTOP_UNAVAILABLE' } }; }
@@ -3894,7 +3911,21 @@ async function executeRemoteInvoke(src: string, payload: InvokePayload | undefin
       },
       // provider:list 的首参只承载隧道能力协商，不进入本机 IPC handler。
       () =>
-          payload.channel === TASK_TAG_CHANNEL
+          payload.channel === 'maker:turn-change-set:apply'
+            ? (() => {
+                if (!remoteTurnChangeAction) throw new Error('[UNSUPPORTED_CAPABILITY] Turn restore is unavailable');
+                return remoteTurnChangeAction(args[0], args[1], args[2], async () => {
+                  // Recheck after queueing / Git preflight, immediately before the write.
+                  await assertRemoteBotInvocationAllowed(args, payload.channel);
+                  if (!broadcastTap.isDataOwnerBroadcastScopeCurrent(invocationOwner)) {
+                    throw new Error('[NOT_FOUND] Session does not exist');
+                  }
+                  if (!readDeviceLinkSettings().remoteControlEnabled || isControllerRevoked(src)) {
+                    throw new Error('[ACCESS_REVOKED] Remote control is no longer allowed');
+                  }
+                });
+              })()
+            : payload.channel === TASK_TAG_CHANNEL
             ? executeTaskTags(args[0] as TaskTagRequest)
             : dispatchLocalInvoke(
         payload.channel,
@@ -4030,6 +4061,7 @@ export const __testing = {
     setBroadcastTapListener(null);
     presenceOfflineCheck = null;
     remoteReviewInputGuard = null;
+    remoteTurnChangeAction = null;
     remoteXaiSubscriptionUsageReader = null;
     remoteClaudeSubscriptionUsageReader = null;
   },
