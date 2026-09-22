@@ -148,8 +148,10 @@ describe('shared role row wiring', () => {
     expect(row).not.toContain('{sharedRole ? (');
     expect(row).not.toContain('accessibilityElementsHidden');
     expect(row).not.toContain('importantForAccessibility');
-    expect(row).toContain("title: sharedRole === 'owned' ? item.title + ', ' + t('sharedTask.roleHost') : item.title,");
-    expect(row).toContain(': accessibilityLabel}');
+    expect(row).toContain("const accessibilityTitle = sharedRole === 'owned' ? item.title + ', ' + t('sharedTask.roleHost') : item.title;");
+    expect(row).toContain("t('devices.list.a11y.openAutomationLatest', { title: accessibilityTitle })");
+    expect(row).toContain("t('devices.list.a11y.automationTask', { title: accessibilityTitle })");
+    expect(row).toContain('accessibilityLabel={accessibilityLabel}');
     expect(row).toContain('accessible={false}');
     expect(row).not.toContain("accessibilityLabel={t('sharedTask.roleHost')}");
     expect(row).not.toContain('sharedRoleBadge');

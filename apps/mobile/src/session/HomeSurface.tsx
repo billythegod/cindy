@@ -4109,9 +4109,12 @@ function HomeSessionRowInner({
     if (primary) onOpenSession(primary);
   };
   const groupRowOpensPrimary = !!group && (attention || rightStatus === 'error') && !groupExpanded;
-  const accessibilityLabel = t('devices.list.a11y.openConversation', {
-    title: sharedRole === 'owned' ? item.title + ', ' + t('sharedTask.roleHost') : item.title,
-  });
+  const accessibilityTitle = sharedRole === 'owned' ? item.title + ', ' + t('sharedTask.roleHost') : item.title;
+  const accessibilityLabel = group
+    ? groupRowOpensPrimary
+      ? t('devices.list.a11y.openAutomationLatest', { title: accessibilityTitle })
+      : t('devices.list.a11y.automationTask', { title: accessibilityTitle })
+    : t('devices.list.a11y.openConversation', { title: accessibilityTitle });
   const handlePress = selectionMode && onPressSelection
     ? onPressSelection
     : group
@@ -4128,9 +4131,7 @@ function HomeSessionRowInner({
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={group
-          ? groupRowOpensPrimary ? t('devices.list.a11y.openAutomationLatest', { title: item.title }) : t('devices.list.a11y.automationTask', { title: item.title })
-          : accessibilityLabel}
+        accessibilityLabel={accessibilityLabel}
         accessibilityState={group ? { expanded: groupExpanded, selected: selected || active } : { selected: selected || active }}
         delayLongPress={400}
         onLongPress={
