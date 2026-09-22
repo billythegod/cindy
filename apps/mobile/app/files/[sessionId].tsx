@@ -1031,7 +1031,7 @@ function FileThumb({
 }
 
 /** 真实内容迷你页:小文件拉首块渲成微缩文本(缓存见 fileBrowserCache);
- *  过大/失败/加载中回退抽象线条,不出 loading 态。 */
+ *  过大/失败/加载中回退统一文件类型卡片,不出 loading 态。 */
 function RealDocThumb({
   item,
   maker,
