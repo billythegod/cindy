@@ -13,7 +13,6 @@ const publishShape = {
   summary: z.string().trim().min(1).max(1000).optional(),
   tags: z.array(slug).max(20).optional(),
   changelog: z.string().trim().max(5000).optional(),
-  team_slug: slug.optional(),
   visible_slugs: z.array(slug).max(100).optional(),
 };
 export type SkillhubPublishInput = z.infer<z.ZodObject<typeof publishShape>>;
@@ -54,18 +53,18 @@ export function registerSkillhubTools(registry: XdtHelperToolRegistry, deps: {
   });
   registry.register({
     name: 'list_my_published_skills', category: 'skills',
-    description: 'List the signed-in user’s published Skills and allowed first-publish visibility. Use the exact name and author status to locate a Skill before updating it. Follow next_cursor for more results.',
+    description: 'List the signed-in user’s published Skills and allowed first-publish visibility. Updates require confirmed is_creator and can_manage; being listed here alone does not prove authorship. Follow next_cursor for more results.',
     inputShape: { query: z.string().trim().max(200).optional(), cursor: z.string().regex(/^[1-9][0-9]{0,6}$/).optional() },
     handler: ({ query, cursor }) => execute({ action: 'list', query, cursor }),
   });
   registry.register({
     name: 'publish_skill', category: 'skills',
-    description: 'Upload a local Skill folder to SkillHub or publish a new version of your own Skill. Use only when the user requests upload/publication. path must contain SKILL.md; name must match its frontmatter. mode=create requires explicit visibility; mode=update preserves visibility and ownership. Version is assigned by the server. Success means uploaded, not necessarily approved. If the result is uncertain, check status before retrying.',
+    description: 'Upload a local Skill folder to SkillHub or publish a new version of your own Skill. Use only when the user requests upload/publication. path must contain SKILL.md; name must match its frontmatter. mode=create requires explicit visibility; ownership comes from the signed-in identity, and visible_slugs selects only the shared audience. mode=update requires confirmed authorship and management access and preserves visibility and ownership. Version is assigned by the server. Success means uploaded, not necessarily approved. If the result is uncertain, check status before retrying.',
     inputShape: publishShape,
     handler: async (input) => {
       if (input.mode === 'create' && !input.visibility) return errorPayload('INVALID_ARGS', 'First publication requires the user’s visibility choice.');
-      if (input.mode === 'update' && (input.visibility || input.team_slug || input.visible_slugs || input.tags)) return errorPayload('INVALID_ARGS', 'Updates preserve visibility, ownership and tags. Omit those fields.');
-      if (input.visibility !== 'shared' && (input.team_slug || input.visible_slugs)) return errorPayload('INVALID_ARGS', 'Team fields require shared visibility.');
+      if (input.mode === 'update' && (input.visibility || input.visible_slugs || input.tags)) return errorPayload('INVALID_ARGS', 'Updates preserve visibility, ownership and tags. Omit those fields.');
+      if (input.visibility !== 'shared' && input.visible_slugs) return errorPayload('INVALID_ARGS', 'Sharing targets require shared visibility.');
       return execute({ action: 'publish', input });
     },
   });

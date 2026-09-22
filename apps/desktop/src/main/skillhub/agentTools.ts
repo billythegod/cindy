@@ -84,7 +84,8 @@ export function createSkillhubAgentTools(deps: {
           ok: true,
           skills: result.items.map((item) => ({
             name: item.name, display_name: item.displayName, description: item.description,
-            version: item.latestVersion, is_creator: item.isCreator ?? item.isMine,
+            version: item.latestVersion, is_creator: item.isCreator === true,
+            can_manage: item.canManage === true,
             visibility: item.publishedVisibility, pending_version: item.pendingVersion,
           })),
           next_cursor: result.nextCursor,
@@ -102,7 +103,7 @@ export function createSkillhubAgentTools(deps: {
       if (input.mode === 'create' && (!input.visibility || !host.policy().allowedVisibilities.includes(visibility))) {
         return fail('INVALID_VISIBILITY', 'Choose a visibility supported by the signed-in identity; list_my_published_skills returns the available choices.');
       }
-      if (input.mode === 'update' && (input.visibility || input.team_slug || input.visible_slugs || input.tags)) {
+      if (input.mode === 'update' && (input.visibility || input.visible_slugs || input.tags)) {
         return fail('INVALID_ARGS', 'Updates preserve the existing visibility, ownership and tags.');
       }
       const absolutePath = await fs.realpath(input.path);
@@ -152,13 +153,15 @@ export function createSkillhubAgentTools(deps: {
       const info = existing && 'info' in existing ? existing.info : undefined;
       if (input.mode === 'create' && info) return fail('NAME_TAKEN', 'That Skill already exists. Use update only if you are its original author, or choose another name.');
       if (input.mode === 'update' && !info) return fail('NOT_FOUND', 'The published Skill was not found. Check its exact name.');
-      if (input.mode === 'update' && !(info?.isCreator ?? info?.isMine)) return fail('NOT_AUTHOR', 'Only the original author can publish a new version of this Skill.');
+      if (input.mode === 'update' && info?.isCreator !== true) return fail('NOT_AUTHOR', 'Original authorship could not be confirmed. Only the original author can publish a new version of this Skill.');
+      if (input.mode === 'update' && info?.canManage !== true) return fail('PERMISSION_DENIED', 'This account does not have management access to the published Skill.');
 
       const result = await host.publisher.publish({
         absolutePath, name: input.name, isFirstPublish: input.mode === 'create',
         displayName: input.display_name, summary: input.summary,
         description: frontmatter.description.trim(), changelog: input.changelog,
-        ...(input.mode === 'create' ? { visibility, tags: input.tags, teamSlug: input.team_slug, visibleSlugs: input.visible_slugs } : {}),
+        // Ownership comes from the signed-in identity; visibleSlugs only selects the audience.
+        ...(input.mode === 'create' ? { visibility, tags: input.tags, visibleSlugs: input.visible_slugs } : {}),
       }, undefined, { isCurrent: isAuthorized });
       // A committed publication remains successful even if the task closes afterwards.
       if (result.success && result.result) return {

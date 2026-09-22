@@ -55,6 +55,7 @@ describe('SkillHub helper tools', () => {
     { ...publication, mode: 'update' },
     { ...publication, mode: 'update', visibility: undefined, tags: ['tag'] },
     { ...publication, team_slug: 'some-team' },
+    { ...publication, visibility: 'shared', team_slug: 'some-team' },
   ])('rejects invalid publication arguments before calling the host: %j', async (input) => {
     const { registry, execute } = fixture();
     expect((await registry.call('publish_skill', input)).isError).toBe(true);
@@ -64,6 +65,15 @@ describe('SkillHub helper tools', () => {
     const { registry, execute } = fixture(overrides);
     expect((await registry.call('publish_skill', publication)).isError).toBe(true);
     expect(execute).not.toHaveBeenCalled();
+  });
+  it('discovers sharing targets without owner selectors and forwards them unchanged', async () => {
+    const { registry, execute, context } = fixture();
+    const tool = registry.get('publish_skill')!;
+    expect(tool.inputShape).not.toHaveProperty('team_slug');
+    expect(tool.inputShape).toHaveProperty('visible_slugs');
+    const input = { ...publication, visibility: 'shared', visible_slugs: ['engineering'] };
+    expect((await registry.call('publish_skill', input)).isError).toBeUndefined();
+    expect(execute).toHaveBeenCalledWith({ action: 'publish', input }, context);
   });
   it('forwards update, pagination and exact-version status requests without publication defaults', async () => {
     const { registry, context, execute } = fixture();

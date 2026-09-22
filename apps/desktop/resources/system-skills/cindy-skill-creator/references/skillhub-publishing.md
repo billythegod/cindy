@@ -27,14 +27,14 @@ For a newly authored Skill, validate with this Skill's `scripts/quick_validate.p
 Call `list_my_published_skills` to see the signed-in identity's allowed visibility choices and locate any existing publication; follow `next_cursor` if needed. Choose `mode: "create"` only for a new publication. Ask for visibility if the user's request does not already specify it:
 
 - `private`: only the personal owner; available to personal identities.
-- `shared`: organization sharing; available to organization identities. Supply `team_slug` / `visible_slugs` only when the user has specified those targets; do not guess team identifiers.
+- `shared`: organization sharing; available to organization identities. Ownership comes from the signed-in identity. Supply audience teams/departments only through `visible_slugs` when the user specifies those targets; do not guess identifiers or send owner selectors such as `team_slug`.
 - `public`: public SkillHub publication, subject to review. Never infer public visibility from “upload”.
 
 Call `publish_skill` with `path`, `name`, `mode: "create"`, and `visibility`. Include an appropriate `display_name`, `summary` and `tags` when available. Use the existing user request as authorization; do not ask them to reconfirm a complete request.
 
 ## Update a published Skill
 
-Locate the exact publication with `list_my_published_skills`; `is_creator` identifies whether this account authored it. Edit the intended local folder and validate it, then call `publish_skill` with `mode: "update"`, its existing `name`, the local `path`, and an optional `changelog`, `display_name` or `summary`.
+Locate the exact publication with `list_my_published_skills`; updates require `is_creator: true` and `can_manage: true`. A listed or manageable Skill is not necessarily authored by this account; missing authorship information is not permission to update it. Edit the intended local folder and validate it, then call `publish_skill` with `mode: "update"`, its existing `name`, the local `path`, and an optional `changelog`, `display_name` or `summary`.
 
 The server assigns the next version. Do not guess a version number or manually increment one for this workflow. Updates preserve visibility, ownership and tags: omit those fields. Managing a team Skill does not necessarily make the user its original author; `NOT_AUTHOR` means the current account cannot upload a new version. Do not evade it by silently creating another publication.
 

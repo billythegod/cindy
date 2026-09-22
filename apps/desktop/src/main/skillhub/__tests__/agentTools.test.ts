@@ -23,7 +23,7 @@ function fixture() {
   const state = { owner: 'owner-1' as string | null, current: true };
   const info = mapHubSkillInfoToDesktopInfo({
     slug: 'release-notes', version: '1.0.0', owner: { slug: 'author', name: 'Author' },
-    visibility: 'private', updatedAt: '', isCreator: true, isMine: true,
+    visibility: 'private', updatedAt: '', isCreator: true, isMine: true, canManage: true,
   });
   const listMarket = vi.fn(async () => ({ success: true as const, items: [info], nextCursor: '2' }));
   const getInfo = vi.fn<SkillhubAgentServices['market']['info']>(async () => ({ success: true, deleted: true }));
@@ -96,11 +96,35 @@ describe('SkillHub agent host adapter', () => {
     expect(params).not.toHaveProperty('visibility');
     expect(params).not.toHaveProperty('teamSlug');
   });
-  it('does not confuse management rights or mine status with original authorship', async () => {
+  it.each([false, undefined])('requires confirmed original authorship before any upload (%s)', async (isCreator) => {
     const f = fixture();
-    f.getInfo.mockResolvedValue({ success: true, info: { ...f.info, isCreator: false, isMine: true, canManage: true } });
+    f.getInfo.mockResolvedValue({ success: true, info: { ...f.info, isCreator, isMine: true, canManage: true } });
     expect(await f.execute({ action: 'publish', input: { path: skillPath, name: 'release-notes', mode: 'update' } }, f.context)).toMatchObject({ ok: false, errorCode: 'NOT_AUTHOR' });
     expect(f.publish).not.toHaveBeenCalled();
+  });
+  it('requires management permission even for the confirmed original author', async () => {
+    const f = fixture();
+    f.getInfo.mockResolvedValue({ success: true, info: { ...f.info, isCreator: true, canManage: false } });
+    expect(await f.execute({ action: 'publish', input: { path: skillPath, name: 'release-notes', mode: 'update' } }, f.context)).toMatchObject({ ok: false, errorCode: 'PERMISSION_DENIED' });
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+  it.each([false, undefined])('does not advertise mine or management status as authorship (%s)', async (isCreator) => {
+    const f = fixture();
+    f.listMarket.mockResolvedValue({ success: true, items: [{ ...f.info, isCreator, isMine: true, canManage: true }], nextCursor: '2' });
+    expect(await f.execute({ action: 'list' }, f.context)).toMatchObject({
+      ok: true, skills: [{ name: 'release-notes', is_creator: false, can_manage: true }],
+    });
+  });
+  it('keeps organization ownership identity-derived while forwarding only sharing targets', async () => {
+    const f = fixture();
+    f.host.policy = () => ({ canWrite: true, ownerType: 'organization', allowedVisibilities: ['PUBLIC', 'DEPARTMENT_SCOPED'], readOnlyReason: null });
+    expect(await f.execute({ action: 'publish', input: {
+      path: skillPath, name: 'release-notes', mode: 'create', visibility: 'shared', visible_slugs: ['engineering'],
+    } }, f.context)).toMatchObject({ ok: true });
+    const params = f.publish.mock.calls[0]![0];
+    expect(params).toMatchObject({ visibility: 'DEPARTMENT_SCOPED', visibleSlugs: ['engineering'] });
+    expect(params).not.toHaveProperty('teamSlug');
+    expect(params).not.toHaveProperty('deptTeamSlug');
   });
   it('does not create over an existing publication or update a missing one', async () => {
     const f = fixture();

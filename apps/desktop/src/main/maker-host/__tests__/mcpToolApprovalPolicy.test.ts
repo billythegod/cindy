@@ -458,7 +458,7 @@ describe('helper task workspace and SkillHub publication authorization', () => {
   it.each([
     { mode: 'create', visibility: 'public' },
     { mode: 'create', visibility: 'private' },
-    { mode: 'create', visibility: 'shared', team_slug: 'engineering' },
+    { mode: 'create', visibility: 'shared', visible_slugs: ['engineering'] },
     { mode: 'update' },
   ])('reviews each publication with %j across payload representations', (publication) => {
     const input = { ...publication, path: 'skills/release-notes', name: 'release-notes' };
