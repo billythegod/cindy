@@ -531,7 +531,7 @@ function ScheduleConfigPanel({
               {t('scheduler.chips.scheduleField.minuteIntervalHint')}
             </p>
             {!isSupportedIntervalMinutes(panelConfig.intervalMinutes) && (
-              <p className="text-11 leading-4 text-[var(--warning-accent)]">
+              <p className="text-11 leading-4 text-[var(--cmd-palette-item-meta)] dark:text-[var(--settings-section-desc)]">
                 {t('scheduler.chips.scheduleField.unsupportedMinuteInterval', { count: panelConfig.intervalMinutes })}
               </p>
             )}

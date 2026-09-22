@@ -1106,7 +1106,8 @@ function ScheduleFormCard({
       : t('devices.automations.form.sessionMode.fresh');
   const preservedIntervalMinutes = !draft.intervalMinutes
     && typeof draft.sourceIntervalMs === 'number'
-    && Number.isInteger(draft.sourceIntervalMs / 60_000)
+    && Number.isFinite(draft.sourceIntervalMs)
+    && draft.sourceIntervalMs > 0
     ? draft.sourceIntervalMs / 60_000
     : undefined;
 

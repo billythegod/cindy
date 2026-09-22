@@ -134,6 +134,11 @@ describe('mobile schedule form model', () => {
     // 90 分钟表单表达不了(非 1-59 分钟/整点小时),intervalMinutes 折叠成 ''
     const draft = createMobileScheduleDraft(schedule({ intervalMs: 90 * 60_000 }));
     expect(draft.intervalMinutes).toBe('');
+    expect(draft.sourceIntervalMs).toBe(90 * 60_000);
+
+    const nonMinuteDraft = createMobileScheduleDraft(schedule({ intervalMs: 7.5 * 60_000 }));
+    expect(nonMinuteDraft.intervalMinutes).toBe('');
+    expect(nonMinuteDraft.sourceIntervalMs).toBe(7.5 * 60_000);
 
     // 只改 prompt:间隔原值回传,不因「表单显示不了」被顺手清空
     const untouched = buildMobileScheduleInput({ ...draft, prompt: 'new prompt' });
