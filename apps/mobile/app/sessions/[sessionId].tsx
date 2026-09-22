@@ -1438,6 +1438,8 @@ export default function SessionScreen() {
     }
     voiceStateTransitionRef.current = next;
     setVoiceStateInternal(next);
+    // 首段音频到达时与 listening 同批交接;停止、取消和错误也在这里收回 pending。
+    setVoiceStartPending(false);
   }, []);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -5387,6 +5389,9 @@ export default function SessionScreen() {
     void startVoiceRecording()
       .catch(() => undefined)
       .finally(() => {
+        // start() 可早于首段 PCM 返回。已有录音时由 setVoiceState 接续胶囊,
+        // 只有未起录的取消/失败才在这里收回,避免 pending → idle → listening 闪烁。
+        if (voiceRecordingActiveRef.current) return;
         // 只收自己世代的 pending:切会话后旧启动的收尾不能塌掉新录音的胶囊。
         if (voiceStartPendingSeqRef.current === pendingSeq) setVoiceStartPending(false);
       });
