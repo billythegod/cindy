@@ -47,6 +47,7 @@ import {
   intervalMsToCronExpr,
   resolveScheduleTimingPresentation,
   switchScheduleTimingMode,
+  SUPPORTED_INTERVAL_MINUTES,
 } from '../cronCodexPreset';
 
 const tapsvcProvider: ProviderView = {
@@ -363,9 +364,14 @@ describe('schedule timing mode conversion', () => {
   });
 
   it('converts only the minute/hour presets supported by the timing-mode switch', () => {
+    expect(SUPPORTED_INTERVAL_MINUTES).toEqual([1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30]);
     expect(cronExprToIntervalMs('*/10 * * * *')).toBe(10 * 60_000);
     expect(intervalMsToCronExpr(10 * 60_000)).toBe('*/10 * * * *');
     expect(intervalMsToCronExpr(2 * 60 * 60_000)).toBe('0 */2 * * *');
+    expect(cronExprToIntervalMs('*/28 * * * *')).toBeUndefined();
+    expect(cronExprToIntervalMs('*/59 * * * *')).toBeUndefined();
+    expect(intervalMsToCronExpr(28 * 60_000)).toBeUndefined();
+    expect(intervalMsToCronExpr(59 * 60_000)).toBeUndefined();
     expect(intervalMsToCronExpr(90_000)).toBeUndefined();
   });
 

@@ -1281,6 +1281,9 @@ function ScheduleFormCard({
               testID="automations.form.intervalInput"
               value={draft.intervalMinutes}
             />
+            <Text style={styles.fieldHint} testID="automations.form.intervalHint">
+              {t('devices.automations.form.intervalHint')}
+            </Text>
           </View>
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Cron</Text>

@@ -594,6 +594,7 @@
       },
       "boundSessionA11y": "繫結任務 {{name}}",
       "intervalPlaceholder": "留空則使用 cron",
+      "intervalHint": "分鐘間隔請選擇 1、2、3、4、5、6、10、12、15、20 或 30 分鐘；60 分鐘以上請選擇整數小時。",
       "workspace": {
         "project": "專案",
         "dialogue": "對話"
@@ -731,7 +732,7 @@
         "workingDir": "請輸入專案目錄",
         "effort": "推理強度只能是 {{values}}",
         "intervalPositiveInteger": "間隔分鐘必須是正整數",
-        "intervalUnsupported": "分鐘間隔只支援 1–59 分鐘，或 1–23 小時的整點間隔"
+        "intervalUnsupported": "分鐘間隔必須可整除 60：請選擇 1、2、3、4、5、6、10、12、15、20 或 30 分鐘，或 1–23 小時的整點間隔"
       },
       "schedule": {
         "paused": "已暫停",

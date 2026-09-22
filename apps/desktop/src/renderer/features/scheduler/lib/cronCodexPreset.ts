@@ -44,7 +44,7 @@ export interface CodexScheduleConfig {
   monthDay: number;
   /** 间隔小时数（>=1）。interval 用 */
   intervalHours: number;
-  /** 间隔分钟数（1-59）。intervalMinutes 用；N=1 等价于 cron `* * * * *` */
+  /** 间隔分钟数（能整除 60 的值）。intervalMinutes 用；N=1 等价于 cron `* * * * *` */
   intervalMinutes: number;
   /** 任意 cron 字符串。custom 用 */
   customCron: string;
@@ -83,6 +83,13 @@ export const DEFAULT_CONFIG: CodexScheduleConfig = {
   intervalMinutes: 5,
   customCron: '0 9 * * *',
 };
+
+/** Minute Cron steps that keep a constant elapsed interval across hour boundaries. */
+export const SUPPORTED_INTERVAL_MINUTES = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30] as const;
+
+export function isSupportedIntervalMinutes(value: number): boolean {
+  return (SUPPORTED_INTERVAL_MINUTES as readonly number[]).includes(value);
+}
 
 const NUM = /^\d+$/;
 
@@ -229,7 +236,7 @@ function clampIntervalMinutes(n: number): number {
 
 // 把 cron 表达式反推成 interval 毫秒——只识别 UI 的 4 个 interval-style preset：
 //   - `* * * * *`             → 60_000（1 分钟）
-//   - `*\/N * * * *` (N: 2-59) → N * 60_000
+//   - `*\/N * * * *` (N: an interval that divides 60) → N * 60_000
 //   - `0 * * * *`             → 3_600_000（1 小时）
 //   - `0 *\/N * * *` (N: 1-23) → N * 3_600_000
 // 其它任何 cron（daily/weekly/custom）→ undefined，让该任务继续走 cron 槽位语义。
@@ -242,7 +249,7 @@ export function cronExprToIntervalMs(expr: string): number | undefined {
   const minMatch = /^\*\/(\d+) \* \* \* \*$/.exec(trimmed);
   if (minMatch) {
     const n = Number(minMatch[1]);
-    if (n >= 2 && n <= 59) return n * 60_000;
+    if (isSupportedIntervalMinutes(n)) return n * 60_000;
     return undefined;
   }
   const hourMatch = /^0 \*\/(\d+) \* \* \*$/.exec(trimmed);
@@ -266,7 +273,7 @@ export function intervalMsToCronExpr(intervalMs: number): string | undefined {
   }
   if (intervalMs % 60_000 === 0) {
     const minutes = intervalMs / 60_000;
-    if (minutes >= 1 && minutes <= 59) return minutes === 1 ? '* * * * *' : `*/${minutes} * * * *`;
+    if (isSupportedIntervalMinutes(minutes)) return minutes === 1 ? '* * * * *' : `*/${minutes} * * * *`;
   }
   return undefined;
 }

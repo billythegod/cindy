@@ -36,6 +36,8 @@ import {
   switchScheduleTimingMode,
   WEEKDAY_LABELS,
   DEFAULT_CONFIG,
+  isSupportedIntervalMinutes,
+  SUPPORTED_INTERVAL_MINUTES,
   type CodexScheduleConfig,
 } from '../lib/cronCodexPreset';
 import { getScheduleDefaultModel, type EffortValue } from '../hooks/useScheduleForm';
@@ -525,6 +527,14 @@ function ScheduleConfigPanel({
               />
               <span className="text-13 text-[var(--cmd-palette-item-meta)] dark:text-[var(--settings-section-desc)]">{t('scheduler.chips.scheduleField.minutesSuffix')}</span>
             </div>
+            <p className="text-11 leading-4 text-[var(--cmd-palette-item-meta)] dark:text-[var(--settings-section-desc)]">
+              {t('scheduler.chips.scheduleField.minuteIntervalHint')}
+            </p>
+            {!isSupportedIntervalMinutes(panelConfig.intervalMinutes) && (
+              <p className="text-11 leading-4 text-[var(--warning-accent)]">
+                {t('scheduler.chips.scheduleField.unsupportedMinuteInterval', { count: panelConfig.intervalMinutes })}
+              </p>
+            )}
             <PreviewPill
               text={
                 panelConfig.intervalMinutes === 1
@@ -623,22 +633,27 @@ function IntervalMinutesInput({
   }, [value]);
 
   return (
-    <input
-      type="text"
-      inputMode="numeric"
-      pattern="[0-9]*"
-      maxLength={2}
+    <select
       value={draft}
       onFocus={onFocus}
-      onBlur={() => setDraft(String(value))}
       onChange={(e) => {
-        const digits = e.target.value.replace(/\D/g, '').slice(0, 2);
-        setDraft(digits);
-        if (!digits) return;
-        onChange(clamp(Number(digits), 1, 59));
+        const next = Number(e.target.value);
+        setDraft(String(next));
+        onChange(next);
       }}
-      className={inputPillClass('w-[68px] text-center')}
-    />
+      className={inputPillClass('w-[88px] text-center')}
+    >
+      {!SUPPORTED_INTERVAL_MINUTES.includes(value as (typeof SUPPORTED_INTERVAL_MINUTES)[number]) && (
+        <option value={value} disabled>
+          {value}*
+        </option>
+      )}
+      {SUPPORTED_INTERVAL_MINUTES.map((minutes) => (
+        <option key={minutes} value={minutes}>
+          {minutes}
+        </option>
+      ))}
+    </select>
   );
 }
 
