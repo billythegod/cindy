@@ -85,6 +85,18 @@ export type DebianManagedInstallationCheck =
   | { status: 'not-managed' }
   | { status: 'error'; error: unknown };
 
+/** dpkg-query -S exits 1 when no package owns the path. That is a
+ * confirmed non-ownership result, not a probe failure. Timeouts, a missing
+ * binary, and exit 2 (database or usage faults) stay errors.
+ */
+function isConfirmedDebianOwnershipMiss(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const details = error as { status?: unknown; signal?: unknown; code?: unknown; killed?: unknown };
+  if (details.killed === true || details.signal != null) return false;
+  if (typeof details.code === 'string' && details.code.length > 0) return false;
+  return details.status === 1;
+}
+
 export function checkDebianManagedInstallation(
   exePath: string,
   query: (exe: string) => string = (exe) => execFileSync('/usr/bin/dpkg-query', ['-S', exe], {
@@ -96,6 +108,7 @@ export function checkDebianManagedInstallation(
       && line.slice(line.indexOf(': ') + 2) === exePath);
     return managed ? { status: 'managed' } : { status: 'not-managed' };
   } catch (error) {
+    if (isConfirmedDebianOwnershipMiss(error)) return { status: 'not-managed' };
     return { status: 'error', error };
   }
 }

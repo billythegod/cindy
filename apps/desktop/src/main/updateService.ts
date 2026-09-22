@@ -252,17 +252,33 @@ function setStatus(status: UpdateStatus, extra?: Partial<UpdateStatusPayload>): 
   }
 }
 
-function formatLinuxProbeError(error: unknown): string {
-  if (error instanceof Error) {
-    const details = error as Error & { code?: unknown; signal?: unknown; killed?: unknown };
-    return JSON.stringify({
-      message: details.message,
-      code: details.code,
-      signal: details.signal,
-      killed: details.killed,
-    });
-  }
-  return String(error);
+function formatLinuxProbeError(error: unknown, exePath: string): string {
+  const details = error && typeof error === 'object'
+    ? error as { code?: unknown; status?: unknown; signal?: unknown }
+    : {};
+  const code = typeof details.code === 'string' && /^[A-Za-z0-9_]+$/.test(details.code)
+    ? details.code
+    : null;
+  const status = typeof details.status === 'number' && Number.isInteger(details.status)
+    ? details.status
+    : null;
+  const signal = typeof details.signal === 'string' && /^[A-Za-z0-9]+$/.test(details.signal)
+    ? details.signal
+    : null;
+  const reason = code === 'ETIMEDOUT' || (signal !== null && status === null)
+    ? 'timeout'
+    : code === 'ENOENT' || code === 'EACCES' || code === 'EPERM'
+      ? 'not-executable'
+      : 'query-failed';
+  // execFileSync's message embeds the queried path. Log only controlled
+  // fields; the path goes through maskPath on its own.
+  return JSON.stringify({
+    reason,
+    status,
+    code,
+    signal,
+    path: maskPath(exePath),
+  });
 }
 
 function blockWindowsUpdaterForMissingRuntime(missingFiles: readonly string[]): false {
@@ -1796,11 +1812,13 @@ function executeUpdateLinux(debPath: string, installation: LinuxUserInstallation
     const now = findLinuxUserInstallation(exePath, os.homedir(), process.getuid?.() ?? -1);
     const debianCheck = installation ? null : checkDebianManagedInstallation(exePath);
     if (debianCheck?.status === 'error') {
-      log.error('Linux Debian ownership recheck failed: %s', formatLinuxProbeError(debianCheck.error));
+      log.error('Linux Debian ownership recheck failed: %s', formatLinuxProbeError(debianCheck.error, exePath));
       isRelaunching = false;
       autoRelaunchInProgress = false;
       // A transient ownership probe failure is not evidence that the install
-      // changed. Keep the verified .deb staged so the user can retry.
+      // changed. Keep the verified .deb staged so the user can retry, and do
+      // not consume an apply attempt. checkExistingPatch deletes the .deb
+      // after three recorded attempts.
       setStatus('ready', { version: readyVersion ?? undefined });
       return;
     }
@@ -1810,6 +1828,10 @@ function executeUpdateLinux(debPath: string, installation: LinuxUserInstallation
       : now !== null || debianCheck?.status !== 'managed') {
       throw new Error('Linux installation changed after preflight');
     }
+    // Count the attempt only after the recheck confirms we will launch.
+    // Incrementing earlier let three transient recheck failures burn the
+    // staged .deb on the next startup.
+    incrementApplyAttempts();
     script = buildLinuxUpdateScript({
       pid, debPath, sha256, sizeBytes, exePath, lockFilePath, logPath,
       userInstallation: installation ? { ...installation, version: readyVersion! } : undefined,
@@ -1978,7 +2000,7 @@ async function executeRelaunchUnguarded(theme: 'light' | 'dark', checkForBinaryU
     linuxInstallation = installation;
     const debianCheck = installation ? null : checkDebianManagedInstallation(exePath);
     if (debianCheck?.status === 'error') {
-      log.error('Linux Debian ownership check failed: %s', formatLinuxProbeError(debianCheck.error));
+      log.error('Linux Debian ownership check failed: %s', formatLinuxProbeError(debianCheck.error, exePath));
       isRelaunching = false;
       autoRelaunchInProgress = false;
       // Keep the verified installer staged. A transient dpkg-query failure is
@@ -2030,13 +2052,13 @@ async function executeRelaunchUnguarded(theme: 'light' | 'dark', checkForBinaryU
       break;
     case 'darwin':
       // Increment immediately before starting the platform executor so a
-      // failed updater can be bounded across restarts. Windows does this only
-      // after its final app-local/System32 Runtime check inside the executor.
+      // failed updater can be bounded across restarts. Windows and Linux do
+      // this only after the last in-executor check that can still keep the
+      // staged patch for retry (Windows Runtime, Linux ownership recheck).
       incrementApplyAttempts();
       executeUpdateMacOS(readyFilePath);
       break;
     case 'linux':
-      incrementApplyAttempts();
       executeUpdateLinux(readyFilePath, linuxInstallation);
       break;
     default:

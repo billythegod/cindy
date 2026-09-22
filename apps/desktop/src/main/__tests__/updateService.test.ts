@@ -63,6 +63,7 @@ const logInfo = vi.fn();
 const logWarn = vi.fn();
 const logError = vi.fn();
 const logDebug = vi.fn();
+const maskPath = vi.fn((value: string) => value);
 
 vi.mock('electron', () => ({
   app: {
@@ -180,7 +181,7 @@ vi.mock('../logger', () => ({
     error: logError,
     debug: logDebug,
   }),
-  maskPath: (value: string) => value,
+  maskPath,
 }));
 
 function setPlatform(value: NodeJS.Platform): void {
@@ -286,6 +287,7 @@ beforeEach(() => {
   logWarn.mockReset();
   logError.mockReset();
   logDebug.mockReset();
+  maskPath.mockClear();
   resetUpdateServiceFixture();
 });
 afterEach(() => {
@@ -566,6 +568,21 @@ function linuxInstallerManifest(version = '0.0.65') {
   };
 }
 
+function expectProbeFailureLog(
+  label: string,
+  fields: { reason: string; status: number | null; code: string | null; signal: string | null },
+  leakedPath: string,
+): void {
+  const detail = logError.mock.calls.find((call) => call[0] === label)?.[1];
+  expect(typeof detail).toBe('string');
+  const text = String(detail);
+  expect(text).not.toContain(leakedPath);
+  expect(text).not.toContain('devuser');
+  expect(text).not.toContain('Command failed');
+  expect(JSON.parse(text)).toEqual({ ...fields, path: TEST_EXE });
+  expect(maskPath).toHaveBeenCalledWith(TEST_EXE);
+}
+
 describe('checkForUpdate Linux installer flow', () => {
   it('keeps a staged update ready when the Debian ownership check fails', async () => {
     download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
@@ -573,9 +590,12 @@ describe('checkForUpdate Linux installer flow', () => {
       fs.writeFileSync(targetPath, 'deb');
       return { path: targetPath, size: 123 };
     });
+    const leakedPath = '/home/devuser/custom-builds/Cindy';
     checkDebianManagedInstallation.mockReturnValue({
       status: 'error',
-      error: Object.assign(new Error('dpkg-query timed out'), { code: 'ETIMEDOUT', signal: 'SIGTERM' }),
+      error: Object.assign(new Error(`Command failed: /usr/bin/dpkg-query -S ${leakedPath}`), {
+        code: 'ETIMEDOUT', status: null, signal: 'SIGTERM',
+      }),
     });
     const service = await freshUpdateService('linux', 'x64');
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
@@ -594,6 +614,9 @@ describe('checkForUpdate Linux installer flow', () => {
       expect(logError.mock.calls.map((call) => String(call[0]))).toContain(
         'Linux Debian ownership check failed: %s',
       );
+      expectProbeFailureLog('Linux Debian ownership check failed: %s', {
+        reason: 'timeout', status: null, code: 'ETIMEDOUT', signal: 'SIGTERM',
+      }, leakedPath);
     } finally {
       service.stopUpdateService();
       exitSpy.mockRestore();
@@ -606,11 +629,14 @@ describe('checkForUpdate Linux installer flow', () => {
       fs.writeFileSync(targetPath, 'deb');
       return { path: targetPath, size: 123 };
     });
+    const leakedPath = '/home/devuser/custom-builds/Cindy';
     checkDebianManagedInstallation
       .mockReturnValueOnce({ status: 'managed' })
       .mockReturnValueOnce({
         status: 'error',
-        error: Object.assign(new Error('dpkg-query timed out'), { code: 'ETIMEDOUT', signal: 'SIGTERM' }),
+        error: Object.assign(new Error(`Command failed: /usr/bin/dpkg-query -S ${leakedPath}`), {
+          status: 2, signal: null,
+        }),
       });
     const service = await freshUpdateService('linux', 'x64');
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
@@ -625,11 +651,18 @@ describe('checkForUpdate Linux installer flow', () => {
       ));
       const info = JSON.parse(fs.readFileSync(path.join(TEST_USER_DATA, 'updates', 'patch-info.json'), 'utf8'));
       expect(checkDebianManagedInstallation).toHaveBeenCalledTimes(2);
+      expect(info.applyAttempts).toBeUndefined();
       expect(fs.existsSync(path.join(TEST_USER_DATA, 'updates', info.fileName))).toBe(true);
+      expect(ipcHandlers.get('update-get-status')?.()).toMatchObject({
+        status: 'ready', version: '0.0.65', errorCode: undefined,
+      });
       expect(exitSpy).not.toHaveBeenCalled();
       expect(logError.mock.calls.map((call) => String(call[0]))).toContain(
         'Linux Debian ownership recheck failed: %s',
       );
+      expectProbeFailureLog('Linux Debian ownership recheck failed: %s', {
+        reason: 'query-failed', status: 2, code: null, signal: null,
+      }, leakedPath);
     } finally {
       service.stopUpdateService();
       exitSpy.mockRestore();
