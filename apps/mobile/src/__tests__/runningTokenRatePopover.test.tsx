@@ -17,6 +17,9 @@ import { RunningTokenRatePopover } from "@/session/RunningTokenRatePopover";
 
 const harness = vi.hoisted(() => ({
   viewport: { x: 0, y: 0, width: 320, height: 800 },
+  window: { width: 320, height: 800 },
+  anchor: { x: 220, y: 600, width: 80 },
+  insets: { top: 24, bottom: 16, left: 0, right: 0 },
   press: {} as Record<string, (...args: any[]) => void>,
   backdrop: {} as Record<string, (...args: any[]) => void>,
   card: {} as Record<string, (...args: any[]) => void>,
@@ -27,14 +30,21 @@ vi.mock("react-native", () => {
   return {
     View: forwardRef((props: any, ref) => {
       useImperativeHandle(ref, () => ({
-        measureInWindow: (callback: any) => callback(220, 600, 80, 44),
+        measureInWindow: (callback: any) =>
+          callback(
+            harness.anchor.x,
+            harness.anchor.y,
+            harness.anchor.width,
+            44,
+          ),
       }));
       if (props.testID === "session.tokenRate.card") harness.card = props;
       return view(props);
     }),
     Modal: ({ visible, children }: any) =>
       visible ? createElement("div", {}, children) : null,
-    useWindowDimensions: () => ({ width: 320, height: 800 }),
+    useWindowDimensions: () => harness.window,
+    ScrollView: view,
     Text: view,
     StyleSheet: { create: (s: unknown) => s },
     Pressable: (props: any) => {
@@ -45,6 +55,9 @@ vi.mock("react-native", () => {
     },
   };
 });
+vi.mock("react-native-safe-area-context", () => ({
+  useSafeAreaInsets: () => harness.insets,
+}));
 vi.mock("@/components/AppText", async () => ({
   Text: (await import("react-native")).Text,
 }));
@@ -184,6 +197,9 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   clearRateHistoryCache();
   harness.viewport = { x: 0, y: 0, width: 320, height: 800 };
+  harness.window = { width: 320, height: 800 };
+  harness.anchor = { x: 220, y: 600, width: 80 };
+  harness.insets = { top: 24, bottom: 16, left: 0, right: 0 };
   host = document.createElement("div");
   root = createRoot(host);
 });
@@ -255,6 +271,36 @@ it.each(["x", "y", "width", "height"] as const)(
     await gesture("onPressIn");
     await gesture("onPress");
     expect(card()).not.toBeNull();
+  },
+);
+
+it.each(["onPress", "onLongPress"])(
+  "keeps %s cards inside safe bounds as anchor and text height vary",
+  async (open) => {
+    harness.window = { width: 800, height: 360 };
+    harness.viewport = { x: 0, y: 0, ...harness.window };
+    harness.insets = { top: 24, bottom: 16, left: 44, right: 44 };
+    for (const y of [30, 180, 340]) {
+      harness.anchor = { x: 780, y, width: 20 };
+      await render({ key: String(y) });
+      await gesture("onPressIn");
+      await gesture(open);
+      for (const height of [100, 220, 296]) {
+        await act(async () =>
+          harness.card.onLayout({ nativeEvent: { layout: { height } } }),
+        );
+        const style = Object.assign({}, ...(harness.card as any).style);
+        const x = style.left + (open === "onLongPress" ? harness.anchor.x : 0);
+        const top = style.top + (open === "onLongPress" ? y : 0);
+        expect(x).toBeGreaterThanOrEqual(harness.insets.left);
+        expect(x + style.width).toBeLessThanOrEqual(800 - harness.insets.right);
+        expect(top).toBeGreaterThanOrEqual(harness.insets.top);
+        expect(top + height).toBeLessThanOrEqual(360 - harness.insets.bottom);
+        expect(style.maxHeight).toBeLessThanOrEqual(
+          360 - harness.insets.top - harness.insets.bottom,
+        );
+      }
+    }
   },
 );
 

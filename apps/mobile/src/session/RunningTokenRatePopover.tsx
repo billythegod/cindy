@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   View,
   useWindowDimensions,
@@ -26,6 +27,7 @@ import {
   typeScale,
 } from "@/theme/tokens";
 import { usePaneViewport } from "@/platform/AdaptiveWindowContext";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export function formatTokenRate(rate: number | null): string {
   if (rate === null || !Number.isFinite(rate) || rate < 0) return "—";
@@ -60,20 +62,54 @@ export function RunningTokenRatePopover({
   const { t } = useTranslation();
   const viewport = usePaneViewport();
   const window = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const anchorRef = useRef<View>(null);
   const [anchor, setAnchor] = useState({ x: 0, y: 0, width: 0 });
+  const [cardHeight, setCardHeight] = useState(0);
+  const measureAnchor = () =>
+    anchorRef.current?.measureInWindow((x, y, width) => {
+      setAnchor({ x, y, width });
+    });
   const outsideTouch = useRef({ x: 0, y: 0, moved: false });
-  const cardWidth = Math.min(304, viewport.width - spacing.xl * 2);
+  const cardWidth = Math.max(
+    1,
+    Math.min(
+      304,
+      viewport.width - spacing.xl * 2,
+      window.width - insets.left - insets.right - spacing.lg * 2,
+    ),
+  );
+  const maxCardHeight = Math.max(
+    1,
+    window.height - insets.top - insets.bottom - spacing.lg * 2,
+  );
+  const cardLeft = Math.max(
+    insets.left + spacing.lg,
+    Math.min(
+      anchor.x + anchor.width - cardWidth,
+      window.width - insets.right - spacing.lg - cardWidth,
+    ),
+  );
+  const cardTop = Math.max(
+    insets.top + spacing.lg,
+    Math.min(
+      anchor.y - cardHeight,
+      window.height - insets.bottom - spacing.lg - cardHeight,
+    ),
+  );
   const [mode, setMode] = useState<"closed" | "pinned" | "held">("closed");
   // A pane can move or resize without changing the native window dimensions.
-  useEffect(() => setMode("closed"), [
-    window.width,
-    window.height,
-    viewport.x,
-    viewport.y,
-    viewport.width,
-    viewport.height,
-  ]);
+  useEffect(
+    () => setMode("closed"),
+    [
+      window.width,
+      window.height,
+      viewport.x,
+      viewport.y,
+      viewport.width,
+      viewport.height,
+    ],
+  );
   const longPressed = useRef(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const [history, setHistory] = useState(() => {
@@ -138,87 +174,96 @@ export function RunningTokenRatePopover({
       onStartShouldSetResponder={() => true}
       onAccessibilityEscape={() => setMode("closed")}
       testID="session.tokenRate.card"
+      onLayout={(event) => setCardHeight(event.nativeEvent.layout.height)}
       style={[
         styles.card,
-        { width: cardWidth },
-        mode === "pinned"
-          ? {
-              right: undefined,
-              left: Math.max(
-                spacing.lg,
-                Math.min(
-                  anchor.x + anchor.width - cardWidth,
-                  window.width - cardWidth - spacing.lg,
-                ),
-              ),
-              bottom: Math.max(spacing.lg, window.height - anchor.y),
-            }
-          : undefined,
+        {
+          width: cardWidth,
+          maxHeight: maxCardHeight,
+          left: cardLeft - (mode === "held" ? anchor.x : 0),
+          top: cardTop - (mode === "held" ? anchor.y : 0),
+          opacity: cardHeight > 0 ? 1 : 0,
+        },
       ]}
       accessibilityLabel={t("session.screen.tokenRateDescription")}
     >
-      <View style={styles.top}>
-        <View style={styles.metric}>
-          <Text style={styles.label}>{t("session.screen.currentRate")}</Text>
-          <Text style={styles.value}>
-            {formatTokenRate(recent)}{" "}
-            <Text style={styles.label}>
-              {t("session.screen.tokenRateUnit")}
+      <ScrollView
+        style={{ maxHeight: maxCardHeight - 2 }}
+        contentContainerStyle={styles.cardContent}
+      >
+        <View style={styles.top}>
+          <View style={styles.metric}>
+            <Text style={styles.label}>{t("session.screen.currentRate")}</Text>
+            <Text style={styles.value}>
+              {formatTokenRate(recent)}{" "}
+              <Text style={styles.label}>
+                {t("session.screen.tokenRateUnit")}
+              </Text>
             </Text>
-          </Text>
-        </View>
-        <Svg
-          width={120}
-          height={48}
-          viewBox="0 0 120 48"
-          accessibilityLabel={t("session.screen.rateHistory")}
-        >
-          <Path d="M4 44H112" stroke={colors.textPrimary} opacity={0.12} />
-          {points.length > 1 && (
-            <>
-              <Path
-                d={`${line} L112,44 L${points[0].x},44 Z`}
-                fill={colors.textPrimary}
-                opacity={0.08}
-              />
-              <Path
-                d={line}
-                fill="none"
-                stroke={colors.textPrimary}
-                strokeWidth={iconStroke.thin}
-                strokeLinejoin="round"
-              />
-            </>
-          )}
-          {last && (
-            <Circle cx={last.x} cy={last.y} r={2.5} fill={colors.textPrimary} />
-          )}
-        </Svg>
-      </View>
-      <View style={styles.top}>
-        {[
-          ["averageRate", rateText(average)],
-          [
-            "outputTotal",
-            t("session.screen.tokenCount", {
-              tokens:
-                outputTokens >= 1000
-                  ? `${(outputTokens / 1000).toFixed(1)}k`
-                  : outputTokens,
-            }),
-          ],
-          ["observedPeak", rateText(samples.length ? history.peak : null)],
-        ].map(([key, value]) => (
-          <View style={styles.metric} key={key}>
-            <Text style={styles.label}>{t(`session.screen.${key}`)}</Text>
-            <Text style={styles.detail}>{value}</Text>
           </View>
-        ))}
-      </View>
+          <Svg
+            width={120}
+            height={48}
+            viewBox="0 0 120 48"
+            accessibilityLabel={t("session.screen.rateHistory")}
+          >
+            <Path d="M4 44H112" stroke={colors.textPrimary} opacity={0.12} />
+            {points.length > 1 && (
+              <>
+                <Path
+                  d={`${line} L112,44 L${points[0].x},44 Z`}
+                  fill={colors.textPrimary}
+                  opacity={0.08}
+                />
+                <Path
+                  d={line}
+                  fill="none"
+                  stroke={colors.textPrimary}
+                  strokeWidth={iconStroke.thin}
+                  strokeLinejoin="round"
+                />
+              </>
+            )}
+            {last && (
+              <Circle
+                cx={last.x}
+                cy={last.y}
+                r={2.5}
+                fill={colors.textPrimary}
+              />
+            )}
+          </Svg>
+        </View>
+        <View style={styles.top}>
+          {[
+            ["averageRate", rateText(average)],
+            [
+              "outputTotal",
+              t("session.screen.tokenCount", {
+                tokens:
+                  outputTokens >= 1000
+                    ? `${(outputTokens / 1000).toFixed(1)}k`
+                    : outputTokens,
+              }),
+            ],
+            ["observedPeak", rateText(samples.length ? history.peak : null)],
+          ].map(([key, value]) => (
+            <View style={styles.metric} key={key}>
+              <Text style={styles.label}>{t(`session.screen.${key}`)}</Text>
+              <Text style={styles.detail}>{value}</Text>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
     </View>
   );
   return (
-    <View ref={anchorRef} collapsable={false} style={styles.anchor}>
+    <View
+      ref={anchorRef}
+      collapsable={false}
+      style={styles.anchor}
+      onLayout={measureAnchor}
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={label}
@@ -226,6 +271,7 @@ export function RunningTokenRatePopover({
         testID="session.tokenRate.trigger"
         style={({ pressed }) => [styles.trigger, pressed && styles.pressed]}
         onPressIn={(event) => {
+          measureAnchor();
           longPressed.current = false;
           touchStart.current = {
             x: event.nativeEvent.pageX,
@@ -242,10 +288,8 @@ export function RunningTokenRatePopover({
             setMode("closed");
             return;
           }
-          anchorRef.current?.measureInWindow((x, y, width) => {
-            setAnchor({ x, y, width });
-            setMode("pinned");
-          });
+          measureAnchor();
+          setMode("pinned");
         }}
         onPressOut={() =>
           setMode((value) => (value === "held" ? "closed" : value))
@@ -329,12 +373,13 @@ const makeStyles = (colors: ThemeColors) =>
     pressed: { opacity: 0.72 },
     card: {
       position: "absolute",
-      right: 0,
-      bottom: "100%",
       backgroundColor: colors.surfaceElevated,
       borderColor: colors.border,
       borderWidth: 1,
       borderRadius: radius.container,
+      overflow: "hidden",
+    },
+    cardContent: {
       padding: spacing.md,
       gap: spacing.md,
     },
