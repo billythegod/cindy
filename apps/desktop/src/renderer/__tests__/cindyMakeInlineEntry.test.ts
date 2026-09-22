@@ -53,10 +53,16 @@ describe('Cindy Make composer presentation', () => {
     }
     expect(sessionView).toContain('if (cindyMakeInputLocked) return false;');
     expect(sessionView).not.toContain('CindyMakeResumeCard');
-    const recovery = sessionView.indexOf(') : cindyMakeRecoveryId && session ? (');
-    expect(recovery).toBeGreaterThan(mask);
-    expect(recovery).toBeLessThan(input);
-    expect(sessionView.slice(recovery, input)).toContain('<CindyMakeTestCard');
-    expect(sessionView.slice(recovery, input)).toContain(') : (');
+    const testCard = sessionView.indexOf('<CindyMakeTestCard', mask);
+    const recovery = sessionView.indexOf('topSlot={cindyMakeRecoveryId && session ? (', input);
+    const send = sessionView.indexOf('onSend={handleSend}', input);
+    // The pending test card still sits between the composer mask and ChatInput.
+    // Recovery no longer replaces that input; it is the topSlot of the same ChatInput.
+    expect(testCard).toBeGreaterThan(mask);
+    expect(testCard).toBeLessThan(input);
+    expect(sessionView.slice(testCard, input)).toContain(') : (');
+    expect(recovery).toBeGreaterThan(input);
+    expect(send).toBeGreaterThan(recovery);
+    expect(sessionView.slice(recovery, send)).toContain('<CindyMakeEditingActions');
   });
 });
