@@ -54,9 +54,15 @@ describe('Cindy Make composer presentation', () => {
     expect(sessionView).toContain('if (cindyMakeInputLocked) return false;');
     expect(sessionView).not.toContain('CindyMakeResumeCard');
     const recovery = sessionView.indexOf(') : cindyMakeRecoveryId && session ? (');
-    expect(recovery).toBeGreaterThan(mask);
-    expect(recovery).toBeLessThan(input);
-    expect(sessionView.slice(recovery, input)).toContain('<CindyMakeTestCard');
-    expect(sessionView.slice(recovery, input)).toContain(') : (');
+    const recoveryTopSlot = sessionView.indexOf('topSlot={cindyMakeRecoveryId && session ? (');
+    expect(Math.max(recovery, recoveryTopSlot)).toBeGreaterThan(mask);
+    if (recovery !== -1) {
+      expect(recovery).toBeLessThan(input);
+      expect(sessionView.slice(recovery, input)).toContain('<CindyMakeTestCard');
+      expect(sessionView.slice(recovery, input)).toContain(') : (');
+    } else {
+      expect(recoveryTopSlot).toBeGreaterThan(input);
+      expect(sessionView.slice(recoveryTopSlot)).toContain('<CindyMakeEditingActions');
+    }
   });
 });
