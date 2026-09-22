@@ -32,11 +32,11 @@ describe('Linux install routing', () => {
     const timeout = Object.assign(new Error('dpkg-query timed out'), { code: 'ETIMEDOUT', signal: 'SIGTERM' });
     expect(checkDebianManagedInstallation('/usr/lib/cindy/Cindy', () => { throw timeout; }))
       .toEqual({ status: 'error', error: timeout });
-    const missingBinary = Object.assign(new Error('spawnSync /usr/bin/dpkg-query ENOENT'), {
-      code: 'ENOENT', status: null, signal: null,
+    const denied = Object.assign(new Error('spawnSync /usr/bin/dpkg-query EACCES'), {
+      code: 'EACCES', status: null, signal: null,
     });
-    expect(checkDebianManagedInstallation('/usr/lib/cindy/Cindy', () => { throw missingBinary; }))
-      .toEqual({ status: 'error', error: missingBinary });
+    expect(checkDebianManagedInstallation('/usr/lib/cindy/Cindy', () => { throw denied; }))
+      .toEqual({ status: 'error', error: denied });
     const queryFailed = Object.assign(new Error('Command failed: /usr/bin/dpkg-query -S /usr/lib/cindy/Cindy'), {
       status: 2, signal: null,
     });
@@ -50,6 +50,14 @@ describe('Linux install routing', () => {
       { status: 1, signal: null },
     );
     expect(checkDebianManagedInstallation('/home/devuser/custom-builds/Cindy', () => { throw noMatch; }))
+      .toEqual({ status: 'not-managed' });
+  });
+
+  it('maps a missing dpkg-query binary to confirmed non-ownership', () => {
+    const missingBinary = Object.assign(new Error('spawnSync /usr/bin/dpkg-query ENOENT'), {
+      code: 'ENOENT', status: null, signal: null,
+    });
+    expect(checkDebianManagedInstallation('/usr/lib/cindy/Cindy', () => { throw missingBinary; }))
       .toEqual({ status: 'not-managed' });
   });
 

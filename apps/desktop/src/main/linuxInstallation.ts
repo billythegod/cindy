@@ -85,14 +85,18 @@ export type DebianManagedInstallationCheck =
   | { status: 'not-managed' }
   | { status: 'error'; error: unknown };
 
-/** dpkg-query -S exits 1 when no package owns the path. That is a
- * confirmed non-ownership result, not a probe failure. Timeouts, a missing
- * binary, and exit 2 (database or usage faults) stay errors.
+/** Confirmed non-ownership, not a retryable probe failure.
+ * - dpkg-query -S exits 1 when no package owns the path.
+ * - spawn ENOENT means /usr/bin/dpkg-query is absent (Arch and other
+ *   non-Debian systems). That must keep the unsupported-install block.
+ * Timeouts and exit 2 (database or usage faults) stay errors.
  */
 function isConfirmedDebianOwnershipMiss(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const details = error as { status?: unknown; signal?: unknown; code?: unknown; killed?: unknown };
   if (details.killed === true || details.signal != null) return false;
+  // execFileSync sets status null when the binary itself cannot be spawned.
+  if (details.code === 'ENOENT' && details.status == null) return true;
   if (typeof details.code === 'string' && details.code.length > 0) return false;
   return details.status === 1;
 }
