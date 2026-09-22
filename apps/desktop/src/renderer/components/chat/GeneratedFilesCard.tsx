@@ -24,7 +24,8 @@
  * (Write / file-change add)也不能只凭存在性:Write 可能覆盖既有文件,失败路径也可能
  * 被后续轮次创建;因此它必须有落在窗口内的 birthtime,不可用时宁可不出。
  * command 来源为兼容不提供 birthtime 的 Linux FS 允许 mtime 回退,但同样受完整
- * 时间窗约束。远程会话无法读取创建时间,维持远端 stat 的存在性复核。
+ * 时间窗约束。远程工具产物维持 stat 存在性复核；命令产物额外检查远端 mtime，
+ * 用远端消息时间窗判定，不使用控制端时钟，也不复用普通链接的存在性缓存。
  */
 
 import { CHAT_FOCUS_CLASS, CHAT_COLOR_TRANSITION_CLASS } from './chatChrome';
@@ -726,16 +727,23 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
     if (!remoteOrigin) return;
     const watched = new Set(
       files
-        .filter(
-          (file) => file.source === 'tool' && isGeneratedFileStatable(file, turnEndMs, turnSealed),
-        )
-        .map((file) => remotePathVerdictKey(remoteOrigin, fileCtx.workingDir, file.path)),
+        .filter((file) => isGeneratedFileStatable(file, turnEndMs, turnSealed))
+        .map((file) =>
+          remotePathVerdictKey(
+            remoteOrigin,
+            fileCtx.workingDir,
+            file.path,
+            file.source === 'command' && turnStartMs !== null
+              ? { startMs: turnStartMs - TURN_START_SLACK_MS, endMs: turnEndMs }
+              : undefined,
+          ),
+        ),
     );
     if (watched.size === 0) return;
     return subscribeRemotePathVerdictChange((key) => {
       if (watched.has(key)) setRemoteVerdictGen((generation) => generation + 1);
     });
-  }, [remoteOrigin, fileCtx.workingDir, checkKey, files, turnEndMs, turnSealed]);
+  }, [remoteOrigin, fileCtx.workingDir, checkKey, files, turnStartMs, turnEndMs, turnSealed]);
 
   useEffect(() => {
     let cancelled = false;
@@ -772,7 +780,7 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
     }
 
     const toStat = remoteOrigin
-      ? plan.toStat.filter((file) => file.source === 'tool')
+      ? plan.toStat.filter((file) => file.source === 'tool' || turnStartMs !== null)
       : plan.toStat;
     if (toStat.length === 0) {
       return () => {
@@ -789,6 +797,9 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
               remoteOrigin,
               fileCtx.workingDir,
               file.path,
+              file.source === 'command' && turnStartMs !== null
+                ? { startMs: turnStartMs - TURN_START_SLACK_MS, endMs: turnEndMs }
+                : undefined,
             );
             return isConfirmedRemoteGeneratedFile(verdict);
           }),
@@ -846,7 +857,11 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
     const hiddenPrimaryCount = primary.length - visiblePrimary.length;
 
     return (
-      <div data-render-item-key={renderItemKey} className="my-1 flex max-w-[680px] flex-col gap-2" data-testid="bot-generated-artifacts">
+      <div
+        data-render-item-key={renderItemKey}
+        className="my-1 flex max-w-[680px] flex-col gap-2"
+        data-testid="bot-generated-artifacts"
+      >
         {primary.length > 0 ? (
           <>
             <span className="text-12 font-medium text-[var(--text-secondary)]">
