@@ -1,3 +1,4 @@
+import { RunningTokenRatePopover } from '@/session/RunningTokenRatePopover';
 import { HomeHeaderGlassButton } from '@/session/HomeHeaderGlassButton';
 import { HomeNewTaskButton } from '@/session/HomeNewTaskButton';
 import { RecentMessageHistories, MessageHistoryOverlay } from '@/session/RecentMessageHistories';
@@ -9701,6 +9702,8 @@ export default function SessionScreen() {
                   ]}
                 >
                   <ComposerActivityStatus
+                    key={JSON.stringify([auth.accountGeneration, deviceId, sessionId])}
+                    sessionKey={JSON.stringify([auth.accountGeneration, deviceId, sessionId])}
                     reconnectAttempt={remoteSessionRunStatus.reconnectAttempt}
                     sideTaskRunning={remoteSessionRunStatus.sideTaskRunning}
                     startedAt={composerActivityStartedAtMs}
@@ -11449,6 +11452,7 @@ function ComposerRuntimePill({
 }
 
 function ComposerActivityStatus({
+  sessionKey,
   reconnectAttempt,
   sideTaskRunning,
   startedAt,
@@ -11459,6 +11463,7 @@ function ComposerActivityStatus({
   generationActive,
   visible,
 }: {
+  sessionKey: string;
   reconnectAttempt: RemoteSessionRunStatus['reconnectAttempt'];
   sideTaskRunning: boolean;
   startedAt: number | null;
@@ -11516,11 +11521,11 @@ function ComposerActivityStatus({
 
   return (
     <View
-      pointerEvents="none"
+      pointerEvents="box-none"
       style={styles.composerActivityStatus}
       testID="session.composerActivityStatus"
     >
-      <View style={[styles.composerActivityPill, styles.composerActivityPrimary]}>
+      <View pointerEvents="none" style={[styles.composerActivityPill, styles.composerActivityPrimary]}>
         <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} style={styles.composerActivityPillBackdrop} />
         <Sparkles color={colors.statusAccent} size={iconSize.sm} strokeWidth={iconStroke.regular} />
         <Text numberOfLines={1} style={styles.composerActivityStatusText}>{activityText}</Text>
@@ -11530,33 +11535,42 @@ function ComposerActivityStatus({
           </Text>
         ) : null}
       </View>
-      <View style={[styles.composerActivityPill, styles.composerActivityMeta]}>
-        <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} style={styles.composerActivityPillBackdrop} />
-        <Text style={styles.composerActivityMetaText}>{elapsedText}</Text>
-        {!sideTaskRunning && showUsageMeta ? (
-          <>
-            <Text style={styles.composerActivityMetaText}>·</Text>
-            {rateText ? (
-              <Text
-                accessibilityLabel={rateText}
-                style={styles.composerActivityMetaText}
-              >
-                {rateText}
-              </Text>
-            ) : (
-              <>
-                <ArrowDown color={colors.textSecondary} size={iconSize.xs} strokeWidth={iconStroke.regular} />
+      <RunningTokenRatePopover
+        sessionKey={sessionKey}
+        startedAt={startedAt}
+        outputTokens={outputTokens}
+        generationDurationMs={generationDurationMs}
+        generationReliable={generationReliable && !sideTaskRunning}
+        label={!sideTaskRunning && showUsageMeta ? `${elapsedText} · ${rateText ?? tokenA11yText}` : elapsedText}
+      >
+        <View style={[styles.composerActivityPill, styles.composerActivityMeta]}>
+          <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} style={styles.composerActivityPillBackdrop} />
+          <Text style={styles.composerActivityMetaText}>{elapsedText}</Text>
+          {!sideTaskRunning && showUsageMeta ? (
+            <>
+              <Text style={styles.composerActivityMetaText}>·</Text>
+              {rateText ? (
                 <Text
-                  accessibilityLabel={tokenA11yText}
+                  accessibilityLabel={rateText}
                   style={styles.composerActivityMetaText}
                 >
-                  {tokenText}
+                  {rateText}
                 </Text>
-              </>
-            )}
-          </>
-        ) : null}
-      </View>
+              ) : (
+                <>
+                  <ArrowDown color={colors.textSecondary} size={iconSize.xs} strokeWidth={iconStroke.regular} />
+                  <Text
+                    accessibilityLabel={tokenA11yText}
+                    style={styles.composerActivityMetaText}
+                  >
+                    {tokenText}
+                  </Text>
+                </>
+              )}
+            </>
+          ) : null}
+        </View>
+      </RunningTokenRatePopover>
     </View>
   );
 }
@@ -11995,7 +12009,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   composerActivityStatus: {
     alignItems: 'center',
     flexDirection: 'row',
-    height: 25,
+    minHeight: 44,
     justifyContent: 'space-between',
     paddingHorizontal: spacing.xs,
   },

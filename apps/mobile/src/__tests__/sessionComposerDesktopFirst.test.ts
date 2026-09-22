@@ -244,7 +244,8 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('composerActivityMetaText');
     expect(source).toContain('composerActivityFrame');
     expect(source).toContain('marginTop: spacing.lg');
-    expect(source).toContain('height: 25');
+    // The formerly passive rate is now a touch target, with a full 44pt status row.
+    expect(source).toMatch(/composerActivityStatus: \{[^}]*minHeight: 44/s);
     expect(source).toContain('composerActivityStatusText');
     expect(source).toContain('composerActivityProgressText');
     expect(composerStatusCallIndex).toBeGreaterThan(-1);
