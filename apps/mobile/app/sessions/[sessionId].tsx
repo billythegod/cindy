@@ -9540,6 +9540,8 @@ export default function SessionScreen() {
           pointerEvents="box-none"
           style={[
             styles.sessionBottomLayer,
+            // Keep held rate cards in the original touch tree without clipping them.
+            sessionOperationLayout.composerSlot === 'editable' && { overflow: 'visible' },
             adaptiveWindow.regions.length > 0 && {
               left: Math.max(0, composerRegion.x - paneLayout.detail.x),
               right: Math.max(0, paneLayout.detail.x + paneLayout.detail.width - composerRegion.x - composerRegion.width),
@@ -11498,10 +11500,11 @@ function ComposerActivityStatus({
   const tokenCount = formatComposerActivityTokenCount(tokenUsage);
   const tokenText = t('session.screen.tokenCount', { tokens: tokenCount });
   const tokenA11yText = t('session.screen.tokenCountFull', { tokens: tokenCount });
+  const canShowRateDetails = !sideTaskRunning && !reconnectAttempt;
   const rateValue = formatComposerActivityRateValue(
     outputTokens,
     generationDurationMs,
-    generationReliable,
+    generationReliable && canShowRateDetails,
   );
   const rateText = rateValue
     ? t('session.screen.tokenRate', { rate: rateValue })
@@ -11535,7 +11538,7 @@ function ComposerActivityStatus({
           </Text>
         ) : null}
       </View>
-      {sideTaskRunning ? (
+      {!canShowRateDetails ? (
         <View pointerEvents="none" style={[styles.composerActivityPill, styles.composerActivityMeta]}>
           <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} style={styles.composerActivityPillBackdrop} />
           <Text style={styles.composerActivityMetaText}>{elapsedText}</Text>
@@ -11546,13 +11549,13 @@ function ComposerActivityStatus({
           startedAt={startedAt}
           outputTokens={outputTokens}
           generationDurationMs={generationDurationMs}
-          generationReliable={generationReliable && !sideTaskRunning}
-          label={!sideTaskRunning && showUsageMeta ? `${elapsedText} · ${rateText ?? tokenA11yText}` : elapsedText}
+          generationReliable={generationReliable}
+          label={showUsageMeta ? `${elapsedText} · ${rateText ?? tokenA11yText}` : elapsedText}
         >
           <View style={[styles.composerActivityPill, styles.composerActivityMeta]}>
             <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} style={styles.composerActivityPillBackdrop} />
             <Text style={styles.composerActivityMetaText}>{elapsedText}</Text>
-            {!sideTaskRunning && showUsageMeta ? (
+            {showUsageMeta ? (
               <>
                 <Text style={styles.composerActivityMetaText}>·</Text>
                 {rateText ? (

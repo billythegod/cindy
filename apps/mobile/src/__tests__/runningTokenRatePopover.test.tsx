@@ -135,35 +135,49 @@ const ActivityStatus = new Function(
 )(...Object.values(bindings));
 
 it.each(["onPress", "onLongPress"])(
-  "removes the %s rate panel during a side task and restores a closed trigger afterwards",
+  "removes the %s rate panel through side tasks and every reconnect kind, then restores a closed trigger",
   async (open) => {
-    const renderStatus = (sideTaskRunning: boolean) =>
+    const renderStatus = (status: Record<string, unknown> = {}) =>
       act(async () =>
         root.render(
           createElement(ActivityStatus, {
             ...base,
             visible: true,
             tokenUsage: 100,
-            sideTaskRunning,
+            sideTaskRunning: false,
             reconnectAttempt: null,
+            ...status,
           }),
         ),
       );
-    await renderStatus(false);
-    await gesture("onPressIn");
-    await gesture(open);
-    expect(card()).not.toBeNull();
-    await renderStatus(true);
-    expect(card()).toBeNull();
-    expect(
-      host.querySelector('[data-testid="session.tokenRate.trigger"]'),
-    ).toBeNull();
-    expect(host.textContent).toContain("1s");
-    await renderStatus(false);
-    expect(card()).toBeNull();
-    expect(
-      host.querySelector('[data-testid="session.tokenRate.trigger"]'),
-    ).not.toBeNull();
+    for (const inactive of [
+      { sideTaskRunning: true },
+      ...[undefined, "overload", "rate-limit"].map((kind) => ({
+        reconnectAttempt: { kind, attempt: 1, maxAttempts: 3 },
+      })),
+      { visible: false },
+    ]) {
+      await renderStatus();
+      await gesture("onPressIn");
+      await gesture(open);
+      expect(card()).not.toBeNull();
+      await renderStatus(inactive);
+      expect(card()).toBeNull();
+      expect(
+        host.querySelector('[data-testid="session.tokenRate.trigger"]'),
+      ).toBeNull();
+      await renderStatus({
+        ...inactive,
+        outputTokens: 999,
+        generationDurationMs: 9000,
+      });
+      expect(card()).toBeNull();
+      await renderStatus();
+      expect(card()).toBeNull();
+      expect(
+        host.querySelector('[data-testid="session.tokenRate.trigger"]'),
+      ).not.toBeNull();
+    }
   },
 );
 beforeEach(() => {

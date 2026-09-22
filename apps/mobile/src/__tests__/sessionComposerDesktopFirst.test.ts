@@ -227,7 +227,8 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('outputTokens={remoteSessionRunStatus.outputTokens}');
     expect(source).toContain('generationDurationMs={remoteSessionRunStatus.generationDurationMs}');
     expect(source).toContain('ArrowDown');
-    expect(source).toContain('{!sideTaskRunning && showUsageMeta ? (');
+    expect(source).toContain('const canShowRateDetails = !sideTaskRunning && !reconnectAttempt;');
+    expect(source).toContain('{!canShowRateDetails ? (');
     expect(source).toContain('generationActive={remoteSessionRunStatus.generationActive}');
     expect(source).toContain('const showUsageMeta = Boolean(rateText) || tokenUsage > 0;');
     expect(source).toContain("t('session.screen.tokenCount'");
@@ -381,6 +382,7 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('onLayout={handleBottomOverlayLayout}');
     expect(source).toContain('bottomOverlayHeight={bottomOverlayHeight}');
     expect(source).toContain('styles.sessionBottomLayer,');
+    expect(source).toContain("sessionOperationLayout.composerSlot === 'editable' && { overflow: 'visible' }");
     expect(source).toContain('testID="session.bottomLayer"');
     expect(source).toContain('testID="session.bottomContent"');
     expect(source).toContain("paddingBottom: sessionOperationLayout.composerSlot === 'pending-interaction'");
