@@ -88,11 +88,39 @@ describe.each(['pi', 'codex'] as const)('%s Session tool loop coverage', (agentK
     } });
     const errorIndex = t.seen.indexOf(t.errors()[0]);
     expect(t.seen.slice(0, errorIndex).filter(e => e.type === 'tool_result_full')).toHaveLength(4);
+    expect(t.seen.slice(0, errorIndex).filter(e => e.type === 'tool_result')).toHaveLength(4);
+    expect(t.seen.slice(errorIndex).filter(e => e.type === 'tool_result')).toHaveLength(0);
     expect(t.handle.abort).toHaveBeenCalledOnce();
     expect(t.session.getObservedCurrentTurnTerminal().kind).toBe('error');
     await t.session.send('try a different approach');
     for (let i = 0; i < 3; i++) await t.tool(`new-${i}`);
     expect(t.errors()).toHaveLength(1);
+  });
+
+  it.each([false, true])('waits for the matching summary and discards pending verdict on takeover=%s', async (takeover) => {
+    const t = setup(agentKind);
+    await t.session.send('first');
+    const generation = t.session.getTurnGeneration();
+    for (let i = 0; i < 3; i++) await t.tool(String(i));
+    t.queue.push({ type: 'tool_use', source: agentKind, data: { toolUseId: 'last', toolName: 'read', input: { path: 'same.ts' } } });
+    t.queue.push({ type: 'tool_result_full', source: agentKind, data: { toolUseId: 'last', fullText: 'same result' } });
+    t.queue.push({ type: 'tool_result', source: agentKind, data: { toolUseIds: ['unrelated'], summary: 'done' } });
+    t.queue.push({ type: 'tool_result', source: agentKind, turnScope: 'background', data: { toolUseIds: ['last'], summary: 'done' } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.errors()).toHaveLength(0);
+    expect(t.handle.abort).not.toHaveBeenCalled();
+    if (takeover) {
+      await t.end();
+      await t.session.send('second');
+    }
+    t.queue.push({ type: 'tool_result', source: agentKind, sessionTurnGeneration: generation, data: { toolUseIds: ['last'], summary: 'done' } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.errors()).toHaveLength(takeover ? 0 : 1);
+    expect(t.handle.abort).toHaveBeenCalledTimes(takeover ? 0 : 1);
+    if (takeover) {
+      for (let i = 0; i < 4; i++) await t.tool(`new-${i}`);
+      expect(t.errors()).toHaveLength(1);
+    }
   });
 
   it('does not count background, old-generation, foreign-instance or duplicate results', async () => {
@@ -173,6 +201,7 @@ it('pairs real Pi translator tool events without changing their results', async 
   }
   expect(t.errors()).toHaveLength(1);
   expect(t.handle.abort).toHaveBeenCalledOnce();
+  expect(t.seen.slice(0, t.seen.indexOf(t.errors()[0])).filter(e => e.type === 'tool_result')).toHaveLength(4);
   expect(t.seen.filter(e => e.type === 'tool_result_full').map(e => e.data)).toEqual(
     Array.from({ length: 4 }, (_, i) => ({ toolUseId: String(i), fullText: 'file.ts: unchanged', isError: false })),
   );

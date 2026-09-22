@@ -363,6 +363,7 @@ export type SessionGracefulStopResult =
 type TurnControlState = {
   generation: number;
   toolLoopGuard: ToolLoopGuard | null;
+  pendingToolLoop: { toolUseId: string; verdict: Extract<ReturnType<ToolLoopGuard['onToolResult']>, { kind: 'hard' }> } | null;
   activeToolIds: Set<string>;
   anonymousActiveTools: number;
   pendingInteractionToolIds: Map<string, number>;
@@ -2162,6 +2163,7 @@ export class Session {
         // its existing batch-aware contract rule; repetition rules stay active.
         contractConsecutiveLimit: Number.POSITIVE_INFINITY,
       }),
+      pendingToolLoop: null,
       activeToolIds: new Set(),
       anonymousActiveTools: 0,
       pendingInteractionToolIds: new Map(),
@@ -2748,7 +2750,7 @@ export class Session {
   }
 
   private observeToolLoop(event: AgentEvent, generation: number): void {
-    if (event.type !== 'tool_use' && event.type !== 'tool_result_full') return;
+    if (event.type !== 'tool_use' && event.type !== 'tool_result_full' && event.type !== 'tool_result') return;
     const control = this.turnControlState;
     if (!control?.toolLoopGuard || control.generation !== generation ||
       generation !== this.turnGeneration || this.status !== 'active' || this.closePromise ||
@@ -2756,7 +2758,15 @@ export class Session {
       this.pendingInteractions > 0 || control.gracefulStopState !== 'none') return;
     const data = event.data && typeof event.data === 'object'
       ? event.data as Record<string, unknown> : {};
-    if (data.runtimeActivity === 'snapshot' || typeof data.toolUseId !== 'string') return;
+    if (data.runtimeActivity === 'snapshot') return;
+    if (event.type === 'tool_result') {
+      const pending = control.pendingToolLoop;
+      if (!pending || !Array.isArray(data.toolUseIds) || !data.toolUseIds.includes(pending.toolUseId)) return;
+      control.pendingToolLoop = null;
+      this.interruptToolLoop(pending.verdict, generation);
+      return;
+    }
+    if (typeof data.toolUseId !== 'string' || control.pendingToolLoop) return;
     if (event.type === 'tool_use') {
       control.toolLoopGuard.onToolUse(data.toolUseId, data.toolName, data.input);
       return;
@@ -2764,6 +2774,13 @@ export class Session {
     if (event.type !== 'tool_result_full' || typeof data.fullText !== 'string') return;
     const verdict = control.toolLoopGuard.onToolResult(data.toolUseId, data.fullText, data.isError === true);
     if (verdict.kind !== 'hard') return;
+    // Both translators enqueue full text before its summary. Let listeners
+    // consume both projections before terminal cleanup clears their pairing.
+    // This belongs to TurnControlState so termination/takeover discards it.
+    control.pendingToolLoop = { toolUseId: data.toolUseId, verdict };
+  }
+
+  private interruptToolLoop(verdict: Extract<ReturnType<ToolLoopGuard['onToolResult']>, { kind: 'hard' }>, generation: number): void {
     this.fanOutEvent({
       type: 'error',
       data: {
