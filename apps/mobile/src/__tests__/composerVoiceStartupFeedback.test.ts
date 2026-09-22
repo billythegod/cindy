@@ -12,7 +12,21 @@ function readCallbacks(page: string) {
     readFileSync(resolve(process.cwd(), 'app/sessions', page), 'utf8'),
     ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const callbacks = new Map<string, string>();
+  let cardActive = '';
   function visit(node: ts.Node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'composerCardActive' && node.initializer) {
+      cardActive = node.initializer.getText(source);
+    }
+    if (ts.isCallExpression(node) && node.expression.getText(source) === 'createMobileVoiceControllerSession') {
+      const options = node.arguments[0];
+      if (ts.isObjectLiteralExpression(options)) {
+        for (const prop of options.properties) {
+          if (ts.isPropertyAssignment(prop) && ['onStateChanged', 'onError'].includes(prop.name.getText(source))) {
+            callbacks.set(prop.name.getText(source), prop.initializer.getText(source));
+          }
+        }
+      }
+    }
     if (ts.isVariableDeclaration(node) && node.initializer
       && ts.isCallExpression(node.initializer)
       && node.initializer.expression.getText(source) === 'useCallback') {
@@ -22,17 +36,25 @@ function readCallbacks(page: string) {
   }
   visit(source);
   return (bindings: Record<string, unknown>) => {
-    const names = ['handleVoiceButtonPressIn', 'setVoiceState'];
+    const names = ['handleVoiceButtonPressIn', 'setVoiceState', 'onStateChanged', 'onError'];
     const compiled = ts.transpileModule(
       `return { ${names.map((name) => {
         if (!callbacks.has(name)) throw new Error(`Missing ${page} callback: ${name}`);
         return `${name}: ${callbacks.get(name)}`;
-      }).join(',')} };`,
+      }).join(',')}, cardActive: (voiceStartPending, voiceIsBusy) => {
+        const canUseComposer = true;
+        const composerFocused = false, firstMessageInputFocused = false;
+        const modelSheetOpen = false, permissionSheetOpen = false, composerVoiceHoldActive = false;
+        return ${cardActive};
+      } };`,
       { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
     ).outputText;
     return new Function(...Object.keys(bindings), compiled)(...Object.values(bindings)) as {
       handleVoiceButtonPressIn(): void;
       setVoiceState(state: MobileVoiceState): void;
+      onStateChanged(state: MobileVoiceState): void;
+      onError(message: string): void;
+      cardActive(pending: boolean, busy: boolean): boolean;
     };
   };
 }
@@ -57,7 +79,11 @@ describe.each(['new.tsx', '[sessionId].tsx'])('%s voice startup feedback', (page
     let startup = deferred();
     const recording = { current: false };
     const pendingSeq = { current: 0 };
+    const startupSeq = { current: 1 };
+    const setVoiceError = vi.fn();
     const run = callbacks({
+      startupSeq: 1, voiceStartupSeqRef: startupSeq, setVoiceError,
+      setVoiceState: (value: MobileVoiceState) => run.setVoiceState(value),
       creating: false, voiceIsProcessing: false, voiceState: 'idle',
       selectedDeviceId: 'host', deviceId: 'host',
       isMobileRealtimeAudioAvailable: () => true,
@@ -75,8 +101,10 @@ describe.each(['new.tsx', '[sessionId].tsx'])('%s voice startup feedback', (page
     });
     return {
       press: run.handleVoiceButtonPressIn, state: run.setVoiceState, recording,
+      controllerState: run.onStateChanged, controllerError: run.onError, startupSeq, setVoiceError,
       startup: () => startup,
       nextStartup: () => { startup = deferred(); },
+      cardExpanded: () => run.cardActive(pending, state === 'listening' || state === 'submitting' || state === 'refining'),
       view: () => ({ expanded: pending || state === 'listening', counting: state === 'listening', pending }),
     };
   }
@@ -93,6 +121,24 @@ describe.each(['new.tsx', '[sessionId].tsx'])('%s voice startup feedback', (page
     expect(run.view().counting).toBe(pcmFirst);
     run.state('listening');
     expect(run.view()).toEqual({ expanded: true, counting: true, pending: false });
+  });
+
+  it('expands a collapsed composer with the capsule on press, before the first PCM', async () => {
+    const run = setup();
+    expect(run.cardExpanded()).toBe(false);
+    run.press();
+    expect(run.cardExpanded()).toBe(true);
+    expect(run.view()).toEqual({ expanded: true, counting: false, pending: true });
+    run.recording.current = true;
+    run.startup().resolve();
+    await settleCallbacks();
+    expect(run.cardExpanded()).toBe(true);
+    expect(run.view().expanded).toBe(true);
+    run.state('listening');
+    expect(run.cardExpanded()).toBe(true);
+    expect(run.view()).toEqual({ expanded: true, counting: true, pending: false });
+    run.state('idle');
+    expect(run.cardExpanded()).toBe(false);
   });
 
   it.each(['idle', 'error', 'submitting', 'done'] as const)(
@@ -129,5 +175,28 @@ describe.each(['new.tsx', '[sessionId].tsx'])('%s voice startup feedback', (page
     run.startup().resolve();
     await settleCallbacks();
     expect(run.view().expanded).toBe(false);
+  });
+
+  it('ignores late controller states and errors after a new startup claims the page', () => {
+    const run = setup();
+    run.press();
+    run.controllerState('listening');
+    expect(run.view()).toEqual({ expanded: true, counting: true, pending: false });
+    run.state('idle');
+    run.startupSeq.current += 1; // task/device switch invalidates the old controller
+    run.nextStartup();
+    run.press();
+    for (const state of ['done', 'error', 'listening'] as const) run.controllerState(state);
+    run.controllerError('old capture failed during cancellation');
+    expect(run.view()).toEqual({ expanded: true, counting: false, pending: true });
+    expect(run.setVoiceError).not.toHaveBeenCalled();
+  });
+
+  it('still surfaces an error from the current controller', () => {
+    const run = setup();
+    run.press();
+    run.controllerError('capture failed');
+    expect(run.view()).toEqual({ expanded: false, counting: false, pending: false });
+    expect(run.setVoiceError).toHaveBeenCalledWith('capture failed');
   });
 });

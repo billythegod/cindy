@@ -1560,6 +1560,7 @@ export default function NewRemoteSessionScreen() {
   const composerCardActive = firstMessageInputFocused
     || modelSheetOpen
     || permissionSheetOpen
+    || voiceStartPending
     || voiceIsBusy
     || composerVoiceHoldActive;
   useComposerCardTransition(composerCardActive, keyboardState);
@@ -3293,8 +3294,13 @@ export default function NewRemoteSessionScreen() {
           }
           setFirstMessageDraft(text);
         },
-        onStateChanged: setVoiceState,
+        onStateChanged: (next) => {
+          // 旧 controller 的取消可晚于新启动完成,只允许本次启动交接 UI 状态。
+          if (voiceStartupSeqRef.current !== startupSeq) return;
+          setVoiceState(next);
+        },
         onError: (message) => {
+          if (voiceStartupSeqRef.current !== startupSeq) return;
           setVoiceState('error');
           setVoiceError(message);
         },
