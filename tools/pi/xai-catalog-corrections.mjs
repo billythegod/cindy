@@ -53,9 +53,18 @@ export function preferredDefaultEffort(
 // https://docs.x.ai/developers/pricing
 // No separate text output limit; Pi's finite maxTokens is bounded by the shared
 // 500k context, and its serializer reserves space for the input on each request.
-// Add only when absent so a later upstream catalog remains authoritative.
+// Add only when absent; upstream capabilities and explicit defaults remain authoritative.
+// Pi rows may omit Cindy's defaultEffort extension, so keep the official default then.
 export function applyGrok47CatalogAddition(providers) {
-  if (providers.xai?.some((row) => row.id === "grok-4.7")) return providers;
+  const existing = providers.xai?.find((row) => row.id === "grok-4.7");
+  if (existing) {
+    if (existing.defaultEffort == null) {
+      providers.xai = providers.xai.map((row) =>
+        row === existing ? { ...row, defaultEffort: "high" } : row,
+      );
+    }
+    return providers;
+  }
   providers.xai = [
     ...(providers.xai ?? []),
     {

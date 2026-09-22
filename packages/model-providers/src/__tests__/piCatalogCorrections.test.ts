@@ -30,6 +30,14 @@ describe('Pi xAI catalog corrections', () => {
     expect(toCindyProviderModel({ ...model, defaultEffort: 'max' }).defaultEffort).toBe('medium');
     const future = { ...model, contextWindow: 600_000 };
     expect(applyGrok47CatalogAddition({ xai: [future] }).xai).toEqual([future]);
+    const { defaultEffort: _default, ...upstream } = future;
+    const imported = applyGrok47CatalogAddition({ xai: [upstream] });
+    expect(imported.xai).toEqual([{ ...upstream, defaultEffort: 'high' }]);
+    expect(toCindyProviderModel(imported.xai[0]).defaultEffort).toBe('high');
+    expect(upstream).not.toHaveProperty('defaultEffort');
+    expect(applyGrok47CatalogAddition(imported)).toEqual(imported);
+    const explicit = { ...upstream, defaultEffort: 'xhigh' };
+    expect(applyGrok47CatalogAddition({ xai: [explicit] }).xai).toEqual([explicit]);
     for (const agent of ['claude-code', 'codex', 'pi'] as const) {
       expect(BUNDLED_CATALOG.providers.find(row => row.id === 'xai')?.models[agent]
         ?.find(row => row.id === (agent === 'pi' ? 'grok-4.7' : 'xai/grok-4.7')))
