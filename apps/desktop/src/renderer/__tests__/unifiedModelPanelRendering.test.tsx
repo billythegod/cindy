@@ -4059,15 +4059,17 @@ describe('harness configuration keeps the model menu open', () => {
       fail = reject;
     }));
     function Picker() {
-      const [agent, setAgent] = React.useState<'codex' | 'claude-code'>('codex');
+      const [pendingTarget, setPendingTarget] = React.useState<'claude-code' | undefined>();
       return <ModelSelector
-        modelId="gpt-5.5" effort="high" vendorKey={agent === 'codex' ? 'codex' : 'cc'}
+        modelId="gpt-5.5" effort="high" vendorKey="codex"
         currentProviderId="xd" onModelChange={vi.fn()} onEffortChange={vi.fn()}
         sessionEngineFilter={{
-          currentAgent: agent,
-          onCrossEngineSelect: async () => {
+          currentAgent: 'codex',
+          runtimeAgent: 'codex',
+          pendingTarget,
+          onCrossEngineSelect: async ({ targetAgent }) => {
             const applied = await change();
-            if (applied) setAgent('claude-code');
+            if (applied) setPendingTarget(targetAgent === 'claude-code' ? targetAgent : undefined);
             return applied;
           },
         }}
@@ -4091,6 +4093,16 @@ describe('harness configuration keeps the model menu open', () => {
     if (outcome === 'success') {
       expect(screen.getByTestId('unified-model-config-flyout')
         .querySelector('[data-engine-capsule="cc"]')?.getAttribute('aria-pressed')).toBe('true');
+      // Switching back must clear the pending intent through the same transaction.
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('unified-model-config-flyout')
+          .querySelector('[data-engine-capsule="codex"]') as HTMLElement);
+      });
+      expect(change).toHaveBeenCalledTimes(2);
+      await act(async () => { finish(true); });
     }
+    expect(screen.getByRole('listbox')).toBeTruthy();
+    expect(screen.getByTestId('unified-model-config-flyout')
+      .querySelector('[data-engine-capsule="codex"]')?.getAttribute('aria-pressed')).toBe('true');
   });
 });
