@@ -199,6 +199,12 @@ export function resolveModelMetadata(
   const result = mergeModelMetadata(
     defaults,
     live,
+    // A Harness's suggested default is not a model capability. Keep the shared
+    // model intent (including explicit route/Harness exceptions), then adapt it
+    // to the live effort membership below. Explicit force/user settings still win.
+    defaults.defaultEffort !== undefined
+      ? { defaultEffort: defaults.defaultEffort }
+      : undefined,
     matched?.route.forceOverrides,
     user,
   );
