@@ -44,6 +44,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Crown,
   Ellipsis,
   Folder,
   FolderOpen,
@@ -2621,20 +2622,24 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
             accessibilityRole="button"
             accessibilityLabel={row.task.title}
             onPress={() => guardedPush({ pathname: '/shared-session', params: { sharedTaskId: row.task.sharedTaskId } })}
-            style={({ pressed }) => [styles.sessionListRow, styles.sessionListRowIndented, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.sessionListRow, styles.sessionListRowSingleLine, styles.sessionListRowIndented, pressed && styles.pressed]}
             testID="home.sharedOwnerRow"
           >
-            <View style={styles.sessionIconCell}>
+            <View style={[styles.sessionIconCell, styles.sessionIconCellSingleLine]}>
               <FileText color={colors.textSecondary} size={iconSize.action} strokeWidth={iconStroke.thin} />
+            </View>
+            <View style={[styles.sharedRoleSlot, styles.sharedRoleSlotSingleLine]} testID={`home.sharedRoleSlot.owned.${row.task.sessionId}`}>
+              <Crown
+                accessibilityLabel={t('sharedTask.roleHost')}
+                accessibilityRole="image"
+                color={colors.textTertiary}
+                size={iconSize.md}
+                strokeWidth={iconStroke.thin}
+              />
             </View>
             <View style={[styles.sessionListContent, index === sharedRows.length - 1 && styles.sessionListContentNoDivider]}>
               <View style={styles.sessionTitleRow}>
                 <Text style={styles.sessionTitle} numberOfLines={1} ellipsizeMode="tail">{row.task.title}</Text>
-              </View>
-              <View style={[styles.sessionPreviewRow, styles.sharedOwnerRoleCell]}>
-                <View style={styles.sharedRoleBadge} testID="home.sharedOwnerRoleBadge">
-                  <Text style={styles.sharedRoleBadgeText}>{t('sharedTask.roleOwnedBadge')}</Text>
-                </View>
               </View>
             </View>
           </Pressable>; })}
@@ -4038,7 +4043,7 @@ function HomeSessionRowInner({
   selected?: boolean;
   selectionMarkTestID?: string;
   selectionMode?: boolean;
-  /** Shared-task role shown as a compact, non-interactive badge in the row metadata slot. */
+  /** Shared-group identity mark. Only owners show a crown; joined tasks match ordinary rows. */
   sharedRole?: SharedHomeRole;
   /** 平铺时标题旁的来源标签(项目名 /「对话」);分组模式下不传。 */
   sourceLabel?: string;
@@ -4093,9 +4098,9 @@ function HomeSessionRowInner({
           : { ...item, messagePreview: loadedMessagePreview },
         { running },
       );
-  // 零消息会话没有摘要。此时不要保留双行列表的空白第二行；但定时任务与置顶
-  // 标记和共享角色仍占用右下状态槽，因此继续使用双行布局。
-  const showPreviewLine = !!preview?.trim() || showSchedule || showPinned || !!sharedRole;
+  // 零消息会话没有摘要。此时不要保留双行列表的空白第二行；定时任务与置顶
+  // 标记仍占用右下状态槽，因此继续使用双行布局。共享身份位于标题左侧。
+  const showPreviewLine = !!preview?.trim() || showSchedule || showPinned;
   // 组行点击语义对齐桌面版侧边栏:收起且有需关注内容(未读运行 / 待处理)时,点行直接打开
   // 该看的那条会话(共享层 primary:运行中 > 有未读 > 最新);想展开点行首箭头(独立热区)。
   // 无需关注内容或已展开时,点行仍是展开 / 收起。
@@ -4182,6 +4187,20 @@ function HomeSessionRowInner({
             showDraftIndicator={showDraftIndicator}
           />
         </View>
+        {sharedRole === 'owned' ? (
+          <View
+            style={[styles.sharedRoleSlot, !showPreviewLine && styles.sharedRoleSlotSingleLine]}
+            testID={`home.sharedRoleSlot.owned.${item.session.id}`}
+          >
+            <Crown
+              accessibilityLabel={t('sharedTask.roleHost')}
+              accessibilityRole="image"
+              color={colors.textTertiary}
+              size={iconSize.md}
+              strokeWidth={iconStroke.thin}
+            />
+          </View>
+        ) : null}
         <View style={[
           styles.sessionListContent,
           (hideDivider || blockMode || (!!group && groupExpanded)) && styles.sessionListContentNoDivider,
@@ -4258,13 +4277,6 @@ function HomeSessionRowInner({
                     />
                   ) : null}
                   {showPinned ? <Pin color={colors.textTertiary} size={iconSize.lg} strokeWidth={iconStroke.thin} /> : null}
-                </View>
-              ) : null}
-              {sharedRole ? (
-                <View style={styles.sharedRoleBadge} testID={`home.sharedRoleBadge.${sharedRole}.${item.session.id}`}>
-                  <Text style={styles.sharedRoleBadgeText}>
-                    {t(sharedRole === 'owned' ? 'sharedTask.roleOwnedBadge' : 'sharedTask.roleJoinedBadge')}
-                  </Text>
                 </View>
               ) : null}
             </View>
@@ -4926,21 +4938,15 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     minWidth: 0,
   },
 
-  sharedOwnerRoleCell: {
-    justifyContent: 'flex-end',
+  sharedRoleSlot: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 26,
+    width: iconSize.action,
   },
-  sharedRoleBadge: {
-    backgroundColor: colors.surfaceChip,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    flexShrink: 0,
-    paddingHorizontal: spacing.xs,
-  },
-  sharedRoleBadgeText: {
-    color: colors.textTertiary,
-    fontSize: typeScale.caption,
-    lineHeight: lineHeight.caption,
+  sharedRoleSlotSingleLine: {
+    justifyContent: 'center',
+    paddingTop: 0,
   },
   selectionMark: {
     alignItems: 'center',

@@ -301,6 +301,31 @@ describe('SessionCard visual cases', () => {
     expect(screen.getByText('等待插件设置')).toBeTruthy();
   });
 
+  it.each(['list', 'text'] as const)('shows the shared crown only for owners in %s rows', (variant) => {
+    const session = { ...sessionCardVisualCases[0].session, id: `shared-${variant}` };
+    const baseProps = {
+      session,
+      isActive: false,
+      isRunning: false,
+      hasAttentionNotification: false,
+      navigationOnly: true,
+      onClick: vi.fn(),
+      onRename: vi.fn(),
+      onAction: vi.fn(),
+      onTogglePin: vi.fn(),
+    };
+    const renderRow = (sharedTaskRole: 'owned' | 'joined') => render(variant === 'list'
+      ? createElement(SessionCard, { ...baseProps, sharedTaskRole, variant: 'list' })
+      : createElement(SessionItem, { ...baseProps, sharedTaskRole }));
+
+    const joined = renderRow('joined');
+    expect(joined.container.querySelector('[data-testid^="shared-task-role-slot-"]')).toBeNull();
+    joined.unmount();
+
+    const owned = renderRow('owned');
+    expect(owned.container.querySelector(`[data-testid="shared-task-role-slot-owned-${session.id}"]`)).toBeTruthy();
+  });
+
   it.each([
     { locale: 'en', resource: en },
     { locale: 'zh-CN', resource: zhCN },
