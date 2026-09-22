@@ -270,6 +270,12 @@ export function RunningTokenRatePopover({
       </Pressable>
       {mode === "held" && card}
       <Modal
+        supportedOrientations={[
+          "portrait",
+          "portrait-upside-down",
+          "landscape-left",
+          "landscape-right",
+        ]}
         visible={mode === "pinned"}
         transparent
         animationType="none"
