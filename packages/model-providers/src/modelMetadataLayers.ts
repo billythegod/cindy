@@ -160,6 +160,7 @@ export function resolveModelMetadata(
   user?: ModelMetadata,
   agent?: string,
   providerDefaults?: ModelMetadata,
+  declaredDefaultEffort?: ModelMetadata["defaultEffort"],
 ): ModelMetadata {
   const ids = [modelId];
   if (providerId === "openai" && modelId.startsWith("chatgpt/"))
@@ -205,6 +206,9 @@ export function resolveModelMetadata(
     defaults.defaultEffort !== undefined
       ? { defaultEffort: defaults.defaultEffort }
       : undefined,
+    // Explicit Harness declarations are configuration, not discovery suggestions.
+    // Apply before force/user overrides and the shared capability clamp.
+    { defaultEffort: declaredDefaultEffort },
     matched?.route.forceOverrides,
     user,
   );

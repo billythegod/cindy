@@ -94,6 +94,38 @@ describe('model effort inheritance through the execution catalog', () => {
     });
   });
 
+  it('preserves explicit Pi defaults below force and user overrides', () => {
+    const catalog = structuredClone(BUNDLED_CATALOG);
+    const id = 'chatgpt/gpt-6-astra';
+    catalog.providers.find(p => p.id === 'openai')!.models.pi = [{
+      id, name: 'Astra', contextWindow: 272_000,
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'medium',
+      reasoning: true, reasoningEfforts: ['low', 'high'], reasoningDefaultEffort: 'high',
+    }];
+    const assertDefault = (defaultEffort: string | null) => {
+      const active = getActiveCatalog();
+      expect(openAiModels().pi!.find(m => m.id === id)?.defaultEffort).toBe(defaultEffort);
+      expect(deriveAvailableModels(active, 'pi').find(m => m.id === id)?.defaultEffort).toBe(defaultEffort);
+      expect(resolvePiRuntimeModelDescriptor(active, 'openai', id)?.defaultEffort).toBe(defaultEffort);
+    };
+    setActiveCatalog(catalog);
+    assertDefault('high'); // Shared medium would otherwise clamp down to low.
+    const route = catalog.modelRegistry!.models.flatMap(m => m.routes)
+      .find(r => r.providerId === 'openai' && r.modelId === 'gpt-6-astra')!;
+    route.forceOverrides = { defaultEffort: 'low' };
+    route.overrideReason = 'Test verified route constraint';
+    setActiveCatalog(catalog);
+    assertDefault('low');
+    setLocalCatalogOverrides(sanitizeModelCatalogOverrides({ version: 1, patches: {
+      ['openai:' + id]: { perAgent: { pi: { defaultEffort: 'high' } } },
+    } }).overrides);
+    assertDefault('high');
+    setLocalCatalogOverrides(EMPTY_MODEL_CATALOG_OVERRIDES);
+    route.forceOverrides = { efforts: [] };
+    setActiveCatalog(catalog);
+    assertDefault(null);
+  });
+
   it('inherits shared intent for newly discovered Pi members without copying Codex-only tiers', () => {
     const catalog = structuredClone(BUNDLED_CATALOG);
     catalog.providers.find(p => p.id === 'openai')!.models.pi = catalog.providers

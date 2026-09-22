@@ -1685,6 +1685,8 @@ function computeMerged(): Catalog {
                 agent === 'pi' ? model.discoveredMetadata : model.discoveredMetadata ?? catalogModelMetadata(model),
                 model.userModelConfig ? runtimeUserModelMetadata(model.userModelConfig) : undefined,
                 agent,
+                undefined,
+                agent === 'pi' ? model.reasoningDefaultEffort : undefined,
               ),
             );
           }
