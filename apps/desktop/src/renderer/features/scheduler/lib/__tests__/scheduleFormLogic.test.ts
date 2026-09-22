@@ -413,6 +413,19 @@ describe('schedule timing mode conversion', () => {
     expect(resolveIntervalMinutesPresetValue({ mode: 'intervalMinutes', intervalMinutes: 20 })).toBe(20);
     expect(resolveIntervalMinutesPresetValue({ mode: 'interval', intervalMinutes: 20 })).toBe(5);
   });
+
+  it.each([7, 28, 59])('switches legacy %i-minute intervals using the authoritative value', (minutes) => {
+    const result = switchScheduleTimingMode('*/5 * * * *', minutes * 60_000, 'cron');
+    expect(result).toEqual({ cronExpr: `*/${minutes} * * * *`, intervalMs: undefined });
+    expect(switchScheduleTimingMode(result.cronExpr, undefined, 'interval')).toEqual({
+      cronExpr: result.cronExpr, intervalMs: minutes * 60_000,
+    });
+    // Conversion compatibility must not reintroduce these values into new presets.
+    expect(intervalMsToCronExpr(minutes * 60_000)).toBeUndefined();
+    expect(resolveScheduleTimingPresentation('*/5 * * * *', minutes * 60_000)).toEqual({
+      kind: 'intervalExact',
+    });
+  });
 });
 
 function makeTemplate(overrides: Partial<ScheduleTemplate> = {}): ScheduleTemplate {

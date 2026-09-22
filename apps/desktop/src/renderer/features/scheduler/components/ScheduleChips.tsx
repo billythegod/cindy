@@ -387,6 +387,9 @@ export function ScheduleChip({
   };
 
   const setMode = (mode: EditableScheduleMenuMode) => {
+    // Re-selecting the visible mode is not an instruction to replace a legacy value.
+    // An exact interval has its own activeMode and can still enter a supported preset.
+    if (mode === 'intervalMinutes' && mode === activeMode) return;
     const patch: Partial<CodexScheduleConfig> = { mode };
     if (mode === 'interval') patch.intervalHours = config.mode === 'interval' ? config.intervalHours : 1;
     if (mode === 'intervalMinutes') {

@@ -278,7 +278,7 @@ export function cronExprToIntervalMs(expr: string): number | undefined {
 }
 
 /**
- * 把当前 UI 可编辑的相对间隔转换成等价 Cron preset，供 interval 回显和显式切回
+ * 把当前 UI 可编辑的相对间隔转换成对应 Cron preset，供 interval 回显和显式切回
  * Cron 使用。返回 undefined 表示该间隔无法由现有“每 N 分钟/小时”控件精确表达。
  */
 export function intervalMsToCronExpr(intervalMs: number): string | undefined {
@@ -333,8 +333,15 @@ export function switchScheduleTimingMode(
       intervalMs: nextIntervalMs,
     };
   }
+  const currentIntervalMs = intervalMs ?? DEFAULT_SCHEDULE_INTERVAL_MS;
+  const minutes = currentIntervalMs / 60_000;
+  // Explicit switching keeps the pre-restriction conversion for legacy whole minutes.
+  // Cron uses hourly slots, not exact elapsed time; this must not enable new presets.
+  const legacyMinuteCron = Number.isInteger(minutes) && minutes >= 1 && minutes <= 59
+    ? (minutes === 1 ? '* * * * *' : `*/${minutes} * * * *`)
+    : undefined;
   return {
-    cronExpr: intervalMsToCronExpr(intervalMs ?? DEFAULT_SCHEDULE_INTERVAL_MS) ?? cronExpr,
+    cronExpr: intervalMsToCronExpr(currentIntervalMs) ?? legacyMinuteCron ?? cronExpr,
     intervalMs: undefined,
   };
 }
