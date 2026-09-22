@@ -24,7 +24,6 @@ export async function listenForOauthCallback(
   const endpoint = new URL(offer.callbackUrl);
   let consumed = false;
   let closed = false;
-  let closing: Promise<void> | null = null;
   let ready = false;
   const servers: http.Server[] = [];
   // localhost can resolve to either family. Both listeners share one transaction;
@@ -132,26 +131,13 @@ export async function listenForOauthCallback(
       reply(410);
     }
   };
-  const closeAndWait = () => {
-    if (closing) return closing;
-    closed = true;
-    closing = Promise.all(
-      servers.map(
-        (server) =>
-          new Promise<void>((resolve) => {
-            if (!server.listening) {
-              resolve();
-              return;
-            }
-            server.close(() => resolve());
-            server.closeAllConnections();
-          }),
-      ),
-    ).then(() => undefined);
-    return closing;
-  };
   const close = () => {
-    void closeAndWait();
+    if (closed) return;
+    closed = true;
+    for (const server of servers) {
+      server.close();
+      server.closeAllConnections();
+    }
   };
   try {
     for (const host of hosts) {
@@ -187,7 +173,7 @@ export async function listenForOauthCallback(
     ready = true;
     return { close };
   } catch {
-    await closeAndWait();
+    close();
     throw fail();
   }
 }
