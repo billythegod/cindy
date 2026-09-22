@@ -1,7 +1,7 @@
 import { createAttachmentRecovery } from './oversized-attachment-recovery.js';
 import { clearCodexTextOnlyPolicies, codexTextOnlyRequestGuard, codexTextOnlyWebSocketTransforms, isCodexTextOnly } from './codex-text-only-policy.js';
 import { resolveConversationSessionHeaders, withChatBridgeUserAgent, overrideHeadersCaseInsensitive } from '@cindy/responses-chat-bridge';
-import { providerModelRecord } from '@cindy/model-providers';
+import { providerModelRecord, type Effort } from '@cindy/model-providers';
 import { reconcileOutboundReasoningEffort } from './outbound-reasoning-effort.js';
 import { createPiProviderFetch, handlePiProviderRequest, invocationModelRecord, nativeBridgeApiKey, readBoundedResponseText, requiresNativeProviderAuth } from './pi-provider-transport.js';
 import { normalizeProviderRequest, normalizeMiniMaxResponsesReasoning } from '@cindy/model-compat';
@@ -543,8 +543,15 @@ function reconcileProviderReasoningEffort(
     ?.models.codex?.find(candidate => candidate.id === modelId);
   // No catalog row can also mean an internal harness model outside our directory.
   // Only a resolved model is authoritative here; never borrow another provider's row.
-  if (!model?.efforts || !isPlainObject(body.reasoning) || !Object.hasOwn(body.reasoning, 'effort')) return body;
-  const effort = reconcileOutboundReasoningEffort(body.reasoning.effort, model.efforts);
+  return model?.efforts ? reconcileResponsesReasoningEffort(body, model.efforts) : body;
+}
+
+function reconcileResponsesReasoningEffort(
+  body: Record<string, unknown>,
+  efforts: readonly Effort[],
+): Record<string, unknown> {
+  if (!isPlainObject(body.reasoning) || !Object.hasOwn(body.reasoning, 'effort')) return body;
+  const effort = reconcileOutboundReasoningEffort(body.reasoning.effort, efforts);
   return effort === body.reasoning.effort ? body : applyReasoningEffortOverride(body, effort ?? null);
 }
 
@@ -2608,6 +2615,26 @@ function createCodexImageGenerationForwardLifecycleObserver(
   };
 }
 
+function customProviderRouteSnapshot(routeId: string, frozenRoutes?: readonly CodexCustomProviderRoute[]) {
+  return frozenRoutes === undefined
+    ? findCodexAppliedCustomProviderRoute(routeId)
+    : frozenRoutes.find(candidate => candidate.routeId === routeId);
+}
+
+function createCustomProviderReasoningTransform(
+  frozenRoutes?: readonly CodexCustomProviderRoute[],
+): RequestTransform {
+  return (body, ctx) => {
+    const path = parseCodexCustomProviderPath(ctx.url);
+    if (path.kind !== 'route' || path.pathKind !== 'responses'
+      || !isPlainObject(body) || typeof body.model !== 'string') return null;
+    const route = customProviderRouteSnapshot(path.routeId, frozenRoutes);
+    if (!route?.responseModels.includes(body.model)) return null;
+    const next = reconcileResponsesReasoningEffort(body, route.responseEffortsByModel[body.model] ?? []);
+    return next === body ? null : next;
+  };
+}
+
 function resolveCodexCustomProviderRoutingDecision(
   body: unknown,
   ctx: RequestTransformCtx,
@@ -2619,9 +2646,7 @@ function resolveCodexCustomProviderRoutingDecision(
     return codexCustomProviderRouteFailure(400, 'invalid_custom_provider_route');
   }
 
-  const route = frozenRoutes === undefined
-    ? findCodexAppliedCustomProviderRoute(parsed.routeId)
-    : frozenRoutes.find((candidate) => candidate.routeId === parsed.routeId);
+  const route = customProviderRouteSnapshot(parsed.routeId, frozenRoutes);
   if (!route) return codexCustomProviderRouteFailure(403, 'custom_provider_route_unavailable');
 
   if (parsed.pathKind === 'images' && route.capabilities.imageGeneration !== true) {
@@ -3115,7 +3140,8 @@ function createCodexProxyHandle(
     transformRequest: createTransformRequestChain(frozenAuthInjection, execAdapter).map(
       (transform): RequestTransform => {
         // Namespaced Responses use a frozen Provider route. Preserve its native
-        // fields and model; only repair known tool ID mismatches on this path.
+        // fields and model. The dedicated transform below reconciles effort
+        // against that same snapshot; ordinary session/catalog transforms stay out.
         if (transform === normalizeResponsesToolItemIds) return transform;
         const scoped: RequestTransform = (body, ctx) =>
           isCodexCustomProviderNamespacePath(ctx.url) ? null : transform(body, ctx);
@@ -3124,7 +3150,7 @@ function createCodexProxyHandle(
         scoped.onRequestSettled = transform.onRequestSettled;
         return scoped;
       },
-    ),
+    ).concat(createCustomProviderReasoningTransform(frozenCustomProviderRoutes)),
     routeOpaqueRequestBody: (ctx) => isCodexCustomProviderNamespacePath(ctx.url),
     bypassRequestTransforms: (_body, ctx) => {
       const path = parseCodexCustomProviderPath(ctx.url);
