@@ -46,6 +46,7 @@ import {
   cronExprToIntervalMs,
   intervalMsToCronExpr,
   resolveScheduleTimingPresentation,
+  resolveIntervalMinutesPresetValue,
   switchScheduleTimingMode,
   SUPPORTED_INTERVAL_MINUTES,
 } from '../cronCodexPreset';
@@ -405,6 +406,12 @@ describe('schedule timing mode conversion', () => {
       cronExpr: '*/59 * * * *',
       intervalMs: 59 * 60_000,
     });
+  });
+
+  it('falls back to a supported minute preset after an exact legacy interval', () => {
+    expect(resolveIntervalMinutesPresetValue({ mode: 'intervalMinutes', intervalMinutes: 28 })).toBe(5);
+    expect(resolveIntervalMinutesPresetValue({ mode: 'intervalMinutes', intervalMinutes: 20 })).toBe(20);
+    expect(resolveIntervalMinutesPresetValue({ mode: 'interval', intervalMinutes: 20 })).toBe(5);
   });
 });
 

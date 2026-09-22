@@ -91,6 +91,14 @@ export function isSupportedIntervalMinutes(value: number): boolean {
   return (SUPPORTED_INTERVAL_MINUTES as readonly number[]).includes(value);
 }
 
+export function resolveIntervalMinutesPresetValue(
+  config: Pick<CodexScheduleConfig, 'mode' | 'intervalMinutes'>,
+): number {
+  return config.mode === 'intervalMinutes' && isSupportedIntervalMinutes(config.intervalMinutes)
+    ? config.intervalMinutes
+    : 5;
+}
+
 const NUM = /^\d+$/;
 
 /** 把 mode + 参数序列化为 5-field cron string。 */

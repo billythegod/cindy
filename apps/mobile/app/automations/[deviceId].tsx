@@ -1105,6 +1105,7 @@ function ScheduleFormCard({
       ? t('devices.automations.form.sessionMode.persistent')
       : t('devices.automations.form.sessionMode.fresh');
   const preservedIntervalMinutes = !draft.intervalMinutes
+    && !draft.intervalMinutesTouched
     && typeof draft.sourceIntervalMs === 'number'
     && Number.isFinite(draft.sourceIntervalMs)
     && draft.sourceIntervalMs > 0

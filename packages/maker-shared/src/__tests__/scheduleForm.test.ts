@@ -145,7 +145,9 @@ describe('mobile schedule form model', () => {
     expect(untouched.intervalMs).toBe(90 * 60_000);
 
     // 用户经编辑入口清空 → 明确清空
-    const cleared = buildMobileScheduleInput(updateDraftIntervalMinutes(draft, ''));
+    const clearedDraft = updateDraftIntervalMinutes(draft, '');
+    expect(clearedDraft.intervalMinutesTouched).toBe(true);
+    const cleared = buildMobileScheduleInput(clearedDraft);
     expect(cleared.intervalMs).toBeNull();
 
     // 切 manual 是显式 cadence 操作:切回 recurring 也不复活旧间隔

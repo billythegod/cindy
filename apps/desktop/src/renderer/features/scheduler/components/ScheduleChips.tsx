@@ -37,6 +37,7 @@ import {
   WEEKDAY_LABELS,
   DEFAULT_CONFIG,
   isSupportedIntervalMinutes,
+  resolveIntervalMinutesPresetValue,
   SUPPORTED_INTERVAL_MINUTES,
   type CodexScheduleConfig,
 } from '../lib/cronCodexPreset';
@@ -388,7 +389,7 @@ export function ScheduleChip({
     const patch: Partial<CodexScheduleConfig> = { mode };
     if (mode === 'interval') patch.intervalHours = config.mode === 'interval' ? config.intervalHours : 1;
     if (mode === 'intervalMinutes') {
-      patch.intervalMinutes = config.mode === 'intervalMinutes' ? config.intervalMinutes : 5;
+      patch.intervalMinutes = resolveIntervalMinutesPresetValue(config);
     }
     update(patch);
   };
