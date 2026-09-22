@@ -246,6 +246,27 @@ describe('turn change card cache', () => {
     expect(transport.list).not.toHaveBeenCalled();
   });
 
+  it.each([1, 2])('replaces pending reads across reconnect with %i mounted panes', async (panes) => {
+    transport.remote.add('a');
+    const old = deferred(), fresh = deferred();
+    transport.remoteList.mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
+    const views = Array.from({ length: panes }, () => renderHook(() => useTurnChangeSets('a', null)));
+    // Each root can observe the connection transition separately while another
+    // pane still holds a subscription to the same cached entry.
+    transport.connected = false;
+    for (const notify of [...transport.originListeners]) act(() => notify());
+    transport.connected = true;
+    for (const notify of [...transport.originListeners]) act(() => notify());
+    expect(transport.remoteList).toHaveBeenCalledTimes(2);
+    await act(async () => old.resolve([summary()]));
+    expect(views[0].result.current).toEqual([]);
+    const updated = { ...summary(), workspaceState: 'undone' as const };
+    act(() => transport.updates.get('a')?.({ sessionId: 'a', summary: updated }));
+    await act(async () => fresh.resolve([summary()]));
+    for (const view of views) expect(view.result.current).toEqual([updated]);
+    expect(transport.list).not.toHaveBeenCalled();
+  });
+
   it('keeps cached cards on refresh failure and shares live state across split panes', async () => {
     transport.list.mockResolvedValueOnce([summary()]);
     const first = renderHook(() => useTurnChangeSets('a', null));

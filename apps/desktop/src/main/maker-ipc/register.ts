@@ -5124,14 +5124,23 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     if (workspaceIsBusy() || isSessionTurnPendingCompletion(sessionId)) {
       throwIpcError('SESSION_RUNNING', 'Wait for the current response to finish.');
     }
+    let accessFailure: { error: unknown } | undefined;
     try {
       return await applyTurnChangeSetAction(sessionId, id, action, ownerScope, async () => {
-        await assertRemoteAccess?.();
+        try {
+          await assertRemoteAccess?.();
+        } catch (error) {
+          accessFailure = { error };
+          throw error;
+        }
         if (workspaceIsBusy() || isSessionTurnPendingCompletion(sessionId)) {
           throw new TurnChangeSetActionError('busy', 'Wait for the current response to finish.');
         }
       });
     } catch (error) {
+      // Preserve only errors from the trusted remote authorization callback; storage
+      // and Git errors still pass through the existing sanitized error mapping.
+      if (accessFailure && error === accessFailure.error) throw error;
       if (!(error instanceof TurnChangeSetActionError)) {
         log.warn('turn change-set action failed', { sessionId, id, action, error });
         throwIpcError('INTERNAL', 'The recorded changes could not be applied.');

@@ -89,6 +89,13 @@ export function useTurnChangeSets(
       getSnapshot: () => (current() ? entry.summaries : EMPTY),
       subscribe: (listener: () => void) => {
         entry.listeners.add(listener);
+        // Invalidate on disconnect even while another pane keeps this entry subscribed.
+        // A late pre-disconnect reply must neither publish nor clear the new request.
+        if (!connected && entry.pending) {
+          entry.generation += 1;
+          entry.pending = null;
+          entry.updates.clear();
+        }
         if (!entry.unsubscribe) {
           let subscribed = true;
           const off = subscribeTurnChangeSetUpdated(sessionId, ({ summary }) => {
