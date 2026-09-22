@@ -130,17 +130,20 @@ function isPollingTool(name: string, input: unknown, isError: boolean): boolean 
   if (LOOP_GUARD_EXEMPT_TOOL_NAMES.has(name)) return true;
   if (!input || typeof input !== 'object') return false;
   const record = input as Record<string, unknown>;
-  if (!isError && (name === 'exec' || name === 'Bash' || name === 'bash')) {
+  if (!isError && (name === 'exec' || name === 'Bash' || name === 'bash' || name === 'powershell')) {
     const command = record.command ?? record.cmd;
     if (typeof command === 'string') {
       // Reuse shell-wrapper recognition; this is a polling hint, not permission
-      // analysis. Only simple tail reads of literal .log paths are exempt.
+      // analysis. Only simple tail/Get-Content reads of literal .log paths are exempt.
       // Mixed commands, substitutions, redirects and source-file reads remain
       // ordinary observations. A failed tail is not evidence of healthy waiting.
       const script = normalizeDisplayCommand(command) ?? command;
       const logPath = String.raw`(?:[A-Za-z0-9_./:@%+=,-]+\.log|'[A-Za-z0-9_./ :@%+=,-]+\.log'|"[A-Za-z0-9_./ :@%+=,-]+\.log")`;
       const tail = new RegExp(String.raw`^(?:/usr/bin/|/bin/)?tail\s+(?:(?:-\d+|-n\s+\d+)\s+)?${logPath}(?:\s+${logPath})*\s*$`);
-      if (script.split(/;|&&/).every(part => tail.test(part.trim()))) return true;
+      const windowsLogPath = String.raw`(?:[A-Za-z0-9_./\\:@%+=-]+\.log|'[A-Za-z0-9_./\\ :@%+=-]+\.log'|"[A-Za-z0-9_./\\ :@%+=-]+\.log")`;
+      const target = String.raw`(?:(?:-Path|-LiteralPath)\s+)?${windowsLogPath}`;
+      const getContent = new RegExp(String.raw`^Get-Content\s+(?:-Tail\s+\d+\s+${target}|${target}\s+-Tail\s+\d+)\s*$`, 'i');
+      if (script.split(/;|&&/).every(part => tail.test(part.trim()) || getContent.test(part.trim()))) return true;
     }
   }
   // Pi's native subagent status/list calls observe separately running work.

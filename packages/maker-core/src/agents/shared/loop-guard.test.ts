@@ -87,6 +87,41 @@ describe('ToolLoopGuard', () => {
   });
 
   it.each([
+    ['powershell', String.raw`Get-Content -Tail 8 C:\logs\gate.log`],
+    ['powershell', String.raw`Get-Content -LiteralPath 'C:\Build Logs\gate.log' -Tail 8`],
+    ['exec', String.raw`Get-Content -Tail 8 -Path C:\logs\gate.log; Get-Content C:\logs\other.log -Tail 5`],
+    ['exec', String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -Command "Get-Content -Tail 8 C:\logs\gate.log"`],
+    ['exec', String.raw`"C:\Program Files\PowerShell\7\pwsh.exe" -Command "get-content -literalpath C:\logs\gate.log -tail 8"`],
+  ])('keeps Windows log polling alive through %s', (name, command) => {
+    const guard = new ToolLoopGuard();
+    for (let i = 0; i < 150; i++) {
+      expect(feed(guard, String(i), name, { command }, 'waiting for test gate').kind).toBe('ok');
+    }
+  });
+
+  it.each([
+    String.raw`Get-Content C:\src\source.ts -Tail 8`,
+    String.raw`Get-Content C:\logs\gate.log`,
+    String.raw`Get-Content C:\logs\gate.log -Tail 8; npm test`,
+    String.raw`Get-Content C:\logs\gate.log -Tail 8 > C:\logs\out.log`,
+    String.raw`Get-Content "$env:TEMP\gate.log" -Tail 8`,
+    String.raw`Get-Content C:\logs\gate.log -Tail 8 | Select-String failed`,
+  ])('does not exempt ambiguous or mixed PowerShell: %s', (command) => {
+    const guard = new ToolLoopGuard();
+    let verdict: ToolLoopGuardVerdict = { kind: 'ok' };
+    for (let i = 0; i < 4; i++) verdict = feed(guard, String(i), 'powershell', { command }, 'unchanged');
+    expect(verdict.kind).toBe('hard');
+  });
+
+  it('keeps failing PowerShell log reads in the repeat detector', () => {
+    const guard = new ToolLoopGuard();
+    let verdict: ToolLoopGuardVerdict = { kind: 'ok' };
+    for (let i = 0; i < 4; i++) verdict = feed(guard, String(i), 'powershell',
+      { command: String.raw`Get-Content C:\logs\gate.log -Tail 8` }, 'file not found', true);
+    expect(verdict.kind).toBe('hard');
+  });
+
+  it.each([
     'tail -8 source.ts',
     'tail -8 /tmp/gate.log; npm test',
     'tail -8 /tmp/gate.log > /tmp/output.log',

@@ -49,6 +49,23 @@ function setup(agentKind: 'pi' | 'codex', hangAbort = false) {
 }
 
 describe.each(['pi', 'codex'] as const)('%s Session tool loop coverage', (agentKind) => {
+  it('does not interpret one parallel batch of distinct contract failures as retries', async () => {
+    const t = setup(agentKind);
+    await t.session.send('investigate');
+    for (let i = 0; i < 5; i++) t.queue.push({ type: 'tool_use', source: agentKind, data: {
+      toolUseId: `invalid-${i}`, toolName: 'Edit', input: { old_string: `old-${i}`, new_string: `new-${i}` },
+    } });
+    for (const i of [2, 0, 4, 1, 3]) t.queue.push({ type: 'tool_result_full', source: agentKind, data: {
+      toolUseId: `invalid-${i}`, fullText: 'InputValidationError: Missing required parameter file_path', isError: true,
+    } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.errors()).toHaveLength(0);
+    expect(t.handle.abort).not.toHaveBeenCalled();
+    // Conservative contract handling must not disable unchanged read loops.
+    for (let i = 0; i < 4; i++) await t.tool(`read-${i}`);
+    expect(t.errors()).toHaveLength(1);
+  });
+
   it('detects exec/MCP calls using translated names', async () => {
     const t = setup(agentKind);
     await t.session.send('investigate');

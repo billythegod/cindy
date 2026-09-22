@@ -2155,7 +2155,13 @@ export class Session {
       generation,
       // Claude owns per-sidechain guards before translation. Pi/Codex share
       // the same detector here, paired with this product turn's lifecycle.
-      toolLoopGuard: this.agentKind === 'claude-code' ? null : new ToolLoopGuard(),
+      toolLoopGuard: this.agentKind === 'claude-code' ? null : new ToolLoopGuard({
+        // These normalized events do not identify model-response batches.
+        // Distinct malformed calls can belong to one parallel attempt, so do
+        // not enable the retry-count rule without that evidence. Claude keeps
+        // its existing batch-aware contract rule; repetition rules stay active.
+        contractConsecutiveLimit: Number.POSITIVE_INFINITY,
+      }),
       activeToolIds: new Set(),
       anonymousActiveTools: 0,
       pendingInteractionToolIds: new Map(),
