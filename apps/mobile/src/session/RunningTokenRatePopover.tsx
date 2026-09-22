@@ -28,6 +28,7 @@ import {
 } from "@/theme/tokens";
 import { usePaneViewport } from "@/platform/AdaptiveWindowContext";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { LayoutRect } from "@/platform/windowGeometry";
 
 export function formatTokenRate(rate: number | null): string {
   if (rate === null || !Number.isFinite(rate) || rate < 0) return "—";
@@ -48,6 +49,7 @@ export function RunningTokenRatePopover({
   generationReliable,
   children,
   label,
+  availableRegion,
 }: {
   sessionKey: string;
   startedAt: number | null;
@@ -56,6 +58,7 @@ export function RunningTokenRatePopover({
   generationReliable: boolean;
   children: ReactNode;
   label: string;
+  availableRegion?: LayoutRect;
 }) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
@@ -71,30 +74,37 @@ export function RunningTokenRatePopover({
       setAnchor({ x, y, width });
     });
   const outsideTouch = useRef({ x: 0, y: 0, moved: false });
+  // The composer owns region selection, including folds, occlusions and keyboard.
+  const region = availableRegion ?? {
+    x: insets.left,
+    y: insets.top,
+    width: window.width - insets.left - insets.right,
+    height: window.height - insets.top - insets.bottom,
+  };
   const cardWidth = Math.max(
     1,
     Math.min(
       304,
       viewport.width - spacing.xl * 2,
-      window.width - insets.left - insets.right - spacing.lg * 2,
+      region.width - spacing.lg * 2,
     ),
   );
   const maxCardHeight = Math.max(
     1,
-    window.height - insets.top - insets.bottom - spacing.lg * 2,
+    region.height - spacing.lg * 2,
   );
   const cardLeft = Math.max(
-    insets.left + spacing.lg,
+    region.x + spacing.lg,
     Math.min(
       anchor.x + anchor.width - cardWidth,
-      window.width - insets.right - spacing.lg - cardWidth,
+      region.x + region.width - spacing.lg - cardWidth,
     ),
   );
   const cardTop = Math.max(
-    insets.top + spacing.lg,
+    region.y + spacing.lg,
     Math.min(
       anchor.y - cardHeight,
-      window.height - insets.bottom - spacing.lg - cardHeight,
+      region.y + region.height - spacing.lg - cardHeight,
     ),
   );
   const [mode, setMode] = useState<"closed" | "pinned" | "held">("closed");
@@ -108,6 +118,10 @@ export function RunningTokenRatePopover({
       viewport.y,
       viewport.width,
       viewport.height,
+      region.x,
+      region.y,
+      region.width,
+      region.height,
     ],
   );
   const longPressed = useRef(false);

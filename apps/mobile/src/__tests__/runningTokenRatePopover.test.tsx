@@ -14,6 +14,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearRateHistoryCache } from "@cindy/maker-shared/usage-format";
 import { RunningTokenRatePopover } from "@/session/RunningTokenRatePopover";
+import { keyboardControlRegion, type ReservedRegion } from "@/platform/windowGeometry";
 
 const harness = vi.hoisted(() => ({
   viewport: { x: 0, y: 0, width: 320, height: 800 },
@@ -318,6 +319,38 @@ it.each(["onPress", "onLongPress"])(
     }
   },
 );
+
+it.each(["onPress", "onLongPress"])("keeps %s in the composer's fold/occlusion region and closes on region changes", async (open) => {
+  const scenarios: { regions: ReservedRegion[]; keyboard: number }[] = [
+    { regions: [{ kind: "division", x: 0, y: 380, width: 800, height: 40 }], keyboard: 0 },
+    { regions: [{ kind: "division", x: 0, y: 380, width: 800, height: 40 }], keyboard: 420 },
+    { regions: [{ kind: "division", x: 380, y: 0, width: 40, height: 800 }], keyboard: 0 },
+    { regions: [{ kind: "occlusion", x: 200, y: 0, width: 400, height: 100 }], keyboard: 0 },
+  ];
+  harness.window = { width: 800, height: 800 };
+  harness.viewport = { x: 0, y: 0, ...harness.window };
+  for (const [index, scenario] of scenarios.entries()) {
+    const region = keyboardControlRegion({ ...harness.window, insets: harness.insets,
+      regularWidth: true, regularHeight: true, barEdge: "none", reservedRegionsSupported: true,
+      regions: scenario.regions }, scenario.keyboard);
+    harness.anchor = { x: region.x + region.width - 80, y: region.y + 30, width: 80 };
+    await render({ key: String(index), availableRegion: region });
+    await gesture("onPressIn");
+    await gesture(open);
+    let style = Object.assign({}, ...(harness.card as any).style);
+    const height = style.maxHeight;
+    await act(async () => harness.card.onLayout({ nativeEvent: { layout: { height } } }));
+    style = Object.assign({}, ...(harness.card as any).style);
+    const x = style.left + (open === "onLongPress" ? harness.anchor.x : 0);
+    const y = style.top + (open === "onLongPress" ? harness.anchor.y : 0);
+    expect(x).toBeGreaterThanOrEqual(region.x);
+    expect(y).toBeGreaterThanOrEqual(region.y);
+    expect(x + style.width).toBeLessThanOrEqual(region.x + region.width);
+    expect(y + height).toBeLessThanOrEqual(region.y + region.height);
+    await render({ key: String(index), availableRegion: { ...region, height: region.height - 20 } });
+    expect(card()).toBeNull();
+  }
+});
 
 it("uses paired generation samples, expires recent speed, and isolates a different task", async () => {
   vi.useFakeTimers();

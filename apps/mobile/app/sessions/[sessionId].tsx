@@ -4,7 +4,7 @@ import { HomeNewTaskButton } from '@/session/HomeNewTaskButton';
 import { RecentMessageHistories, MessageHistoryOverlay } from '@/session/RecentMessageHistories';
 import { rememberRecentTask } from '@/session/recentTasks';
 import { SystemNavigationBack, useSystemNavigationBack } from '@/platform/chrome/SystemNavigationBack';
-import { keyboardControlRegion } from '@/platform/windowGeometry';
+import { keyboardControlRegion, type LayoutRect } from '@/platform/windowGeometry';
 import { useAdaptiveWindow, PaneViewportProvider } from '@/platform/AdaptiveWindowContext';
 import { useSessionHeaderHeight } from '@/session/useSessionHeaderHeight';
 import { sessionPaneLayout } from '@/session/sessionPaneLayout';
@@ -9704,6 +9704,7 @@ export default function SessionScreen() {
                   ]}
                 >
                   <ComposerActivityStatus
+                    availableRegion={composerRegion}
                     key={JSON.stringify([auth.accountGeneration, deviceId, sessionId])}
                     sessionKey={JSON.stringify([auth.accountGeneration, deviceId, sessionId])}
                     reconnectAttempt={remoteSessionRunStatus.reconnectAttempt}
@@ -11454,6 +11455,7 @@ function ComposerRuntimePill({
 }
 
 function ComposerActivityStatus({
+  availableRegion,
   sessionKey,
   reconnectAttempt,
   sideTaskRunning,
@@ -11465,6 +11467,7 @@ function ComposerActivityStatus({
   generationActive,
   visible,
 }: {
+  availableRegion: LayoutRect;
   sessionKey: string;
   reconnectAttempt: RemoteSessionRunStatus['reconnectAttempt'];
   sideTaskRunning: boolean;
@@ -11570,6 +11573,7 @@ function ComposerActivityStatus({
       </View>
       {canShowRateDetails ? (
         <RunningTokenRatePopover
+          availableRegion={availableRegion}
           sessionKey={sessionKey}
           startedAt={startedAt}
           outputTokens={outputTokens}
