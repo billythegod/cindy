@@ -133,9 +133,11 @@ it.each([
 });
 
 it('fails the whole localhost setup on a port conflict and leaves its owner alone', async () => {
-  const { port } = await bind('::1');
+  const owner = await bind('::1');
+  const { port } = owner;
   const originalClose = http.Server.prototype.close;
   let delayedIpv4Close = false;
+  let closedIpv4Server: http.Server | undefined;
   vi.spyOn(http.Server.prototype, 'close').mockImplementation(function (
     this: http.Server,
     ...args: unknown[]
@@ -147,6 +149,7 @@ it('fails the whole localhost setup on a port conflict and leaves its owner alon
       address?.address === '127.0.0.1'
     ) {
       delayedIpv4Close = true;
+      closedIpv4Server = this;
       setTimeout(() => Reflect.apply(originalClose, this, args), 20);
       return this;
     }
@@ -156,8 +159,11 @@ it('fails the whole localhost setup on a port conflict and leaves its owner alon
   await expect(listenForOauthCallback(offer(port), deliver, () => {})).rejects.toThrow(
     'OAUTH_BRIDGE_UNAVAILABLE',
   );
-  // The first family must be released when the second cannot bind.
-  await bind('127.0.0.1', port);
+  // The first family must be released when the second cannot bind, while the
+  // pre-existing IPv6 owner remains untouched. Checking the server state
+  // avoids racing unrelated parallel tests for the same ephemeral port.
+  expect(closedIpv4Server?.listening).toBe(false);
+  expect(owner.server.listening).toBe(true);
   expect(await request('::1', port)).toBe(204);
   expect(deliver).not.toHaveBeenCalled();
 });
