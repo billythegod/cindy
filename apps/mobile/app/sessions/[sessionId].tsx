@@ -9707,6 +9707,7 @@ export default function SessionScreen() {
                     reconnectAttempt={remoteSessionRunStatus.reconnectAttempt}
                     sideTaskRunning={remoteSessionRunStatus.sideTaskRunning}
                     startedAt={composerActivityStartedAtMs}
+                    rateStartedAt={remoteSessionRunStatus.startedAt}
                     tokenUsage={composerActivityTokenUsage}
                     outputTokens={remoteSessionRunStatus.outputTokens}
                     generationDurationMs={remoteSessionRunStatus.generationDurationMs}
@@ -11456,6 +11457,7 @@ function ComposerActivityStatus({
   reconnectAttempt,
   sideTaskRunning,
   startedAt,
+  rateStartedAt,
   tokenUsage,
   outputTokens,
   generationDurationMs,
@@ -11467,6 +11469,7 @@ function ComposerActivityStatus({
   reconnectAttempt: RemoteSessionRunStatus['reconnectAttempt'];
   sideTaskRunning: boolean;
   startedAt: number | null;
+  rateStartedAt: number | null;
   tokenUsage: number;
   outputTokens: number;
   generationDurationMs: number;
@@ -11494,7 +11497,9 @@ function ComposerActivityStatus({
 
   const rateHistory = useRunningTokenRateHistory({
     sessionKey,
-    startedAt,
+    // Terminal reports clear the remote start. Keep null so the sampler can
+    // finish the existing turn; the local elapsed fallback is not a new turn.
+    startedAt: rateStartedAt,
     outputTokens,
     generationDurationMs,
     generationReliable: generationReliable && visible && !reconnectAttempt && !sideTaskRunning,
