@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { findLinuxUserInstallation, isDebianManagedInstallation, missingLinuxUserInstallTools, linuxUserDesktopName } from '../linuxInstallation';
+import {
+  checkDebianManagedInstallation,
+  findLinuxUserInstallation,
+  isDebianManagedInstallation,
+  missingLinuxUserInstallTools,
+  linuxUserDesktopName,
+} from '../linuxInstallation';
 import { stageLinuxBuildInfo } from '../../../forge-linux';
 import { buildLinuxUpdateScript } from '../updateScriptLinux';
 import { allDeepLinkSchemes } from '@cindy/maker-shared/brand-identity';
@@ -16,6 +22,16 @@ describe('Linux install routing', () => {
     expect(isDebianManagedInstallation('/home/test/Cindy', () => 'cindy: /usr/lib/cindy/Cindy\n')).toBe(false);
     expect(isDebianManagedInstallation('/usr/lib/cindy/Cindy', () => 'unrelated: /usr/lib/cindy/Cindy\n')).toBe(false);
     expect(isDebianManagedInstallation('/usr/lib/cindy/Cindy', () => { throw new Error('no dpkg'); })).toBe(false);
+  });
+
+  it('distinguishes a failed ownership query from confirmed non-ownership', () => {
+    expect(checkDebianManagedInstallation('/usr/lib/cindy/Cindy', () => 'unrelated: /usr/lib/cindy/Cindy\n'))
+      .toEqual({ status: 'not-managed' });
+    expect(checkDebianManagedInstallation('/usr/lib/cindy/Cindy', () => 'cindy: /usr/lib/cindy/Cindy\n'))
+      .toEqual({ status: 'managed' });
+    const error = Object.assign(new Error('dpkg-query timed out'), { code: 'ETIMEDOUT', signal: 'SIGTERM' });
+    expect(checkDebianManagedInstallation('/usr/lib/cindy/Cindy', () => { throw error; }))
+      .toEqual({ status: 'error', error });
   });
   it('reports missing portable dependencies', () => {
     expect(missingLinuxUserInstallTools(() => true)).toEqual([]);

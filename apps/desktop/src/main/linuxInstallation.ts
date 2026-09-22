@@ -80,16 +80,32 @@ export function findLinuxUserInstallation(
 /** Query ownership, not just tool existence: dpkg installed on Arch must not
  * cause us to install a second Cindy while relaunching a pacman-owned binary.
  */
-export function isDebianManagedInstallation(
+export type DebianManagedInstallationCheck =
+  | { status: 'managed' }
+  | { status: 'not-managed' }
+  | { status: 'error'; error: unknown };
+
+export function checkDebianManagedInstallation(
   exePath: string,
   query: (exe: string) => string = (exe) => execFileSync('/usr/bin/dpkg-query', ['-S', exe], {
     encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'],
   }),
-): boolean {
+): DebianManagedInstallationCheck {
   try {
-    return query(exePath).split('\n').some((line) => /^cindy(?::[a-z0-9]+)?: /.test(line)
+    const managed = query(exePath).split('\n').some((line) => /^cindy(?::[a-z0-9]+)?: /.test(line)
       && line.slice(line.indexOf(': ') + 2) === exePath);
-  } catch { return false; }
+    return managed ? { status: 'managed' } : { status: 'not-managed' };
+  } catch (error) {
+    return { status: 'error', error };
+  }
+}
+
+/** Compatibility predicate for callers that only need a confirmed yes/no. */
+export function isDebianManagedInstallation(
+  exePath: string,
+  query?: (exe: string) => string,
+): boolean {
+  return checkDebianManagedInstallation(exePath, query).status === 'managed';
 }
 
 export function missingLinuxUserInstallTools(

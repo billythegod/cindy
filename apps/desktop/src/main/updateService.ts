@@ -69,7 +69,12 @@ import { throwIpcError } from './utils/ipcValidate';
 import { noteExpectedExit } from './startup-diagnostics';
 import { buildMacOSUpdateScript } from './updateScriptMacOS';
 import { buildLinuxUpdateScript, normalizeLinuxDebSha256 } from './updateScriptLinux';
-import { findLinuxUserInstallation, isDebianManagedInstallation, missingLinuxUserInstallTools, type LinuxUserInstallation } from './linuxInstallation';
+import {
+  checkDebianManagedInstallation,
+  findLinuxUserInstallation,
+  missingLinuxUserInstallTools,
+  type LinuxUserInstallation,
+} from './linuxInstallation';
 import { linuxPasswordStoreRelaunchArgs } from './linuxPasswordStore';
 import { CURRENT_CINDY_REGION } from '../shared/brandRegion';
 import { disposeAndroidAdb } from './mcp-integrations/android';
@@ -245,6 +250,19 @@ function setStatus(status: UpdateStatus, extra?: Partial<UpdateStatusPayload>): 
   if (status === 'ready' && !startupUpdateCheckInProgress && !extra?.errorCode) {
     void evaluateAutoRelaunch('status-ready');
   }
+}
+
+function formatLinuxProbeError(error: unknown): string {
+  if (error instanceof Error) {
+    const details = error as Error & { code?: unknown; signal?: unknown; killed?: unknown };
+    return JSON.stringify({
+      message: details.message,
+      code: details.code,
+      signal: details.signal,
+      killed: details.killed,
+    });
+  }
+  return String(error);
 }
 
 function blockWindowsUpdaterForMissingRuntime(missingFiles: readonly string[]): false {
@@ -1776,10 +1794,20 @@ function executeUpdateLinux(debPath: string, installation: LinuxUserInstallation
     // Do not change installation strategy after the preflight (there is an
     // await while reclaiming runners). A changed layout must fail closed.
     const now = findLinuxUserInstallation(exePath, os.homedir(), process.getuid?.() ?? -1);
+    const debianCheck = installation ? null : checkDebianManagedInstallation(exePath);
+    if (debianCheck?.status === 'error') {
+      log.error('Linux Debian ownership recheck failed: %s', formatLinuxProbeError(debianCheck.error));
+      isRelaunching = false;
+      autoRelaunchInProgress = false;
+      // A transient ownership probe failure is not evidence that the install
+      // changed. Keep the verified .deb staged so the user can retry.
+      setStatus('ready', { version: readyVersion ?? undefined });
+      return;
+    }
     if (installation
       ? !now || now.prefix !== installation.prefix || now.current !== installation.current
         || now.region !== installation.region || !readyVersion
-      : now !== null || !isDebianManagedInstallation(exePath)) {
+      : now !== null || debianCheck?.status !== 'managed') {
       throw new Error('Linux installation changed after preflight');
     }
     script = buildLinuxUpdateScript({
@@ -1948,9 +1976,19 @@ async function executeRelaunchUnguarded(theme: 'light' | 'dark', checkForBinaryU
     const exePath = app.getPath('exe');
     const installation = findLinuxUserInstallation(exePath, os.homedir(), process.getuid?.() ?? -1);
     linuxInstallation = installation;
+    const debianCheck = installation ? null : checkDebianManagedInstallation(exePath);
+    if (debianCheck?.status === 'error') {
+      log.error('Linux Debian ownership check failed: %s', formatLinuxProbeError(debianCheck.error));
+      isRelaunching = false;
+      autoRelaunchInProgress = false;
+      // Keep the verified installer staged. A transient dpkg-query failure is
+      // not evidence that this executable belongs to an unsupported layout.
+      setStatus('ready', { version: readyVersion ?? undefined });
+      return;
+    }
     const supported = installation
       ? installation.region === CURRENT_CINDY_REGION && missingLinuxUserInstallTools().length === 0
-      : isDebianManagedInstallation(exePath);
+      : debianCheck?.status === 'managed';
     if (!supported) {
       log.error('Linux installation cannot self-update; use the installation guide or its package manager');
       isRelaunching = false;

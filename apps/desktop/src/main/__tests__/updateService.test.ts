@@ -40,10 +40,14 @@ const spawnProcess = vi.fn(() => ({
   on: vi.fn(),
 }));
 const findLinuxUserInstallation = vi.fn(() => null);
-const isDebianManagedInstallation = vi.fn(() => false);
+const checkDebianManagedInstallation = vi.fn<() =>
+  | { status: 'managed' }
+  | { status: 'not-managed' }
+  | { status: 'error'; error: unknown }
+>(() => ({ status: 'not-managed' }));
 const missingLinuxUserInstallTools = vi.fn(() => [] as string[]);
 vi.mock('../linuxInstallation', () => ({
-  findLinuxUserInstallation, isDebianManagedInstallation, missingLinuxUserInstallTools,
+  findLinuxUserInstallation, checkDebianManagedInstallation, missingLinuxUserInstallTools,
 }));
 const checkWindowsUpdaterPrerequisites = vi.fn<
   () => { satisfied: boolean; missingFiles: string[] }
@@ -267,8 +271,8 @@ beforeEach(() => {
   spawnProcess.mockClear();
   findLinuxUserInstallation.mockReset();
   findLinuxUserInstallation.mockReturnValue(null);
-  isDebianManagedInstallation.mockReset();
-  isDebianManagedInstallation.mockReturnValue(false);
+  checkDebianManagedInstallation.mockReset();
+  checkDebianManagedInstallation.mockReturnValue({ status: 'not-managed' });
   missingLinuxUserInstallTools.mockReset();
   missingLinuxUserInstallTools.mockReturnValue([]);
   checkWindowsUpdaterPrerequisites.mockReset();
@@ -563,6 +567,75 @@ function linuxInstallerManifest(version = '0.0.65') {
 }
 
 describe('checkForUpdate Linux installer flow', () => {
+  it('keeps a staged update ready when the Debian ownership check fails', async () => {
+    download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, 'deb');
+      return { path: targetPath, size: 123 };
+    });
+    checkDebianManagedInstallation.mockReturnValue({
+      status: 'error',
+      error: Object.assign(new Error('dpkg-query timed out'), { code: 'ETIMEDOUT', signal: 'SIGTERM' }),
+    });
+    const service = await freshUpdateService('linux', 'x64');
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    service.initUpdateService();
+    try {
+      await expect(service.checkForUpdate(linuxInstallerManifest())).resolves.toBe('ready');
+      ipcListeners.get('update-relaunch')?.({}, 'dark');
+      await vi.waitFor(() => expect(ipcHandlers.get('update-get-status')?.()).toMatchObject({
+        status: 'ready', version: '0.0.65', errorCode: undefined,
+      }));
+      const info = JSON.parse(fs.readFileSync(path.join(TEST_USER_DATA, 'updates', 'patch-info.json'), 'utf8'));
+      expect(info.applyAttempts).toBeUndefined();
+      expect(fs.existsSync(path.join(TEST_USER_DATA, 'updates', info.fileName))).toBe(true);
+      expect(spawnProcess).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(logError.mock.calls.map((call) => String(call[0]))).toContain(
+        'Linux Debian ownership check failed: %s',
+      );
+    } finally {
+      service.stopUpdateService();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('keeps the staged update when the Debian recheck fails after preflight', async () => {
+    download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, 'deb');
+      return { path: targetPath, size: 123 };
+    });
+    checkDebianManagedInstallation
+      .mockReturnValueOnce({ status: 'managed' })
+      .mockReturnValueOnce({
+        status: 'error',
+        error: Object.assign(new Error('dpkg-query timed out'), { code: 'ETIMEDOUT', signal: 'SIGTERM' }),
+      });
+    const service = await freshUpdateService('linux', 'x64');
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    service.initUpdateService();
+    try {
+      const manifest = linuxInstallerManifest();
+      manifest.app.installer.sha256 = 'ab'.repeat(32);
+      await expect(service.checkForUpdate(manifest)).resolves.toBe('ready');
+      ipcListeners.get('update-relaunch')?.({}, 'dark');
+      await vi.waitFor(() => expect(logError.mock.calls.map((call) => String(call[0]))).toContain(
+        'Linux Debian ownership recheck failed: %s',
+      ));
+      const info = JSON.parse(fs.readFileSync(path.join(TEST_USER_DATA, 'updates', 'patch-info.json'), 'utf8'));
+      expect(checkDebianManagedInstallation).toHaveBeenCalledTimes(2);
+      expect(fs.existsSync(path.join(TEST_USER_DATA, 'updates', info.fileName))).toBe(true);
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(logError.mock.calls.map((call) => String(call[0]))).toContain(
+        'Linux Debian ownership recheck failed: %s',
+      );
+    } finally {
+      service.stopUpdateService();
+      exitSpy.mockRestore();
+    }
+  });
+
   it('does not quit or increment attempts for an unmanaged Linux installation', async () => {
     download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
