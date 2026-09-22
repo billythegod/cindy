@@ -620,3 +620,41 @@ it('未读与已读按账号隔离:换账号不得继承上一个账号的状态
   await mount('acct-B');
   expect(attentionDot()).not.toBeNull();
 });
+
+it('快照绑定账号与设备:换号或换设备后旧列表立刻失效,不渲染', async () => {
+  vi.useFakeTimers();
+  const render1 = async (accountScope: string, deviceId: string) => {
+    await act(async () => {
+      root.render(
+        createElement(OrcaWorkerStatusCard as any, {
+          leadSessionId: lead,
+          accountScope,
+          deviceId,
+          maker: { listOrcaWorkersByLead: h.listOrcaWorkersByLead } as any,
+          onOpenWorker: () => true,
+        }),
+      );
+    });
+  };
+  h.listOrcaWorkersByLead.mockResolvedValue([
+    { id: 'a', label: 'w-A', status: 'running', sessionId: 's-a' },
+  ]);
+  await render1('acct-A', 'dev-1');
+  await act(async () => toggle().click());
+  expect(container.textContent).toContain('w-A');
+
+  // 换账号:同一 Lead / 同一设备,但快照属于上一个账号 —— 首帧就必须失效。
+  h.listOrcaWorkersByLead.mockReturnValue(new Promise(() => {}));
+  await render1('acct-B', 'dev-1');
+  expect(container.innerHTML).toBe('');
+
+  // 换设备同理:同一 Lead id 在另一台被控机上不是同一份东西。
+  h.listOrcaWorkersByLead.mockResolvedValue([
+    { id: 'a', label: 'w-A', status: 'running', sessionId: 's-a' },
+  ]);
+  await render1('acct-B', 'dev-1');
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  h.listOrcaWorkersByLead.mockReturnValue(new Promise(() => {}));
+  await render1('acct-B', 'dev-2');
+  expect(container.innerHTML).toBe('');
+});

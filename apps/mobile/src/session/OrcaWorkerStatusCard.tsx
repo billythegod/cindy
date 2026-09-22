@@ -130,8 +130,19 @@ export function OrcaWorkerStatusCard({ leadSessionId, deviceId, accountScope, ma
   const { colors } = useTheme();
   // 快照与它所属的 Lead 绑定,渲染期同步比对。抽屉就地换 Lead 时组件不卸载,若只靠
   // effect 事后清空,B 的首帧会先闪一遍 A 的 Worker 列表。
-  const [snapshot, setSnapshot] = useState<{ lead: string; workers: Worker[] } | null>(null);
-  const workers = snapshot?.lead === leadSessionId ? snapshot.workers : null;
+  const [snapshot, setSnapshot] = useState<
+    { account: string; device: string; lead: string; workers: Worker[] } | null
+  >(null);
+  // 快照必须与**账号 + 设备 + Lead**三者同时匹配才算有效。只比 Lead 不够:进程内换号时
+  // accountScope 先于 DeviceLinkContext 清空旧会话 store 变化,期间上一个账号的
+  // Worker 列表仍会被当成本账号的有效数据渲染出来。设备同理 —— 同一 Lead id 在
+  // 另一台被控机上不是同一份东西。
+  const workers = snapshot
+    && snapshot.account === accountScope
+    && snapshot.device === deviceId
+    && snapshot.lead === leadSessionId
+    ? snapshot.workers
+    : null;
   // 对齐桌面右侧栏「协同」tab:默认不展开,靠 attention 点把用户拉回来。
   // 桌面关闭 tab ≡ 结束协同(disableOrca);手机版第一版只读,这里只是视图折叠。
   const [expanded, setExpanded] = useState(false);
@@ -196,7 +207,7 @@ export function OrcaWorkerStatusCard({ leadSessionId, deviceId, accountScope, ma
         const next = workersFrom(await maker.listOrcaWorkersByLead(leadSessionId));
         if (active) {
           applyWorkerAttentionEdges(leadSessionId, next);
-          setSnapshot({ lead: leadSessionId, workers: next });
+          setSnapshot({ account: accountScope, device: deviceId, lead: leadSessionId, workers: next });
         }
       } catch (error) {
         if (isUnsupportedChannelError(error)) {
