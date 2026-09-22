@@ -395,6 +395,17 @@ describe('schedule timing mode conversion', () => {
       intervalMs: 2 * 60_000,
     });
   });
+
+  it('preserves legacy unsupported minute Crons when switching to interval mode', () => {
+    expect(switchScheduleTimingMode('*/28 * * * *', undefined, 'interval')).toEqual({
+      cronExpr: '*/28 * * * *',
+      intervalMs: 28 * 60_000,
+    });
+    expect(switchScheduleTimingMode('*/59 * * * *', undefined, 'interval')).toEqual({
+      cronExpr: '*/59 * * * *',
+      intervalMs: 59 * 60_000,
+    });
+  });
 });
 
 function makeTemplate(overrides: Partial<ScheduleTemplate> = {}): ScheduleTemplate {

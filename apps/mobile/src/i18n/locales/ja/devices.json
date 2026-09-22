@@ -595,6 +595,7 @@
       "boundSessionA11y": "セッション {{name}} をひも付け",
       "intervalPlaceholder": "空欄の場合は cron を使用",
       "intervalHint": "分間隔は 1、2、3、4、5、6、10、12、15、20、30 分から選択してください。60 分以上は整数時間を使用してください。",
+      "intervalPreservedHint": "このタスクの正確な間隔は {{count}} 分です。編集または消去するまで保持されます。",
       "workspace": {
         "project": "プロジェクト",
         "dialogue": "会話"

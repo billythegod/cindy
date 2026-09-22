@@ -1104,6 +1104,11 @@ function ScheduleFormCard({
     : sessionMode === 'persistent'
       ? t('devices.automations.form.sessionMode.persistent')
       : t('devices.automations.form.sessionMode.fresh');
+  const preservedIntervalMinutes = !draft.intervalMinutes
+    && typeof draft.sourceIntervalMs === 'number'
+    && Number.isInteger(draft.sourceIntervalMs / 60_000)
+    ? draft.sourceIntervalMs / 60_000
+    : undefined;
 
   return (
     <View style={styles.formCard} testID="automations.form">
@@ -1282,7 +1287,9 @@ function ScheduleFormCard({
               value={draft.intervalMinutes}
             />
             <Text style={styles.fieldHint} testID="automations.form.intervalHint">
-              {t('devices.automations.form.intervalHint')}
+              {preservedIntervalMinutes !== undefined
+                ? t('devices.automations.form.intervalPreservedHint', { count: preservedIntervalMinutes })
+                : t('devices.automations.form.intervalHint')}
             </Text>
           </View>
           <View style={styles.fieldGroup}>

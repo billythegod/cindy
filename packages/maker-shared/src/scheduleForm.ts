@@ -700,7 +700,7 @@ function validateIntervalMinutes(
       'intervalMinutes',
       localizer,
       'devices.automations.presentation.validation.intervalUnsupported',
-      '分钟间隔只支持 1-59 分钟，或 1-23 小时的整点间隔',
+      '分钟间隔必须能整除 60：请选择 ' + SUPPORTED_INTERVAL_MINUTES.join('、') + ' 分钟，或 1-23 小时的整点间隔',
     );
   }
   return null;

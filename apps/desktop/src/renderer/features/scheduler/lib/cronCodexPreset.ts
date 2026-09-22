@@ -1,4 +1,7 @@
 import type { TFunction } from 'i18next';
+import { SUPPORTED_INTERVAL_MINUTES } from '@cindy/maker-shared';
+
+export { SUPPORTED_INTERVAL_MINUTES } from '@cindy/maker-shared';
 
 /**
  * cronCodexPreset — codex 8 种 schedule mode ↔ 5-field cron 双向转换
@@ -83,9 +86,6 @@ export const DEFAULT_CONFIG: CodexScheduleConfig = {
   intervalMinutes: 5,
   customCron: '0 9 * * *',
 };
-
-/** Minute Cron steps that keep a constant elapsed interval across hour boundaries. */
-export const SUPPORTED_INTERVAL_MINUTES = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30] as const;
 
 export function isSupportedIntervalMinutes(value: number): boolean {
   return (SUPPORTED_INTERVAL_MINUTES as readonly number[]).includes(value);
@@ -234,6 +234,14 @@ function clampIntervalMinutes(n: number): number {
   return Math.max(1, Math.min(59, Math.floor(n)));
 }
 
+/** Parse a legacy minute Cron into an exact interval, including values no longer offered as presets. */
+function cronExprToExactMinuteIntervalMs(expr: string): number | undefined {
+  const match = /^\*\/(\d+) \* \* \* \*$/.exec(expr.trim());
+  if (!match) return undefined;
+  const minutes = Number(match[1]);
+  return minutes >= 1 && minutes <= 59 ? minutes * 60_000 : undefined;
+}
+
 // 把 cron 表达式反推成 interval 毫秒——只识别 UI 的 4 个 interval-style preset：
 //   - `* * * * *`             → 60_000（1 分钟）
 //   - `*\/N * * * *` (N: an interval that divides 60) → N * 60_000
@@ -307,9 +315,13 @@ export function switchScheduleTimingMode(
   nextMode: 'cron' | 'interval',
 ): { cronExpr: string; intervalMs?: number } {
   if (nextMode === 'interval') {
-    const nextIntervalMs = cronExprToIntervalMs(cronExpr) ?? DEFAULT_SCHEDULE_INTERVAL_MS;
+    const nextIntervalMs = cronExprToIntervalMs(cronExpr)
+      ?? cronExprToExactMinuteIntervalMs(cronExpr)
+      ?? intervalMs
+      ?? DEFAULT_SCHEDULE_INTERVAL_MS;
     return {
-      cronExpr: intervalMsToCronExpr(nextIntervalMs) ?? '*/5 * * * *',
+      // Keep an unsupported legacy minute Cron intact so switching modes does not silently reset it.
+      cronExpr: intervalMsToCronExpr(nextIntervalMs) ?? (cronExpr.trim() || '*/5 * * * *'),
       intervalMs: nextIntervalMs,
     };
   }
