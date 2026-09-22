@@ -24,8 +24,8 @@
  * (Write / file-change add)也不能只凭存在性:Write 可能覆盖既有文件,失败路径也可能
  * 被后续轮次创建;因此它必须有落在窗口内的 birthtime,不可用时宁可不出。
  * command 来源为兼容不提供 birthtime 的 Linux FS 允许 mtime 回退,但同样受完整
- * 时间窗约束。远程工具产物维持 stat 存在性复核；命令产物额外检查远端 mtime，
- * 用远端消息时间窗判定，不使用控制端时钟，也不复用普通链接的存在性缓存。
+ * 时间窗约束。远程工具产物维持 stat 存在性复核；设备互联命令产物额外检查远端 mtime，
+ * 用远端消息时间窗判定，不使用控制端时钟，也不复用普通链接的存在性缓存；SSH 保持仅工具产物。
  */
 
 import { CHAT_FOCUS_CLASS, CHAT_COLOR_TRANSITION_CLASS } from './chatChrome';
@@ -727,7 +727,11 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
     if (!remoteOrigin) return;
     const watched = new Set(
       files
-        .filter((file) => isGeneratedFileStatable(file, turnEndMs, turnSealed))
+        .filter(
+          (file) =>
+            isGeneratedFileStatable(file, turnEndMs, turnSealed) &&
+            (file.source === 'tool' || (remoteOrigin.kind === 'device' && turnStartMs !== null)),
+        )
         .map((file) =>
           remotePathVerdictKey(
             remoteOrigin,
@@ -780,7 +784,10 @@ export const GeneratedFilesCard = memo(function GeneratedFilesCard({
     }
 
     const toStat = remoteOrigin
-      ? plan.toStat.filter((file) => file.source === 'tool' || turnStartMs !== null)
+      ? plan.toStat.filter(
+          (file) =>
+            file.source === 'tool' || (remoteOrigin.kind === 'device' && turnStartMs !== null),
+        )
       : plan.toStat;
     if (toStat.length === 0) {
       return () => {

@@ -57,4 +57,40 @@ describe('remote generated files', () => {
     });
     expect(statPath).not.toHaveBeenCalled();
   });
+  it('keeps SSH tool artifacts without applying the Desktop clock to SSH command artifacts', async () => {
+    const chatStat = vi.fn().mockResolvedValue({ verdict: 'file' });
+    const statPath = vi.fn();
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: { fileBrowser: { chatStat }, fsBrowse: { statPath } },
+    });
+    render(
+      <ChatSessionFileProvider
+        value={{
+          sessionId: 'ssh-task',
+          workingDir: '/remote',
+          origin: { kind: 'ssh', remoteHostId: 'host' },
+        }}
+      >
+        <GeneratedFilesCard
+          files={[
+            { path: '/remote/report.zip', name: 'report.zip', source: 'command', ready: true },
+            { path: '/remote/notes.txt', name: 'notes.txt', source: 'tool', ready: true },
+          ]}
+          turnStartMs={200_000}
+          turnEndMs={300_000}
+          turnSealed
+        />
+      </ChatSessionFileProvider>,
+    );
+    await waitFor(() => expect(screen.getByText('notes.txt')).toBeTruthy());
+    expect(screen.queryByText('report.zip')).toBeNull();
+    expect(chatStat).toHaveBeenCalledTimes(1);
+    expect(chatStat).toHaveBeenCalledWith({
+      origin: { kind: 'ssh', remoteHostId: 'host' },
+      workdir: '/remote',
+      absPath: '/remote/notes.txt',
+    });
+    expect(statPath).not.toHaveBeenCalled();
+  });
 });
