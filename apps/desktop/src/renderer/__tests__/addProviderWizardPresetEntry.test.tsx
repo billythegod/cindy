@@ -242,6 +242,20 @@ function renderWizard(presetId: string) {
   );
 }
 
+it.each(['xiaomi-mimo-token-plan-cn', 'xiaomi-token-plan-ams', 'xiaomi-token-plan-sgp'])(
+  'presents %s as a subscription with the dedicated key hint', async id => {
+    const preset = BUNDLED_CATALOG.presets!.find(p => p.id === id)!;
+    vi.mocked(window.electronAPI.maker.listProviderPresets).mockResolvedValue({ presets: [preset, deepseekPreset] });
+    render(<AddProviderWizard providers={[]} onOpenCustomForm={vi.fn()} onClose={vi.fn()} onDone={vi.fn()} />);
+    const hint = await screen.findByText('settings.providers.models.subscriptionProduct');
+    fireEvent.click(hint.closest('button')!);
+    expect(await screen.findByPlaceholderText('tp-…')).toBeTruthy();
+    expect(screen.getByText('settings.providers.wizard.mimoTokenPlanNote')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'settings.providers.wizard.setupLink.apiKey' }).getAttribute('href')).toBe('https://platform.xiaomimimo.com/token-plan');
+    expect(screen.queryByPlaceholderText('sk-…')).toBeNull();
+  },
+);
+
 it.each(['openrouter', 'minimax-cn', 'minimax-global', 'moonshot-kimi-code', 'github-copilot', 'nous'])(
   'shows the same sign-in/API choice in the supplier list and connection page for %s', async id => {
     const preset = BUNDLED_CATALOG.presets!.find(p => p.id === id)!;

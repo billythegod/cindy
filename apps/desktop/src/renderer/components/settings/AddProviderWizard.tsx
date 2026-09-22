@@ -1,4 +1,4 @@
-import { providerSetupLink, providerPresetOAuth, providerPresetOAuthRuntimes, buildUserProvider } from '@cindy/model-providers';
+import { providerSetupLink, providerPresetOAuth, providerPresetOAuthRuntimes, buildUserProvider, isMimoTokenPlanPreset } from '@cindy/model-providers';
 import { bindProviderPresetRuntime, providerEndpointBindings, bindProviderEndpoint } from '@cindy/model-providers';
 /**
  * AddProviderWizard —— 「添加供应商」三步向导(2026-07 模型供应商重构)。
@@ -1647,13 +1647,19 @@ export function AddProviderWizard({
                           name: presetDisplayName(p, i18n.language),
                         })}
                         name={presetDisplayName(p, i18n.language)}
-                        meta={t(
-                          providerPresetOAuth(p.id)
-                            ? 'settings.providers.wizard.metaLoginOrApi'
-                            : p.authMethod === 'none'
-                              ? 'settings.providers.wizard.metaNoAuth'
-                              : 'settings.providers.wizard.metaApiKey',
-                        )}
+                        meta={
+                          isMimoTokenPlanPreset(p)
+                            ? t('settings.providers.models.subscriptionProduct', {
+                                product: 'MiMo Token Plan',
+                              })
+                            : t(
+                                providerPresetOAuth(p.id)
+                                  ? 'settings.providers.wizard.metaLoginOrApi'
+                                  : p.authMethod === 'none'
+                                    ? 'settings.providers.wizard.metaNoAuth'
+                                    : 'settings.providers.wizard.metaApiKey',
+                              )
+                        }
                         beta={isLocalRuntimeBetaProviderId(p.id)}
                         onClick={() => pickPreset(p)}
                       />
@@ -1924,12 +1930,15 @@ export function AddProviderWizard({
                   <SettingsTextInput
                     value={apiKey}
                     onChange={setApiKey}
-                    placeholder="sk-…"
+                    placeholder={isMimoTokenPlanPreset(sel.preset) ? 'tp-…' : 'sk-…'}
                     size="md"
                     mono
                     secret
                     secretTipContentClassName="z-[10001]"
                   />
+                  {isMimoTokenPlanPreset(sel.preset) && (
+                    <InfoLine text={t('settings.providers.wizard.mimoTokenPlanNote')} />
+                  )}
                 </div>
               ) : (
                 <InfoLine text={t('settings.providers.wizard.noAuthNote')} />
