@@ -1848,7 +1848,7 @@ describe('chatBridgeCapabilitiesForRoute', () => {
           modelIdRewrite: { stripPrefix: 'chat/' },
         },
       },
-      models: { codex: [{ id: 'chat/model-a', name: 'Chat Model A' }] },
+      models: { codex: [{ id: 'chat/model-a', name: 'Chat Model A', efforts: ['high'] }] },
     } as never]);
     setCustomProviderKeyReader(() => 'locked-chat-key');
     host.registerComposed(
@@ -3466,8 +3466,12 @@ describe('codex proxy host', () => {
     mockState.createAnthropicCompatProxy.mockResolvedValueOnce({ url: 'http://127.0.0.1:43210', dispose: vi.fn(async () => undefined) });
     try {
       await host.ensureCodexProxyReady();
-      for (const efforts of [['high'], []] as const) {
-        target.efforts = [...efforts];
+      const original = { model: modelId, input: [], reasoning: { effort: 'max', summary: 'auto' } };
+      for (const efforts of [['high'], [], null, ['high', 'max']] as const) {
+        // An implicit OAuth provider must advertise membership to be selected at all.
+        if (efforts === null && destination === 'oauth-fixture') continue;
+        target.efforts = [...(efforts ?? [])];
+        catalog.providers.find(p => p.id === destination)!.models.codex = efforts === null ? [] : [target];
         setActiveCatalog(structuredClone(catalog));
         const activeCatalog = await import('../active-catalog.js');
         activeCatalog.setDiscoveredCodexModels(catalog.providers.find(p => p.id === 'openai')!.models.codex!);
@@ -3475,14 +3479,15 @@ describe('codex proxy host', () => {
           id: m.id, name: m.name, efforts: m.efforts, agents: ['codex'],
         })));
         const active = activeCatalog.getActiveCatalog();
-        expect(active.providers.find(p => p.id === destination)?.models.codex?.find(m => m.id === modelId)?.efforts).toEqual([...efforts]);
-        let current: unknown = { model: modelId, input: [], reasoning: { effort: 'max', summary: 'auto' } };
+        expect(active.providers.find(p => p.id === destination)?.models.codex?.find(m => m.id === modelId)?.efforts).toEqual(efforts === null ? undefined : [...efforts]);
+        let current: unknown = original;
         for (const transform of mockState.createAnthropicCompatProxy.mock.calls[0][0].transformRequest) {
           current = transform(current, { method: 'POST', url: '/responses', headers: { 'thread-id': 'implicit-effort-thread' } }) ?? current;
         }
         expect(current).toHaveProperty('reasoning.summary', 'auto');
-        if (efforts.length) expect(current).toHaveProperty('reasoning.effort', 'high');
+        if (efforts?.length) expect(current).toHaveProperty('reasoning.effort', efforts.at(-1));
         else expect(current).not.toHaveProperty('reasoning.effort');
+        expect(original.reasoning.effort).toBe('max');
       }
     } finally {
       clearSessionProvider('implicit-effort-session');
@@ -4208,6 +4213,8 @@ describe('codex proxy host', () => {
 
   it('applies the inherited Gateway route on the first collab_spawn transform pass', async () => {
     const host = await freshCodexProxyHost();
+    const { setXdGatewayModels } = await import('../active-catalog.js');
+    setXdGatewayModels([{ id: 'codex/gpt-5.6-sol', name: 'Fixture', agents: ['codex'], efforts: ['max'] }]);
     const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
     mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
       url: 'http://127.0.0.1:43210',
@@ -4256,6 +4263,7 @@ describe('codex proxy host', () => {
       host.unregister('session-openai-parent');
       clearSessionProvider('session-openai-parent');
       host.setCodexProxyGatewayKeyReader(() => null);
+      setXdGatewayModels([]);
     }
   });
 
@@ -5812,6 +5820,8 @@ describe('codex proxy host', () => {
 
   it('normalizes requests to ByteDance Seed Responses capabilities', async () => {
     const host = await freshCodexProxyHost();
+    const { setXdGatewayModels } = await import('../active-catalog.js');
+    setXdGatewayModels([{ id: 'bytedance-seed/seed-2.1-pro', name: 'Fixture', agents: ['codex'], efforts: ['high'] }]);
     const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
     mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
       url: 'http://127.0.0.1:43210',
@@ -5899,6 +5909,7 @@ describe('codex proxy host', () => {
     expect(summaryOnlyReasoning).toEqual({ model: 'bytedance-seed/seed-2.1-pro' });
 
     clearSessionProvider('session-seed');
+    setXdGatewayModels([]);
   });
 
   it('normalizes custom Volcengine Ark Responses routes regardless of the model alias', async () => {
@@ -6491,6 +6502,8 @@ describe('codex proxy host', () => {
     // xai 会话里非 xai/ 前缀的请求会被路由 scope 门放回默认上游(ChatGPT/网关),
     // xAI 兼容改写(挪 instructions / 剥 reasoning)必须同步跳过,否则默认上游收到被改坏的 body。
     const host = await freshCodexProxyHost();
+    const { setXdGatewayModels } = await import('../active-catalog.js');
+    setXdGatewayModels([{ id: 'gpt-5.5', name: 'Fixture', agents: ['codex'], efforts: ['high'] }]);
     const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
     mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
       url: 'http://127.0.0.1:43210',
@@ -6521,6 +6534,7 @@ describe('codex proxy host', () => {
     // instructions 未被挪进 input、reasoning 未被剥、model 未被 rewrite。
     expect(current).toEqual(original);
     clearSessionProvider('session-xai-foreign');
+    setXdGatewayModels([]);
   });
 
   it('restores native search when provider-oauth foreign-model fallback lands on Gateway', async () => {

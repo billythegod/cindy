@@ -541,9 +541,9 @@ function reconcileProviderReasoningEffort(
 ): Record<string, unknown> {
   const model = getActiveCatalog().providers.find(provider => provider.id === providerId)
     ?.models.codex?.find(candidate => candidate.id === modelId);
-  // No catalog row can also mean an internal harness model outside our directory.
-  // Only a resolved model is authoritative here; never borrow another provider's row.
-  return model?.efforts ? reconcileResponsesReasoningEffort(body, model.efforts) : body;
+  // A missing row is unknown capability, including models removed since a task was saved.
+  // Never retain a saved effort or borrow another provider's declaration in that case.
+  return reconcileResponsesReasoningEffort(body, model?.efforts ?? []);
 }
 
 function reconcileResponsesReasoningEffort(
