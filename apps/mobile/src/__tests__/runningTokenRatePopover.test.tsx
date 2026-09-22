@@ -12,7 +12,7 @@ import { resolve } from "node:path";
 import ts from "typescript";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { clearRateHistoryCache } from "@cindy/maker-shared/usage-format";
+import { clearRateHistoryCache, loadCachedRateHistory } from "@cindy/maker-shared/usage-format";
 import { RunningTokenRatePopover } from "@/session/RunningTokenRatePopover";
 import { keyboardControlRegion, type ReservedRegion } from "@/platform/windowGeometry";
 
@@ -149,6 +149,33 @@ const ActivityStatus = new Function(
   ...Object.keys(bindings),
   `${compiledStatus}; return ComposerActivityStatus;`,
 )(...Object.values(bindings));
+
+it.each(["onPress", "onLongPress"])("records the first completed interval before enabling %s, without sampling inactive gaps", async (open) => {
+  const renderStatus = (props = {}) => act(async () => root.render(createElement(ActivityStatus, {
+    ...base, visible: true, tokenUsage: 100, sideTaskRunning: false,
+    reconnectAttempt: null, ...props,
+  })));
+  await renderStatus();
+  expect(host.querySelector('[data-testid="session.tokenRate.trigger"]')).toBeNull();
+  // The only paired report may arrive at completion, after startedAt clears.
+  await renderStatus({ startedAt: null, outputTokens: 100, generationDurationMs: 1000 });
+  await gesture("onPressIn");
+  await gesture(open);
+  expect(card()!.textContent).toContain("100 tok/s");
+  expect(loadCachedRateHistory(base.sessionKey)?.samples.map(s => s.rate)).toEqual([100]);
+  for (const inactive of [{ sideTaskRunning: true }, { reconnectAttempt: { attempt: 1, maxAttempts: 3 } }, { generationReliable: false }]) {
+    await renderStatus({ outputTokens: 500, generationDurationMs: 2000, ...inactive });
+    expect(card()).toBeNull();
+    await renderStatus({ outputTokens: 600, generationDurationMs: 3000 });
+    expect(card()).toBeNull();
+    expect(loadCachedRateHistory(base.sessionKey)?.samples.map(s => s.rate)).toEqual([100]);
+  }
+  await renderStatus({ outputTokens: 650, generationDurationMs: 4000 });
+  expect(loadCachedRateHistory(base.sessionKey)?.samples.map(s => s.rate)).toEqual([100, 50]);
+  await renderStatus({ sessionKey: "another-task" });
+  await renderStatus({ sessionKey: "another-task", outputTokens: 20, generationDurationMs: 1000 });
+  expect(loadCachedRateHistory("another-task")?.samples.map(s => s.rate)).toEqual([20]);
+});
 
 it.each(["onPress", "onLongPress"])(
   "removes the %s rate panel whenever rate metadata becomes unavailable, then restores a closed trigger",

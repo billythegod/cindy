@@ -229,7 +229,7 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('ArrowDown');
     expect(source).toContain('const showElapsedOnly = sideTaskRunning || Boolean(reconnectAttempt);');
     expect(source).toContain('const canShowRateDetails = rateValue !== null;');
-    expect(source).toContain('{canShowRateDetails ? (');
+    expect(source).toContain('enabled={canShowRateDetails}');
     expect(source).toContain('generationActive={remoteSessionRunStatus.generationActive}');
     expect(source).toContain('const showUsageMeta = !showElapsedOnly && (Boolean(rateText) || tokenUsage > 0);');
     expect(source).toContain("t('session.screen.tokenCount'");

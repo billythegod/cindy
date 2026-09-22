@@ -11571,21 +11571,19 @@ function ComposerActivityStatus({
           </Text>
         ) : null}
       </View>
-      {canShowRateDetails ? (
-        <RunningTokenRatePopover
-          availableRegion={availableRegion}
-          sessionKey={sessionKey}
-          startedAt={startedAt}
-          outputTokens={outputTokens}
-          generationDurationMs={generationDurationMs}
-          generationReliable={generationReliable}
-          label={showUsageMeta ? `${elapsedText} · ${rateText ?? tokenA11yText}` : elapsedText}
-        >
-          {usageMeta}
-        </RunningTokenRatePopover>
-      ) : (
-        <View pointerEvents="none">{usageMeta}</View>
-      )}
+      <RunningTokenRatePopover
+        key={sessionKey}
+        enabled={canShowRateDetails}
+        availableRegion={availableRegion}
+        sessionKey={sessionKey}
+        startedAt={startedAt}
+        outputTokens={outputTokens}
+        generationDurationMs={generationDurationMs}
+        generationReliable={generationReliable && !showElapsedOnly}
+        label={showUsageMeta ? `${elapsedText} · ${rateText ?? tokenA11yText}` : elapsedText}
+      >
+        {usageMeta}
+      </RunningTokenRatePopover>
     </View>
   );
 }

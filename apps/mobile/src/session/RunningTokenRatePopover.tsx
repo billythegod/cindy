@@ -50,6 +50,7 @@ export function RunningTokenRatePopover({
   children,
   label,
   availableRegion,
+  enabled = true,
 }: {
   sessionKey: string;
   startedAt: number | null;
@@ -59,6 +60,7 @@ export function RunningTokenRatePopover({
   children: ReactNode;
   label: string;
   availableRegion?: LayoutRect;
+  enabled?: boolean;
 }) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
@@ -108,6 +110,9 @@ export function RunningTokenRatePopover({
     ),
   );
   const [mode, setMode] = useState<"closed" | "pinned" | "held">("closed");
+  useEffect(() => {
+    if (!enabled) setMode("closed");
+  }, [enabled]);
   // A pane can move or resize without changing the native window dimensions.
   useEffect(
     () => setMode("closed"),
@@ -155,6 +160,9 @@ export function RunningTokenRatePopover({
     );
     return () => clearTimeout(timer);
   }, [history.latestSampleAt]);
+  // Keep observing counters before the first rate is available. Only the
+  // interaction surface is conditional; it must not own sampling lifetime.
+  if (!enabled) return <View pointerEvents="none">{children}</View>;
   const recent =
     generationReliable &&
     (startedAt === null || startedAt === history.startedAt) &&
