@@ -12,6 +12,17 @@ const registry = BUNDLED_CATALOG.modelRegistry;
 
 describe("model registry", () => {
   it.each([
+    ["openai", "gpt-6-sol", "gpt-5.6-sol"],
+    ["openai", "gpt-6-luna", "gpt-5.6-luna"],
+    ["anthropic", "claude-opus-5-5", "claude-opus-5"],
+  ])("orders %s/%s before its previous generation", (provider, model, previous) => {
+    const current = findModelRegistryRoute(registry, provider, model)?.entry.sortOrder;
+    const prior = findModelRegistryRoute(registry, provider, previous)?.entry.sortOrder;
+    expect(Number.isFinite(current)).toBe(true);
+    expect(current).toBeLessThan(prior!);
+  });
+
+  it.each([
     { model: "gpt-6-sol", input: 2, output: 10 },
     { model: "gpt-6-luna", input: 0.1, output: 0.5 },
   ])(

@@ -5,7 +5,7 @@
 
 ## GPT-6 Sol / Luna 与 Claude Opus 5.5（2026-09-23）
 
-客户端离线 Registry revision 更新为 `2026-09-23T00:00:00.001Z`，新增
+客户端离线 Registry revision 更新为 `2026-09-23T00:00:00.003Z`，新增
 `openai/gpt-6-sol`、`openai/gpt-6-luna`、`anthropic/claude-opus-5-5` 公共资料和官方接入路由。
 保留既有型号、参考价历史及用户已选型号；不新增未经实报的 XD 路由。
 沿用最新家族成员推荐规则，Claude Code 的 Opus 推荐项会从 5 自动更新为 5.5。
@@ -29,7 +29,7 @@ Opus 5.5 $4/$20；包含缓存读写、Claude 1h 写入、标准/Fast 价格及 
 Claude Fast 参考价不等于订阅账号具备 Fast 权限，本批不强制开启该能力。
 
 配套 Server PR 同步三个型号的完整公共资料/路由/参考价，并补 Pi 显式成员。
-Server revision 为 `2026-09-23T00:00:00.000Z`，客户端为同日 `.001Z`：客户端既有
+Server revision 为 `2026-09-23T00:00:00.002Z`，客户端为同日 `.003Z`：客户端既有
 13 个公共型号、8 个媒体接入条目和 Cyber 思考能力补项仍未进入 Server。
 媒体扩展的发布能力协商前置尚未完成（见 [媒体发布前置条件](model-registry-v4-media.md#发布前置条件)），
 不能整表覆盖 Server。两侧保持不同 revision；Server 虽低于配套新版客户端，却会越过

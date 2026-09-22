@@ -1,11 +1,12 @@
 {
   "schemaVersion": 5,
-  "updatedAt": "2026-09-23T00:00:00.001Z",
+  "updatedAt": "2026-09-23T00:00:00.003Z",
   "models": [
     {
       "id": "openai/gpt-6-sol",
       "name": "GPT-6 Sol",
       "status": "active",
+      "sortOrder": 15,
       "routes": [
         {
           "providerId": "openai",
@@ -32,6 +33,7 @@
       "id": "openai/gpt-6-luna",
       "name": "GPT-6 Luna",
       "status": "active",
+      "sortOrder": 16,
       "routes": [
         {
           "providerId": "openai",
@@ -58,6 +60,7 @@
       "id": "anthropic/claude-opus-5-5",
       "name": "Opus 5.5",
       "status": "active",
+      "sortOrder": -1,
       "routes": [
         {
           "providerId": "anthropic",

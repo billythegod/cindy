@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { InvalidResponsesRequestError } from '../types.js';
 
 import {
   decodeThinkingBlock,
@@ -992,6 +993,27 @@ describe('Responses → Anthropic request translation', () => {
       }
     }
   });
+
+  it.each(['claude-opus-5-5', 'anthropic/claude-opus-5.5', 'claude-opus-5-5-20260922'])(
+    'rejects incompatible tool requests without disabling thinking for %s', (model) => {
+      const tools = [{ type: 'function', name: 'run', parameters: { type: 'object' } }];
+      const expected = new InvalidResponsesRequestError(
+        'This Anthropic model requires signed thinking history for tool continuation or forced tool choice',
+      );
+      for (const effort of [undefined, 'none', 'high']) {
+        const request = { model, tools, ...(effort ? { reasoning: { effort } } : {}) };
+        for (const tool_choice of ['required', { type: 'function', name: 'run' }]) {
+          expect(() => translateResponsesRequest({ ...request,
+            input: [{ role: 'user', content: 'run the tool' }], tool_choice,
+          })).toThrowError(expected);
+        }
+        expect(() => translateResponsesRequest({ ...request, input: [
+          { type: 'function_call', call_id: 'c1', name: 'run', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'c1', output: 'ok' },
+        ] })).toThrowError(expected);
+      }
+    },
+  );
 
   it('keeps automatic prompt caching off the moving last user block', () => {
     const result = translateResponsesRequest({
