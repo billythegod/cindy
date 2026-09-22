@@ -537,6 +537,7 @@ export function AddProviderWizard({
     q
       ? sortedPresets.filter(
           (p) =>
+            presetDisplayName(p, i18n.language).toLowerCase().includes(q) ||
             p.name.toLowerCase().includes(q) ||
             (p.nameEn?.toLowerCase().includes(q) ?? false) ||
             (p.nameZhTW?.toLowerCase().includes(q) ?? false),
