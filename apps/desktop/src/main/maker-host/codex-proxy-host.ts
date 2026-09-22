@@ -1838,7 +1838,7 @@ function createXaiResponsesCompatTransform(): RequestTransform {
   };
 }
 
-function responsesCompatibilityRouting(
+function responsesCompatibilityRoute(
   body: Record<string, unknown>,
   ctx: RequestTransformCtx,
   frozenAuthInjection?: CodexProxyAuthInjection,
@@ -1848,6 +1848,7 @@ function responsesCompatibilityRouting(
   const authInjection = frozenAuthInjection ?? getCodexProxyAuthInjection();
   const implicitProviderId = inferProviderIdForModel(requestModel, 'codex');
   let routing: ReturnType<typeof getProviderRoutingDescriptor> = null;
+  let providerId = providerContext.providerId;
 
   if (providerContext.subagentRoute) {
     routing = getProviderRoutingDescriptor(
@@ -1866,6 +1867,7 @@ function responsesCompatibilityRouting(
       undefined,
       authInjection,
     );
+    providerId = adopted ? providerContext.providerId : 'xd';
     routing = adopted
       ? getSessionRoutingDescriptor(providerContext.sessionId!, 'codex', requestModel)
       : getProviderRoutingDescriptor('xd', 'codex', requestModel);
@@ -1874,6 +1876,7 @@ function responsesCompatibilityRouting(
     // user/API-key provider merely sharing a model id does not win routing.
     const inferred = getProviderRoutingDescriptor(implicitProviderId, 'codex', requestModel);
     routing = inferred?.authStrategy === 'provider-oauth-header' ? inferred : null;
+    if (routing) providerId = implicitProviderId;
   }
 
   if (!routing) {
@@ -1885,9 +1888,18 @@ function responsesCompatibilityRouting(
         ? 'openai'
         : 'xd';
     routing = getProviderRoutingDescriptor(defaultProviderId, 'codex', requestModel);
+    providerId = defaultProviderId;
   }
 
-  return routing;
+  return { routing, providerId, catalogModel: providerContext.catalogModel };
+}
+
+function responsesCompatibilityRouting(
+  body: Record<string, unknown>,
+  ctx: RequestTransformCtx,
+  frozenAuthInjection?: CodexProxyAuthInjection,
+) {
+  return responsesCompatibilityRoute(body, ctx, frozenAuthInjection).routing;
 }
 
 /**
@@ -2124,22 +2136,15 @@ function createProviderModelRewriteTransform(
   frozenAuthInjection?: CodexProxyAuthInjection,
 ): RequestTransform {
   return (body, ctx) => {
+    let normalized = body;
+    const original = body;
     if (isPlainObject(body) && typeof body.model === 'string') {
-      const context = providerContextForRequest(ctx.headers, body.model);
-      if (context.providerId && explicitProviderRouteIsAdopted(
-        context.sessionId, context.subagentRoute,
-        frozenAuthInjection ?? getCodexProxyAuthInjection(),
-      )) {
-        const normalized = reconcileProviderReasoningEffort(body, context.providerId, context.catalogModel);
-        if (normalized !== body) {
-          // Keep this result even when the model id itself needs no wire rewrite.
-          const rewritten = context.subagentRoute
-            ? rewriteProviderModelIdInBody(context.providerId, 'codex', normalized)
-            : rewriteSessionModelIdForRoute(context.sessionId!, 'codex', normalized);
-          return rewritten ?? normalized;
-        }
+      const route = responsesCompatibilityRoute(body, ctx, frozenAuthInjection);
+      if (route.providerId) {
+        normalized = reconcileProviderReasoningEffort(body, route.providerId, route.catalogModel);
       }
     }
+    body = normalized;
     if (isPlainObject(body) && typeof body.model === 'string') {
       const subagentRoute = subagentRouteFromHeaders(ctx.headers);
       if (subagentRoute) {
@@ -2156,8 +2161,10 @@ function createProviderModelRewriteTransform(
     }
     const sessionId = sessionIdFromTransformCtx(ctx);
     const explicitProviderId = sessionId ? getSessionProvider(sessionId) : null;
-    if (sessionId && explicitProviderId) return rewriteSessionModelIdForRoute(sessionId, 'codex', body);
-    return rewriteImplicitModelIdForRoute('codex', body);
+    const rewritten = sessionId && explicitProviderId
+      ? rewriteSessionModelIdForRoute(sessionId, 'codex', body)
+      : rewriteImplicitModelIdForRoute('codex', body);
+    return rewritten ?? (normalized !== original ? normalized : null);
   };
 }
 

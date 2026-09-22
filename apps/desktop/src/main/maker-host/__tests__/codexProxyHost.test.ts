@@ -3436,6 +3436,63 @@ describe('codex proxy host', () => {
     }
   });
 
+  it.each([
+    ['env-key', null, 'xd'],
+    ['oauth-bearer', null, 'openai'],
+    ['env-key', 'openai', 'xd'],
+    ['env-key', null, 'oauth-fixture'],
+  ] as const)('uses effective capabilities for %s / session %s / destination %s', async (auth, selected, destination) => {
+    const host = await freshCodexProxyHost();
+    const { BUNDLED_CATALOG } = await import('@cindy/model-providers');
+    const { setActiveCatalog } = await import('../active-catalog.js');
+    const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
+    const catalog = structuredClone(BUNDLED_CATALOG);
+    const oauth = structuredClone(catalog.providers.find(p => p.id === 'xai')!);
+    // Exercise explicit legacy rows; the bundled v4 registry otherwise projects over them.
+    delete catalog.modelRegistry;
+    oauth.id = 'oauth-fixture';
+    if (destination === 'oauth-fixture') catalog.providers.unshift(oauth);
+    const modelId = destination === 'oauth-fixture' ? 'xai/effort-fixture' : 'gpt-5.6-sol';
+    for (const provider of catalog.providers.filter(p => ['xd', 'openai', 'oauth-fixture'].includes(p.id))) {
+      const template = provider.models.codex![0];
+      const id = destination === 'oauth-fixture' && provider.id !== destination ? 'gpt-5.6-sol' : modelId;
+      provider.models.codex = [{ ...template, id, efforts: ['high', 'max'], defaultEffort: 'high' }];
+    }
+    const target = catalog.providers.find(p => p.id === destination)!.models.codex![0];
+    host.setCodexProxyAuthInjection(auth);
+    host.registerComposed('implicit-effort-session', 'implicit-effort-thread', '');
+    if (selected) setSessionProvider('implicit-effort-session', selected);
+    else clearSessionProvider('implicit-effort-session');
+    mockState.createAnthropicCompatProxy.mockResolvedValueOnce({ url: 'http://127.0.0.1:43210', dispose: vi.fn(async () => undefined) });
+    try {
+      await host.ensureCodexProxyReady();
+      for (const efforts of [['high'], []] as const) {
+        target.efforts = [...efforts];
+        setActiveCatalog(structuredClone(catalog));
+        const activeCatalog = await import('../active-catalog.js');
+        activeCatalog.setDiscoveredCodexModels(catalog.providers.find(p => p.id === 'openai')!.models.codex!);
+        activeCatalog.setXdGatewayModels(catalog.providers.find(p => p.id === 'xd')!.models.codex!.map(m => ({
+          id: m.id, name: m.name, efforts: m.efforts, agents: ['codex'],
+        })));
+        const active = activeCatalog.getActiveCatalog();
+        expect(active.providers.find(p => p.id === destination)?.models.codex?.find(m => m.id === modelId)?.efforts).toEqual([...efforts]);
+        let current: unknown = { model: modelId, input: [], reasoning: { effort: 'max', summary: 'auto' } };
+        for (const transform of mockState.createAnthropicCompatProxy.mock.calls[0][0].transformRequest) {
+          current = transform(current, { method: 'POST', url: '/responses', headers: { 'thread-id': 'implicit-effort-thread' } }) ?? current;
+        }
+        expect(current).toHaveProperty('reasoning.summary', 'auto');
+        if (efforts.length) expect(current).toHaveProperty('reasoning.effort', 'high');
+        else expect(current).not.toHaveProperty('reasoning.effort');
+      }
+    } finally {
+      clearSessionProvider('implicit-effort-session');
+      const activeCatalog = await import('../active-catalog.js');
+      activeCatalog.setDiscoveredCodexModels([]);
+      activeCatalog.setXdGatewayModels([]);
+      setActiveCatalog(BUNDLED_CATALOG);
+    }
+  });
+
   it('registers and unregisters composed prompt text by session id', async () => {
     const host = await freshCodexProxyHost();
     mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
