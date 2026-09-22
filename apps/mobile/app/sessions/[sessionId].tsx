@@ -11535,42 +11535,49 @@ function ComposerActivityStatus({
           </Text>
         ) : null}
       </View>
-      <RunningTokenRatePopover
-        sessionKey={sessionKey}
-        startedAt={startedAt}
-        outputTokens={outputTokens}
-        generationDurationMs={generationDurationMs}
-        generationReliable={generationReliable && !sideTaskRunning}
-        label={!sideTaskRunning && showUsageMeta ? `${elapsedText} · ${rateText ?? tokenA11yText}` : elapsedText}
-      >
-        <View style={[styles.composerActivityPill, styles.composerActivityMeta]}>
+      {sideTaskRunning ? (
+        <View pointerEvents="none" style={[styles.composerActivityPill, styles.composerActivityMeta]}>
           <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} style={styles.composerActivityPillBackdrop} />
           <Text style={styles.composerActivityMetaText}>{elapsedText}</Text>
-          {!sideTaskRunning && showUsageMeta ? (
-            <>
-              <Text style={styles.composerActivityMetaText}>·</Text>
-              {rateText ? (
-                <Text
-                  accessibilityLabel={rateText}
-                  style={styles.composerActivityMetaText}
-                >
-                  {rateText}
-                </Text>
-              ) : (
-                <>
-                  <ArrowDown color={colors.textSecondary} size={iconSize.xs} strokeWidth={iconStroke.regular} />
+        </View>
+      ) : (
+        <RunningTokenRatePopover
+          sessionKey={sessionKey}
+          startedAt={startedAt}
+          outputTokens={outputTokens}
+          generationDurationMs={generationDurationMs}
+          generationReliable={generationReliable && !sideTaskRunning}
+          label={!sideTaskRunning && showUsageMeta ? `${elapsedText} · ${rateText ?? tokenA11yText}` : elapsedText}
+        >
+          <View style={[styles.composerActivityPill, styles.composerActivityMeta]}>
+            <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} style={styles.composerActivityPillBackdrop} />
+            <Text style={styles.composerActivityMetaText}>{elapsedText}</Text>
+            {!sideTaskRunning && showUsageMeta ? (
+              <>
+                <Text style={styles.composerActivityMetaText}>·</Text>
+                {rateText ? (
                   <Text
-                    accessibilityLabel={tokenA11yText}
+                    accessibilityLabel={rateText}
                     style={styles.composerActivityMetaText}
                   >
-                    {tokenText}
+                    {rateText}
                   </Text>
-                </>
-              )}
-            </>
-          ) : null}
-        </View>
-      </RunningTokenRatePopover>
+                ) : (
+                  <>
+                    <ArrowDown color={colors.textSecondary} size={iconSize.xs} strokeWidth={iconStroke.regular} />
+                    <Text
+                      accessibilityLabel={tokenA11yText}
+                      style={styles.composerActivityMetaText}
+                    >
+                      {tokenText}
+                    </Text>
+                  </>
+                )}
+              </>
+            ) : null}
+          </View>
+        </RunningTokenRatePopover>
+      )}
     </View>
   );
 }

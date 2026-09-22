@@ -1,5 +1,15 @@
 // @vitest-environment jsdom
-import { act, createElement, forwardRef, useImperativeHandle } from "react";
+import {
+  act,
+  createElement,
+  forwardRef,
+  useImperativeHandle,
+  useEffect,
+  useState,
+} from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import ts from "typescript";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearRateHistoryCache } from "@cindy/maker-shared/usage-format";
@@ -82,6 +92,80 @@ const render = async (props = {}) =>
 const gesture = async (name: string, x = 0, y = 0) =>
   act(async () => harness.press[name]({ nativeEvent: { pageX: x, pageY: y } }));
 const card = () => host.querySelector('[data-testid="session.tokenRate.card"]');
+
+// Exercise the actual status component without mounting the entire session route.
+const route = ts.createSourceFile(
+  "session.tsx",
+  readFileSync(resolve(process.cwd(), "app/sessions/[sessionId].tsx"), "utf8"),
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX,
+);
+const statusSource = route.statements.find(
+  (node) =>
+    ts.isFunctionDeclaration(node) &&
+    node.name?.text === "ComposerActivityStatus",
+)!;
+const compiledStatus = ts.transpileModule(statusSource.getText(route), {
+  compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const bindings = {
+  React: { createElement, Fragment: "div" },
+  useEffect,
+  useState,
+  useThemedStyles: () => ({}),
+  makeStyles: () => ({}),
+  useTheme: () => ({ colors: {} }),
+  useTranslation: () => ({ t: (key: string) => key }),
+  View: ({ children }: any) => createElement("div", {}, children),
+  Text: ({ children }: any) => createElement("span", {}, children),
+  BlurBackdrop: () => null,
+  Sparkles: () => null,
+  ArrowDown: () => null,
+  iconSize: {},
+  iconStroke: {},
+  RunningTokenRatePopover,
+  formatComposerActivityElapsed: () => "1s",
+  formatComposerActivityTokenCount: () => "100",
+  formatComposerActivityRateValue: () => "50",
+};
+const ActivityStatus = new Function(
+  ...Object.keys(bindings),
+  `${compiledStatus}; return ComposerActivityStatus;`,
+)(...Object.values(bindings));
+
+it.each(["onPress", "onLongPress"])(
+  "removes the %s rate panel during a side task and restores a closed trigger afterwards",
+  async (open) => {
+    const renderStatus = (sideTaskRunning: boolean) =>
+      act(async () =>
+        root.render(
+          createElement(ActivityStatus, {
+            ...base,
+            visible: true,
+            tokenUsage: 100,
+            sideTaskRunning,
+            reconnectAttempt: null,
+          }),
+        ),
+      );
+    await renderStatus(false);
+    await gesture("onPressIn");
+    await gesture(open);
+    expect(card()).not.toBeNull();
+    await renderStatus(true);
+    expect(card()).toBeNull();
+    expect(
+      host.querySelector('[data-testid="session.tokenRate.trigger"]'),
+    ).toBeNull();
+    expect(host.textContent).toContain("1s");
+    await renderStatus(false);
+    expect(card()).toBeNull();
+    expect(
+      host.querySelector('[data-testid="session.tokenRate.trigger"]'),
+    ).not.toBeNull();
+  },
+);
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   clearRateHistoryCache();
