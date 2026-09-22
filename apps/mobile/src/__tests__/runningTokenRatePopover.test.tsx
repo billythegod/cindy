@@ -119,7 +119,10 @@ const statusSource = route.statements.find(
     ts.isFunctionDeclaration(node) &&
     node.name?.text === "ComposerActivityStatus",
 )!;
-const compiledStatus = ts.transpileModule(statusSource.getText(route), {
+const rateSource = route.statements.find(
+  (node) => ts.isFunctionDeclaration(node) && node.name?.text === "formatComposerActivityRateValue",
+)!;
+const compiledStatus = ts.transpileModule(statusSource.getText(route) + "\n" + rateSource.getText(route), {
   compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const bindings = {
@@ -140,7 +143,6 @@ const bindings = {
   RunningTokenRatePopover,
   formatComposerActivityElapsed: () => "1s",
   formatComposerActivityTokenCount: () => "100",
-  formatComposerActivityRateValue: () => "50",
 };
 const ActivityStatus = new Function(
   ...Object.keys(bindings),
@@ -148,13 +150,15 @@ const ActivityStatus = new Function(
 )(...Object.values(bindings));
 
 it.each(["onPress", "onLongPress"])(
-  "removes the %s rate panel through side tasks and every reconnect kind, then restores a closed trigger",
+  "removes the %s rate panel whenever rate metadata becomes unavailable, then restores a closed trigger",
   async (open) => {
     const renderStatus = (status: Record<string, unknown> = {}) =>
       act(async () =>
         root.render(
           createElement(ActivityStatus, {
             ...base,
+            outputTokens: 100,
+            generationDurationMs: 2000,
             visible: true,
             tokenUsage: 100,
             sideTaskRunning: false,
@@ -169,6 +173,11 @@ it.each(["onPress", "onLongPress"])(
         reconnectAttempt: { kind, attempt: 1, maxAttempts: 3 },
       })),
       { visible: false },
+      { generationReliable: false },
+      { outputTokens: 0 },
+      { outputTokens: Number.NaN },
+      { generationDurationMs: 0 },
+      { generationDurationMs: Number.POSITIVE_INFINITY },
     ]) {
       await renderStatus();
       await gesture("onPressIn");
@@ -179,10 +188,16 @@ it.each(["onPress", "onLongPress"])(
       expect(
         host.querySelector('[data-testid="session.tokenRate.trigger"]'),
       ).toBeNull();
+      if (!("visible" in inactive)) {
+        expect(host.textContent).toContain("1s");
+        if (!("sideTaskRunning" in inactive) && !("reconnectAttempt" in inactive)) {
+          expect(host.textContent).toContain("session.screen.tokenCount");
+        }
+      }
       await renderStatus({
-        ...inactive,
         outputTokens: 999,
         generationDurationMs: 9000,
+        ...inactive,
       });
       expect(card()).toBeNull();
       await renderStatus();

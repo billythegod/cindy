@@ -11500,16 +11500,46 @@ function ComposerActivityStatus({
   const tokenCount = formatComposerActivityTokenCount(tokenUsage);
   const tokenText = t('session.screen.tokenCount', { tokens: tokenCount });
   const tokenA11yText = t('session.screen.tokenCountFull', { tokens: tokenCount });
-  const canShowRateDetails = !sideTaskRunning && !reconnectAttempt;
+  const showElapsedOnly = sideTaskRunning || Boolean(reconnectAttempt);
   const rateValue = formatComposerActivityRateValue(
     outputTokens,
     generationDurationMs,
-    generationReliable && canShowRateDetails,
+    generationReliable && !showElapsedOnly,
   );
   const rateText = rateValue
     ? t('session.screen.tokenRate', { rate: rateValue })
     : null;
-  const showUsageMeta = Boolean(rateText) || tokenUsage > 0;
+  const showUsageMeta = !showElapsedOnly && (Boolean(rateText) || tokenUsage > 0);
+  const canShowRateDetails = rateValue !== null;
+  const usageMeta = (
+    <View style={[styles.composerActivityPill, styles.composerActivityMeta]}>
+      <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} style={styles.composerActivityPillBackdrop} />
+      <Text style={styles.composerActivityMetaText}>{elapsedText}</Text>
+      {showUsageMeta ? (
+        <>
+          <Text style={styles.composerActivityMetaText}>·</Text>
+          {rateText ? (
+            <Text
+              accessibilityLabel={rateText}
+              style={styles.composerActivityMetaText}
+            >
+              {rateText}
+            </Text>
+          ) : (
+            <>
+              <ArrowDown color={colors.textSecondary} size={iconSize.xs} strokeWidth={iconStroke.regular} />
+              <Text
+                accessibilityLabel={tokenA11yText}
+                style={styles.composerActivityMetaText}
+              >
+                {tokenText}
+              </Text>
+            </>
+          )}
+        </>
+      ) : null}
+    </View>
+  );
   // 三类进度共用这一个 attempt 字段, 但说法必须分开: 模型容量、请求限流与传输层重连
   // 的用户含义不同，混用会把用户引向错误的排查方向。
   const activityText = reconnectAttempt
@@ -11538,12 +11568,7 @@ function ComposerActivityStatus({
           </Text>
         ) : null}
       </View>
-      {!canShowRateDetails ? (
-        <View pointerEvents="none" style={[styles.composerActivityPill, styles.composerActivityMeta]}>
-          <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} style={styles.composerActivityPillBackdrop} />
-          <Text style={styles.composerActivityMetaText}>{elapsedText}</Text>
-        </View>
-      ) : (
+      {canShowRateDetails ? (
         <RunningTokenRatePopover
           sessionKey={sessionKey}
           startedAt={startedAt}
@@ -11552,34 +11577,10 @@ function ComposerActivityStatus({
           generationReliable={generationReliable}
           label={showUsageMeta ? `${elapsedText} · ${rateText ?? tokenA11yText}` : elapsedText}
         >
-          <View style={[styles.composerActivityPill, styles.composerActivityMeta]}>
-            <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} style={styles.composerActivityPillBackdrop} />
-            <Text style={styles.composerActivityMetaText}>{elapsedText}</Text>
-            {showUsageMeta ? (
-              <>
-                <Text style={styles.composerActivityMetaText}>·</Text>
-                {rateText ? (
-                  <Text
-                    accessibilityLabel={rateText}
-                    style={styles.composerActivityMetaText}
-                  >
-                    {rateText}
-                  </Text>
-                ) : (
-                  <>
-                    <ArrowDown color={colors.textSecondary} size={iconSize.xs} strokeWidth={iconStroke.regular} />
-                    <Text
-                      accessibilityLabel={tokenA11yText}
-                      style={styles.composerActivityMetaText}
-                    >
-                      {tokenText}
-                    </Text>
-                  </>
-                )}
-              </>
-            ) : null}
-          </View>
+          {usageMeta}
         </RunningTokenRatePopover>
+      ) : (
+        <View pointerEvents="none">{usageMeta}</View>
       )}
     </View>
   );
