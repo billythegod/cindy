@@ -5905,14 +5905,16 @@ describe('Bot Session task end-to-end runtime', () => {
       h.sqlite!.prepare('UPDATE sessions SET working_dir = ? WHERE id IN (?, ?)').run('/child-task', first.childSessionId, second.childSessionId);
       await runtime.dispatch({ targetSessionId: 'session-1', message: 'Another input', clientId: 'interleaved' });
       await Promise.all([
-        runtime.settleChild(first.childSessionId, '**First** report'),
-        runtime.settleChild(second.childSessionId, 'Second report'),
+        runtime.settleChild(first.childSessionId, '![chart](https://example.com/chart.png)'),
+        runtime.settleChild(second.childSessionId, '[Report](https://example.com/report.pdf)'),
       ]);
       const results = h.sqlite!.prepare('SELECT client_id, agent_meta FROM messages WHERE session_id = ? AND client_id LIKE ? ORDER BY created_at')
         .all('session-1', 'bot-delegation-result:%') as { agent_meta: string }[];
       expect(results).toHaveLength(2);
       expect(results.every(row => JSON.parse(row.agent_meta).botCollaboration.result.workingDir === '/child-task')).toBe(true);
-      expect(results.map(row => JSON.parse(row.agent_meta).botCollaboration.result.text).sort()).toEqual(['First report', 'Second report']);
+      expect(results.map(row => JSON.parse(row.agent_meta).botCollaboration.result.text).sort()).toEqual([
+        '![chart](https://example.com/chart.png)', '[Report](https://example.com/report.pdf)',
+      ].sort());
       expect(results.every(row => JSON.parse(row.agent_meta).botCollaboration.result.artifacts[0].absolutePath === '/reports/report.pdf')).toBe(true);
       expect(runtime.started.filter(turn => turn.sessionId === first.childSessionId)).toHaveLength(1);
       expect(runtime.started.filter(turn => turn.sessionId === second.childSessionId)).toHaveLength(1);

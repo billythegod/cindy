@@ -1,4 +1,3 @@
-import { notificationPlainText } from '../notificationPreview.js';
 import { existsSync, statSync } from 'node:fs';
 import type { AgentInputCoordinator } from './agent-input-coordinator.js';
 import path from 'node:path';
@@ -881,7 +880,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         sessionId: targetSessionId,
         clientId: BOT_DELEGATION_CLIENT_ID.resultRun(params.id, params.runSequence),
         role: 'assistant',
-        content: notificationPlainText(params.resultSummary || params.objective),
+        content: params.resultSummary || params.objective,
         agentMeta: {
           botCollaboration: {
             ...await collaborationMeta(params, 'delegation-result'),
@@ -890,7 +889,9 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
               workingDir: child?.workingDir ?? '',
               runSequence: params.runSequence,
               status: sessionTaskViewStatus({ status: params.status, lastError: params.lastError ?? null }),
-              text: notificationPlainText(params.resultSummary ?? ''),
+              // A receipt is the in-app result, not a lock-screen preview. Keep
+              // image and link targets so a result with no prose remains usable.
+              text: params.resultSummary ?? '',
               ...(params.lastError ? { error: params.lastError.slice(0, 4_000) } : {}),
               artifacts: artifacts.filter((file) => file.status !== 'deleted')
                 .map((file) => ({ absolutePath: file.absolutePath })),

@@ -29,7 +29,16 @@ it('keeps the execution result and its files in the receipt, without fetching or
   expect(screen.getByText('Second result')).toBeTruthy();
   expect(container.querySelector('a')?.dataset.session).toBe('child');
   expect(container.querySelector('a')?.dataset.workdir).toBe('/child-task');
-  expect(container.querySelector('a')?.textContent).toContain('/reports/second.pdf');
+  expect([...container.querySelectorAll('a')].some(link => link.textContent?.includes('/reports/second.pdf'))).toBe(true);
+});
+it('renders image-only and linked results in the child file context', () => {
+  const text = '![chart](/child-task/chart.png) [Report](https://example.com/report.pdf)';
+  const { container } = render(<BotSessionTaskResultCard data={{ ...card, result: { ...card.result, text, artifacts: [] } }} />);
+  const result = container.querySelector('a');
+  expect(result?.textContent).toBe(text);
+  expect(result?.dataset.session).toBe('child');
+  expect(result?.dataset.workdir).toBe('/child-task');
+  expect(screen.queryByText('bots.collab.noWrittenResult')).toBeNull();
 });
 it('uses human fallback for a stopped task with no result and rejects malformed receipts', () => {
   const { rerender } = render(<BotSessionTaskResultCard data={{ ...card, result: { ...card.result, status: 'cancelled', text: '', artifacts: [] } }} />);

@@ -42,7 +42,8 @@ vi.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ deviceId: 'home' }),
   useRouter: () => ({ push: h.push }),
 }));
-vi.mock('react-i18next', () => ({
+vi.mock('react-i18next', async (importOriginal) => ({
+  ...await importOriginal<typeof import('react-i18next')>(),
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 vi.mock('@/components/AppText', () => ({
@@ -531,6 +532,25 @@ it('opens a stable completed result inline and routes its artifact to the child 
   await act(async () => file.click());
   expect(h.push).toHaveBeenCalledWith({ pathname: '/files/preview/[sessionId]', params: { sessionId: 'child', deviceId: 'home', absPath: '/reports/result.pdf' } });
   expect(h.invoke).not.toHaveBeenCalledWith('home', 'maker:bot-delegations-list', expect.anything());
+});
+
+it('keeps image-only and linked results available from the mobile receipt', async () => {
+  const { CompanionTaskResultCard } = await import('@/session/CompanionTaskResultCard');
+  const meta = { ...message.companion!.meta, role: 'delegation-result', childSessionId: 'child',
+    result: { runSequence: 1, status: 'completed', workingDir: '/child-task',
+      text: '![chart](./chart.png) [Report](https://example.com/report.pdf)', artifacts: [] } } as any;
+  await act(async () => root.render(createElement(CompanionTaskResultCard, { meta, deviceId: 'home' })));
+  await act(async () => node.querySelector('button')!.click());
+  expect(node.textContent).toContain('![chart](./chart.png)');
+  expect(node.textContent).not.toContain('devices.companions.noWrittenResult');
+  const chart = [...node.querySelectorAll('button')].find(button => button.textContent === 'chart')!;
+  await act(async () => chart.click());
+  expect(h.push).toHaveBeenCalledWith({ pathname: '/files/preview/[sessionId]', params: {
+    sessionId: 'child', deviceId: 'home', absPath: '/child-task/./chart.png',
+  } });
+  const report = [...node.querySelectorAll('button')].find(button => button.textContent === 'Report')!;
+  await act(async () => report.click());
+  expect(h.openURL).toHaveBeenCalledWith('https://example.com/report.pdf');
 });
 
 it('reveals frozen failure details only after opening the result and its details', async () => {
