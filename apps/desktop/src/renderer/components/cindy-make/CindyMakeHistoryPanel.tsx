@@ -69,7 +69,12 @@ export function CindyMakeHistoryPanel({
   const owner = getDataOwnerGeneration();
   const notifyBuildResult = useCallback(
     (previous: CindyMakeHistoryState['build'], next: CindyMakeHistoryState['build']) => {
-      if (!previous || !next || previous.status === next.status) return;
+      if (
+        !previous ||
+        !next ||
+        (previous.status === next.status && previous.buildId === next.buildId)
+      )
+        return;
       if (next.status === 'ready') {
         toast.success(translateRef.current('cindyMake.personal.status.ready'));
       } else if (next.status === 'failed' && next.error !== 'cancelled') {
@@ -92,7 +97,10 @@ export function CindyMakeHistoryPanel({
         notifyBuildResult(previousBuild, nextBuild);
         if (nextBuild?.status !== 'failed') {
           setShowBuildFailure(false);
-        } else if (previousBuild && previousBuild.status !== 'failed') {
+        } else if (
+          previousBuild &&
+          (previousBuild.status !== 'failed' || previousBuild.buildId !== nextBuild.buildId)
+        ) {
           setShowBuildFailure(true);
         }
         setSnapshot({ owner, value: next });
@@ -210,6 +218,7 @@ export function CindyMakeHistoryPanel({
         : undefined;
   const selectedIsGlobalFailure =
     state?.build?.status === 'failed' &&
+    showBuildFailure &&
     !!state.build.buildId &&
     selectedBuild?.buildId === state.build.buildId;
   const building = !!state?.build && !['ready', 'failed'].includes(state.build.status);
@@ -249,7 +258,10 @@ export function CindyMakeHistoryPanel({
       notifyBuildResult(previousBuild, nextBuild);
       if (nextBuild?.status !== 'failed') {
         setShowBuildFailure(false);
-      } else if (previousBuild && previousBuild.status !== 'failed') {
+      } else if (
+        previousBuild &&
+        (previousBuild.status !== 'failed' || previousBuild.buildId !== nextBuild.buildId)
+      ) {
         setShowBuildFailure(true);
       }
       setSnapshot({ owner, value: next });

@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   tree: 'd'.repeat(40),
   dirty: false,
   building: false,
+  buildingWhenProjectBegins: false,
   projected: undefined as CindyMakeMergeState | undefined,
   source: {
     status: 'ready',
@@ -108,7 +109,10 @@ vi.mock('../manager.js', () => ({
     setUpstreamMerge: (state: CindyMakeMergeState) => {
       h.projected = state;
     },
-    withProjectUse: async (_root: string, run: () => unknown) => run(),
+    withProjectUse: async (_root: string, run: () => unknown) => {
+      if (h.buildingWhenProjectBegins) h.building = true;
+      return run();
+    },
     withProject: async (_root: string, run: () => unknown) => {
       expect(h.locked).toBe(false);
       h.locked = true;
@@ -216,6 +220,7 @@ beforeEach(() => {
   h.tree = 'd'.repeat(40);
   h.dirty = false;
   h.building = false;
+  h.buildingWhenProjectBegins = false;
   h.actualRollback = false;
   h.afterReadError = undefined;
   h.refs = new Map();
@@ -308,6 +313,11 @@ it('rejects a manual source sync during a personal build without queuing it', as
   await expect(actUpstreamMerge({ action: 'update' })).rejects.toThrow('busy');
   expect(h.fetch).not.toHaveBeenCalled();
   expect(h.projected).toBeUndefined();
+});
+it('rechecks for a build after a source sync waits for the project', async () => {
+  h.buildingWhenProjectBegins = true;
+  await expect(actUpstreamMerge({ action: 'update' })).rejects.toThrow('unavailable');
+  expect(h.fetch).not.toHaveBeenCalled();
 });
 it('uses the same fresh official sync before a task worktree is created', async () => {
   h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'f'.repeat(40) })));

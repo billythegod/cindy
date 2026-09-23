@@ -78,6 +78,26 @@ describe('Main-owned Cindy Make task lifecycle', () => {
     expect(manager.isPersonalBuildRunning()).toBe(false);
     expect(manager.hasActiveWork()).toBe(false);
   });
+  it('rejects a new build claim while an application version is switching', () => {
+    const manager = new CindyMakeManager();
+    manager.setVersionSwitchingProbe(() => true);
+    expect(manager.isVersionSwitching()).toBe(true);
+    expect(() => manager.claimPersonalBuild()).toThrow('version switch is running');
+    expect(manager.isPersonalBuildRunning()).toBe(false);
+    manager.setVersionSwitchingProbe(() => false);
+    const release = manager.claimPersonalBuild();
+    expect(manager.isPersonalBuildRunning()).toBe(true);
+    release();
+  });
+  it('rejects a build claim while the source is in use', async () => {
+    const manager = new CindyMakeManager();
+    await manager.withProjectUse('source', async () => {
+      expect(() => manager.claimPersonalBuild()).toThrow('source work is running');
+      expect(manager.isPersonalBuildRunning()).toBe(false);
+    });
+    const release = manager.claimPersonalBuild();
+    release();
+  });
   it('publishes only the current build owners and clears them when the lease settles', () => {
     const manager = new CindyMakeManager();
     const changed = vi.fn();

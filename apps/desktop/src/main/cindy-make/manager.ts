@@ -114,10 +114,19 @@ export class CindyMakeManager {
   >();
   private sourceRevision = 0;
   private isProjectBusy: (root: string) => boolean = () => false;
+  private versionSwitching: () => boolean = () => false;
   private mergeSessionCurrent: () => boolean = () => true;
 
   setProjectBusyProbe(probe: (root: string) => boolean): void {
     this.isProjectBusy = probe;
+  }
+
+  setVersionSwitchingProbe(probe: () => boolean): void {
+    this.versionSwitching = probe;
+  }
+
+  isVersionSwitching(): boolean {
+    return this.versionSwitching();
   }
 
   private projectInUse(root: string): boolean {
@@ -154,6 +163,10 @@ export class CindyMakeManager {
     sessionIds: readonly string[] = [],
     isCurrent: () => boolean = () => true,
   ): () => void {
+    if (this.versionSwitching())
+      throw Object.assign(new Error('version switch is running'), { code: 'busy' });
+    if (this.projectUsers.size > 0)
+      throw Object.assign(new Error('source work is running'), { code: 'busy' });
     if (this.personalBuild)
       throw Object.assign(new Error('personal build is running'), { code: 'busy' });
     const claim = { sessionIds: [...new Set(sessionIds)], isCurrent };

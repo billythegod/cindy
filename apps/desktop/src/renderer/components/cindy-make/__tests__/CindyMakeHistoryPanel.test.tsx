@@ -157,6 +157,24 @@ describe('Make history controls', () => {
     expect(screen.getByRole('button', { name: 'cindyMake.history.regeneratePersonal' })).toBeTruthy();
     expect(h.error).not.toHaveBeenCalled();
   });
+  it('keeps the old failure details on its task after reopening history', async () => {
+    const failedBuild = {
+      status: 'failed' as const,
+      error: 'checksFailed' as const,
+      buildId: 'old-build',
+    };
+    const f = harness();
+    f.set({
+      items: [item({ build: failedBuild })],
+      busy: false,
+      canBuild: true,
+      build: failedBuild,
+    });
+    render(<CindyMakeHistoryPanel hasPersonalVersion />);
+    expect(await screen.findByText('cindyMake.personal.errors.checksFailed')).toBeTruthy();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(h.error).not.toHaveBeenCalled();
+  });
   it('shows one tip when a build finishes and does not repeat it on refresh', async () => {
     const f = harness([]);
     f.set({
@@ -180,6 +198,14 @@ describe('Make history controls', () => {
     act(() => f.historyChanged());
     await waitFor(() => expect(f.read).toHaveBeenCalledTimes(3));
     expect(h.success).toHaveBeenCalledTimes(1);
+    f.set({
+      items: [],
+      busy: false,
+      canBuild: true,
+      build: { status: 'ready', buildId: 'build-2' },
+    });
+    act(() => f.historyChanged());
+    await waitFor(() => expect(h.success).toHaveBeenCalledTimes(2));
   });
   it('shows the failure reason once when a build fails', async () => {
     const f = harness([]);
@@ -204,6 +230,14 @@ describe('Make history controls', () => {
     act(() => f.historyChanged());
     await waitFor(() => expect(f.read).toHaveBeenCalledTimes(3));
     expect(h.error).toHaveBeenCalledTimes(1);
+    f.set({
+      items: [],
+      busy: false,
+      canBuild: true,
+      build: { status: 'failed', error: 'cleanupFailed', buildId: 'build-2' },
+    });
+    act(() => f.historyChanged());
+    await waitFor(() => expect(h.error).toHaveBeenCalledWith('cindyMake.personal.errors.cleanupFailed'));
   });
   it('keeps the running test visible when its stop fails', async () => {
     const f = harness([item({ test: { status: 'ready' }, actions: ['continue'] })]);

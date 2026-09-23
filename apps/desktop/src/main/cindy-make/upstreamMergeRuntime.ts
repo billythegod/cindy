@@ -167,6 +167,7 @@ export function configureUpstreamMerge(isRunning: (id: string) => boolean): void
         cindyMakeManager.withProjectUse(root, () =>
           cindyMakeManager.withProject(root, async () => {
             if (cindyMakeManager.isPreparingSource(root)) throw mergeError('busy');
+            if (cindyMakeManager.isPersonalBuildRunning()) throw mergeError('busy');
             return run();
           }),
         ),
