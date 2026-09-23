@@ -472,6 +472,10 @@
     "deleteOne": "이 메시지 삭제"
   },
   "tail": {
+    "requestFormatError": "앱이 보낸 요청 형식에 문제가 있어 답변을 완료하지 못했습니다.",
+    "replyFailed": "답변을 완료하지 못했습니다.",
+    "showErrorDetails": "오류 세부 정보 보기",
+    "hideErrorDetails": "오류 세부 정보 숨기기",
     "interrupted": "작업 실행 도중 앱이 종료되어 중단되었습니다.",
     "continueTask": "작업 계속",
     "retry": "다시 시도",

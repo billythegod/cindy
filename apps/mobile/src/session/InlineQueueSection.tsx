@@ -10,6 +10,7 @@
  * 停止确认中、队列已暂停(可继续)。它们描述的是队列整体而非某一条消息,没有身份连续性
  * 问题,留在 footer 最自然。
  */
+import { AgentErrorDetails } from './AgentErrorDetails';
 import { useTranslation } from 'react-i18next';
 import {
   ActivityIndicator,
@@ -25,7 +26,7 @@ import { Pause, Play } from 'lucide-react-native';
 import { describeAgentAuthError } from '@/device-link/remoteStatus';
 import type { InputProjection } from '@/session/types';
 import { inputProjectionErrorI18nKey } from '@/session/inputProjectionError';
-import { localizeAgentError } from '@/session/agentErrorI18n';
+import { localizeAgentError, localizeUnclassifiedAgentError } from '@/session/agentErrorI18n';
 import {
   fontWeight,
   iconSize,
@@ -82,15 +83,16 @@ export function InlineQueueSection({
     ? localizedAgentError
       ?? (projectionErrorKey
         ? t(projectionErrorKey)
-        : (describeAgentAuthError(projection.error) ?? projection.error))
+        : (describeAgentAuthError(projection.error) ?? localizeUnclassifiedAgentError(projection.error)))
     : null;
 
   return (
     <View style={styles.container} testID="queue.inline.section">
       {projection.error ? (
         <View style={styles.errorBox} testID="queue.inline.error">
-          {/* 稳定错误 marker 按当前显示端语言翻译；其它错误维持既有 auth 映射或原文。 */}
+          {/* 稳定错误 marker 按当前显示端语言翻译；其它错误保留 auth 引导，否则使用本地化摘要。 */}
           <Text style={styles.errorText}>{projectionError}</Text>
+          <AgentErrorDetails message={projection.error} />
           <View style={styles.errorActions}>
             <ActionPill
               busy={busy}

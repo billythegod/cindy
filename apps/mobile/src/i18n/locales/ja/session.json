@@ -476,6 +476,10 @@
     "deleteOne": "このメッセージを削除"
   },
   "tail": {
+    "requestFormatError": "アプリが送信したリクエストの形式に問題があり、返信を完了できませんでした。",
+    "replyFailed": "返信を完了できませんでした。",
+    "showErrorDetails": "エラーの詳細を表示",
+    "hideErrorDetails": "エラーの詳細を隠す",
     "interrupted": "タスクの実行中にアプリが終了したため、中断されました。",
     "continueTask": "タスクを続ける",
     "retry": "再試行",

@@ -5,9 +5,22 @@ import {
   GATEWAY_PROXY_TOKEN_INVALID_REASON,
   isCindyGatewayProxyTokenInvalidError,
   isGatewayProxyTokenInvalidError,
+  isResponsesLiteParallelToolCallsError,
   matchesDeterministicUsageExhaustionText,
   redactSensitiveText,
 } from './errorRedaction.js';
+
+describe('Responses Lite request error classification', () => {
+  it('recognizes the upstream error inside a JSON envelope', () => {
+    expect(isResponsesLiteParallelToolCallsError(JSON.stringify({ error: {
+      message: 'X-OpenAI-Internal-Codex-Responses-Lite requires `parallel_tool_calls` to be false.',
+      type: 'invalid_request_error', param: 'parallel_tool_calls', code: 'unsupported_value',
+    } }))).toBe(true);
+  });
+  it.each(['Invalid API key', 'Unsupported effort value', 'parallel_tool_calls is unsupported', ''])('does not misclassify unrelated errors: %s', message => {
+    expect(isResponsesLiteParallelToolCallsError(message)).toBe(false);
+  });
+});
 
 describe('matchesDeterministicUsageExhaustionText', () => {
   it.each([

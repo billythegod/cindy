@@ -1,3 +1,4 @@
+import { isResponsesLiteParallelToolCallsError } from '@cindy/maker-shared/error-redaction';
 import { i18n } from '@/i18n';
 
 export type MobileToolLoopErrorKind = 'consecutive' | 'pingpong' | 'rotation' | 'contract';
@@ -55,4 +56,15 @@ export function localizeAgentError(
   if (reason !== 'tool_use_loop_detected') return null;
   if (!toolLoop) return i18n.t('session.tail.toolUseLoopDetected');
   return i18n.t(TOOL_LOOP_I18N_KEYS[toolLoop.kind], { count: toolLoop.count });
+}
+
+/** Unknown provider messages stay in diagnostic details, never in the localized summary. */
+export function unclassifiedAgentErrorI18nKey(message: string): string {
+  return isResponsesLiteParallelToolCallsError(message)
+    ? 'session.tail.requestFormatError'
+    : 'session.tail.replyFailed';
+}
+
+export function localizeUnclassifiedAgentError(message: string): string {
+  return i18n.t(unclassifiedAgentErrorI18nKey(message));
 }

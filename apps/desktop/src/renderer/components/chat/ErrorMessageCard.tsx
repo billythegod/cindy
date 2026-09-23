@@ -8,9 +8,8 @@
  *    唯一交互是友好文案/协议拆封后的「查看原始错误」,与 live ErrorBanner 对齐。
  *
  * 文案:errorReason 是 maker-core 的稳定 key,优先走 i18n(规则 18;与 live
- * ErrorBanner 的 reason → i18n 映射同款);没有 reason 或 key 未知时,回退经
- * decodeRemoteErrorMessage 解码后的 message(与 ErrorBanner 对齐,避免将
- * [REMOTE_*] / [DEVICE_LINK_*] bracket code 以原始文本展示给用户)。
+ * ErrorBanner 的 reason → i18n 映射同款);未知错误使用本地化摘要，
+ * 脱敏后的技术原文仅在用户展开详情后显示。
  *
  * 视觉:走 `--error-bg` / `--error-border` / `--error-fg` 主题 token(规则 16;
  * 错误红属跨主题语义豁免色,token 默认值即语义红,非默认主题可按需 override),
@@ -20,10 +19,9 @@
 import { useEffect, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { isCindyGatewayProxyTokenInvalidError } from '@cindy/maker-shared/error-redaction';
+import { isCindyGatewayProxyTokenInvalidError, isResponsesLiteParallelToolCallsError, redactSensitiveText } from '@cindy/maker-shared/error-redaction';
 import {
   isStreamInterruptedErrorMessage,
-  unwrapProviderErrorDisplay,
 } from '@/utils/streamInterruptError';
 import { decodeRemoteErrorMessage } from '../../lib/makerChatStore';
 import { ERROR_REASON_I18N_KEYS } from './errorReasonI18n';
@@ -52,7 +50,6 @@ export function ErrorMessageCard({
     message: decoded,
     providerId: providerId ?? null,
   });
-  const unwrapped = unwrapProviderErrorDisplay(decoded);
   const toolLoopI18nKey = reason === 'tool_use_loop_detected' ? getToolLoopI18nKey(toolLoop) : undefined;
   const localizedReasonError =
     toolLoopI18nKey && toolLoop
@@ -60,17 +57,14 @@ export function ErrorMessageCard({
       : i18nKey
         ? t(i18nKey)
         : undefined;
-  const text = isStreamInterrupted
-    ? t('chat.errorBanner.streamInterruptedNoRetry')
-    : isGatewayProxyTokenInvalid
-      ? t('chat.errorBanner.gatewayProxyTokenInvalidNoRetry')
-      : localizedReasonError
-        ? localizedReasonError
-        : unwrapped;
-  const showRawToggle =
-    isStreamInterrupted ||
-    isGatewayProxyTokenInvalid ||
-    (!i18nKey && unwrapped !== decoded);
+  const text = isResponsesLiteParallelToolCallsError(decoded)
+    ? t('chat.errorBanner.requestFormatError')
+    : isStreamInterrupted
+      ? t('chat.errorBanner.streamInterruptedNoRetry')
+      : isGatewayProxyTokenInvalid
+        ? t('chat.errorBanner.gatewayProxyTokenInvalidNoRetry')
+        : localizedReasonError ?? t('chat.errorBanner.replyFailed');
+  const showRawToggle = Boolean(decoded);
 
   useEffect(() => {
     setShowRaw(false);
@@ -98,7 +92,7 @@ export function ErrorMessageCard({
             </button>
             {showRaw && (
               <span className="mt-0.5 block text-xs break-all opacity-70 text-[var(--error-fg)]">
-                {decoded}
+                {redactSensitiveText(decoded)}
               </span>
             )}
           </>

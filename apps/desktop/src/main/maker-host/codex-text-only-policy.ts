@@ -25,8 +25,8 @@ function reject(): never { throw new Error('Codex text-only turn rejected a tool
 export function restrictCodexRequest(bytes: Buffer): Buffer {
   const body: unknown = JSON.parse(bytes.toString('utf8'));
   if (!object(body)) return reject();
-  delete body.parallel_tool_calls;
-  return Buffer.from(JSON.stringify({ ...body, tools: [], tool_choice: 'none' }));
+  // Responses Lite requires an explicit false even when no tools are offered.
+  return Buffer.from(JSON.stringify({ ...body, tools: [], tool_choice: 'none', parallel_tool_calls: false }));
 }
 
 function validateItem(item: unknown): void {

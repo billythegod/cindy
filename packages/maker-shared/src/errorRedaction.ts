@@ -196,3 +196,8 @@ export function isCindyGatewayProxyTokenInvalidError(input: {
     isGatewayProxyTokenInvalidError(input.message ?? '')
   );
 }
+
+/** The Lite transport rejects an omitted parallel-tool flag; this is a client request error, not auth. */
+export function isResponsesLiteParallelToolCallsError(message: string): boolean {
+  return /X-OpenAI-Internal-Codex-Responses-Lite requires `?parallel_tool_calls`? to be false\./i.test(message);
+}
