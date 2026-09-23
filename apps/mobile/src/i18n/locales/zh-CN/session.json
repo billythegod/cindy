@@ -473,7 +473,7 @@
   },
   "tail": {
     "requestFormatError": "应用发送的请求格式有误，本次回复未能完成。",
-    "replyFailed": "本次回复未能完成。",
+    "replyFailed": "本次回复未能完成。请查看错误详情以了解原因。",
     "showErrorDetails": "查看错误详情",
     "hideErrorDetails": "收起错误详情",
     "interrupted": "任务执行到一半时应用退出，已被中断。",

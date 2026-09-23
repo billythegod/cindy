@@ -10,6 +10,7 @@
  * 文案:errorReason 是 maker-core 的稳定 key,优先走 i18n(规则 18;与 live
  * ErrorBanner 的 reason → i18n 映射同款);未知错误使用本地化摘要，
  * 脱敏后的技术原文仅在用户展开详情后显示。
+ * 未发送的被拦输入由调用方显式标记，直接展示其面向用户的原因。
  *
  * 视觉:走 `--error-bg` / `--error-border` / `--error-fg` 主题 token(规则 16;
  * 错误红属跨主题语义豁免色,token 默认值即语义红,非默认主题可按需 override),
@@ -33,8 +34,11 @@ export function ErrorMessageCard({
   reason,
   providerId,
   toolLoop,
+  kind = 'reply-error',
 }: {
   message: string;
+  /** Blocked input has not reached the agent; its explanation is already user-facing. */
+  kind?: 'reply-error' | 'blocked-input';
   reason?: string;
   providerId?: string;
   /** Structured details for a tool-loop terminal error (optional for legacy rows). */
@@ -57,18 +61,20 @@ export function ErrorMessageCard({
       : i18nKey
         ? t(i18nKey)
         : undefined;
-  const text = isResponsesLiteParallelToolCallsError(decoded)
-    ? t('chat.errorBanner.requestFormatError')
-    : isStreamInterrupted
-      ? t('chat.errorBanner.streamInterruptedNoRetry')
-      : isGatewayProxyTokenInvalid
-        ? t('chat.errorBanner.gatewayProxyTokenInvalidNoRetry')
-        : localizedReasonError ?? t('chat.errorBanner.replyFailed');
-  const showRawToggle = Boolean(decoded);
+  const text = kind === 'blocked-input'
+    ? redactSensitiveText(decoded)
+    : isResponsesLiteParallelToolCallsError(decoded)
+      ? t('chat.errorBanner.requestFormatError')
+      : isStreamInterrupted
+        ? t('chat.errorBanner.streamInterruptedNoRetry')
+        : isGatewayProxyTokenInvalid
+          ? t('chat.errorBanner.gatewayProxyTokenInvalidNoRetry')
+          : localizedReasonError ?? t('chat.errorBanner.replyFailed');
+  const showRawToggle = kind === 'reply-error' && Boolean(decoded);
 
   useEffect(() => {
     setShowRaw(false);
-  }, [message, reason]);
+  }, [message, reason, kind]);
 
   if (!text) return null;
   return (

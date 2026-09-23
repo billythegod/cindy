@@ -27,6 +27,15 @@ const raw = JSON.stringify({ error: {
 afterEach(cleanup);
 
 describe.each(SUPPORTED_LOCALES)('error presentation in %s', locale => {
+  it('keeps the localized blocked-input fallback visible instead of a reply-failure summary', async () => {
+    const i18n = createInstance();
+    await i18n.init({ lng: locale, fallbackLng: 'en', resources: Object.fromEntries(Object.entries(locales).map(([lng, common]) => [lng, { translation: common }])) });
+    render(<I18nextProvider i18n={i18n}><ErrorMessageCard kind="blocked-input" message={i18n.t('chat.ghostHook.blockedFallback')} /></I18nextProvider>);
+    expect(screen.getByText(locales[locale].chat.ghostHook.blockedFallback)).toBeTruthy();
+    expect(screen.queryByText(locales[locale].chat.errorBanner.replyFailed)).toBeNull();
+    expect(screen.queryByText(locales[locale].chat.errorBanner.networkShowRaw)).toBeNull();
+  });
+
   it.each(['live', 'tail', 'history'] as const)('localizes %s and keeps diagnostics collapsed, with existing recovery', async surface => {
     const i18n = createInstance();
     await i18n.init({ lng: locale, fallbackLng: 'en', resources: Object.fromEntries(Object.entries(locales).map(([lng, common]) => [lng, { translation: common }])) });

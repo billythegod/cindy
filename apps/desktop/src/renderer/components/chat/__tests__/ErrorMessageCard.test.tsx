@@ -18,6 +18,15 @@ const STREAM_RAW =
 afterEach(cleanup);
 
 describe('ErrorMessageCard', () => {
+  it('shows a blocked input explanation directly without treating it as a failed reply', () => {
+    const message = 'Please remove the credential before sending: api_key=private-test-value';
+    render(createElement(ErrorMessageCard, { kind: 'blocked-input', message }));
+    expect(screen.getByText('Please remove the credential before sending: api_key=[REDACTED]')).toBeTruthy();
+    expect(screen.queryByText(/private-test-value/)).toBeNull();
+    expect(screen.queryByText('chat.errorBanner.replyFailed')).toBeNull();
+    expect(screen.queryByText('chat.errorBanner.networkShowRaw')).toBeNull();
+  });
+
   it('uses the same model access guidance for persisted failures as the live banner', () => {
     render(createElement(ErrorMessageCard, {
       message: 'Failed to authenticate. API Error: 403 user not allowed to access model',

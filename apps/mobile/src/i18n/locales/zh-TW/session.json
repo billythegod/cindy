@@ -477,7 +477,7 @@
   },
   "tail": {
     "requestFormatError": "應用程式送出的請求格式有誤，本次回覆未能完成。",
-    "replyFailed": "本次回覆未能完成。",
+    "replyFailed": "本次回覆未能完成。請查看錯誤詳情以瞭解原因。",
     "showErrorDetails": "查看錯誤詳情",
     "hideErrorDetails": "收起錯誤詳情",
     "interrupted": "任務執行到一半時應用退出，已被中斷。",

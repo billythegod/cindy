@@ -8949,7 +8949,7 @@
     },
     "errorBanner": {
       "requestFormatError": "アプリが送信したリクエストの形式に問題があり、返信を完了できませんでした。",
-      "replyFailed": "返信を完了できませんでした。",
+      "replyFailed": "返信を完了できませんでした。原因を確認するには、エラーの詳細をご覧ください。",
       "retryTitle": "最後のメッセージを再送信",
       "cancelTitle": "エラーを閉じる",
       "retry": "再試行",
