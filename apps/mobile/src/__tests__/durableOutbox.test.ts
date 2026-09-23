@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { accountVaultKey } from '@cindy/auth-client';
 import {
   createDurableOutbox,
+  isDurableOutboxUnsent,
   observeDurableOutboxSending,
   type DurableOutboxRecord,
   type OutboxStorage,
@@ -129,6 +130,32 @@ async function setup(storage = disk()) {
 }
 
 describe("durable mobile outbox ownership", () => {
+  it.each([
+    [false, false, undefined, true],
+    [true, false, 1, true],
+    [true, true, 1, false],
+    [true, undefined, 1, false],
+    [false, true, 1, false],
+    [false, undefined, 1, false],
+    [false, undefined, undefined, true],
+  ] as const)('offline disposal respects prepared=%s enqueueStarted=%s sendAtMs=%s', async (prepared, enqueueStarted, sendAtMs, unsent) => {
+    const { store, storage } = await setup();
+    const record = { ...message(), prepared: prepared ? { clientId: 'id-1' } as QueuedRemoteMessage : undefined, enqueueStarted, sendAtMs };
+    expect(isDurableOutboxUnsent(record)).toBe(unsent);
+    await store.add(record);
+    await store.update(store.getSnapshot()[0]!, isDurableOutboxUnsent(record)
+      ? { state: 'host-owned', cleanupOutcome: 'cancelled', cancelRequested: true }
+      : { state: 'confirming', cancelRequested: true });
+    // Cold restart, with the same offline gate used by the bridge.
+    const { deps, store: restarted } = await setup(storage);
+    deps.projection.mockRejectedValue(new Error('offline'));
+    await createDurableOutboxDelivery({ ...deps, canRun: (r) => r.cleanupOutcome !== undefined }).run();
+    expect(deps.projection).not.toHaveBeenCalled();
+    expect(deps.enqueue).not.toHaveBeenCalled();
+    expect(restarted.getSnapshot()).toHaveLength(unsent ? 0 : 1);
+    expect(deps.cleanup).toHaveBeenCalledTimes(unsent ? 1 : 0);
+  });
+
   it.each([false, true, undefined])('deleted prepared task respects enqueueStarted=%s', async (enqueueStarted) => {
     const { store, runner, deps } = await setup();
     await store.add({ ...message(), prepared: { clientId: 'id-1' } as QueuedRemoteMessage, enqueueStarted });

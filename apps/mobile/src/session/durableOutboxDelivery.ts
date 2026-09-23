@@ -3,6 +3,7 @@ import { isExplicitRemoteNotFoundError } from "./newSessionWorktree";
 import {
   createDurableOutbox,
   isDurableOutboxSettled,
+  isDurableOutboxUnsent,
   type DurableOutboxRecord,
   type DurableUpload,
 } from "./durableOutbox";
@@ -96,7 +97,7 @@ export function createDurableOutboxDelivery(deps: DurableOutboxDeliveryDeps) {
           if (session?.id === record.item.sessionId && session.status === "deleted") {
             // Local preparation is not a send. Older prepared rows remain
             // uncertain; only an explicit pre-enqueue record proves ownership.
-            return await finish(!record.prepared || record.enqueueStarted === false);
+            return await finish(isDurableOutboxUnsent(record));
           }
         }
         throw error;
@@ -119,7 +120,7 @@ export function createDurableOutboxDelivery(deps: DurableOutboxDeliveryDeps) {
         (projection.inputDeliveryVersion === 1 &&
           (receipt?.state === "pending" || receipt?.state === "accepted"));
       if (record.cancelRequested) {
-        if (!record.prepared && state === "unknown")
+        if (isDurableOutboxUnsent(record) && state === "unknown")
           return await finish(true);
         if (projection.inputDeliveryVersion === 1) {
           const cancelled = await deps.cancel(record);

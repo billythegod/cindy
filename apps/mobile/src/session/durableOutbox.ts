@@ -56,6 +56,14 @@ export function isDurableOutboxSettled(record: DurableOutboxRecord): boolean {
   return record.cleanupOutcome !== undefined;
 }
 
+/** Preparation is local; only a persisted pre-enqueue proof permits offline disposal.
+ * Legacy records without that proof must also lack all previous-send evidence.
+ */
+export function isDurableOutboxUnsent(record: DurableOutboxRecord): boolean {
+  return record.enqueueStarted === false || (record.enqueueStarted === undefined
+    && !record.prepared && record.sendAtMs === undefined);
+}
+
 export const DURABLE_OUTBOX_PREFIX = "cindy.mobile.outbox.v1.";
 const PREFIX = DURABLE_OUTBOX_PREFIX;
 const EMPTY: readonly DurableOutboxRecord[] = Object.freeze([]);

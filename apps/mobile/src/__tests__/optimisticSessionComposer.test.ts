@@ -21,6 +21,14 @@ function readSource(relativePath: string): string {
 const SCREEN = 'app/sessions/[sessionId].tsx';
 
 describe('mobile optimistic composer while session is not ready', () => {
+  it('uses the shared unsent proof to cancel locally before requiring a remote receipt', () => {
+    const source = readSource(SCREEN);
+    const remove = source.slice(source.indexOf('const removeOutboxItem ='), source.indexOf('const outboxDisplayItems ='));
+    expect(remove).toContain('if (isDurableOutboxUnsent(record))');
+    expect(remove).toContain("cleanupOutcome: 'cancelled'");
+    expect(remove).toContain("else await mobileDurableOutbox.update(record, { cancelRequested: true, state: 'confirming' })");
+  });
+
   it('waits for committed draft ownership recovery before submitting the visible draft', () => {
     const source = readSource(SCREEN);
     const send = source.slice(source.indexOf('  async function send(options:'));
