@@ -18,6 +18,7 @@ vi.mock('@/hooks/useCodexAuth', () => ({ useCodexAuth: () => ({ state: { kind: '
 import { ErrorBanner } from '../ErrorBanner';
 import { ErrorMessageCard } from '../ErrorMessageCard';
 import { ErrorTailErrorBanner } from '../InterruptedTurnBanner';
+import { remoteErrorMessageForBanner } from '@/lib/makerChatStore';
 
 const locales = { en, 'zh-CN': zhCN, 'zh-TW': zhTW, ja, ko };
 const raw = JSON.stringify({ error: {
@@ -53,6 +54,28 @@ describe.each(SUPPORTED_LOCALES)('error presentation in %s', locale => {
     await act(async () => { await i18n.changeLanguage(next); });
     expect(screen.getByText(i18n.t(`chat.remoteError.${code}`))).toBeTruthy();
     expect(screen.queryByText(locales[locale].chat.remoteError[code as keyof typeof en.chat.remoteError])).toBeNull();
+  });
+
+  it.each(['live', 'tail'] as const)('keeps known remote recovery guidance in the %s banner across language changes', async surface => {
+    const i18n = createInstance();
+    await i18n.init({ lng: locale, fallbackLng: 'en', resources: Object.fromEntries(Object.entries(locales).map(([lng, common]) => [lng, { translation: common }])) });
+    const code = 'REMOTE_LOCAL_ONLY_PROVIDER';
+    const rawRemoteError = `[${code}] upstream HTTP 502 api_key=private-test-value`;
+    const bannerError = remoteErrorMessageForBanner(rawRemoteError);
+    expect(bannerError).toContain(`[${code}]`);
+    render(<I18nextProvider i18n={i18n}>{surface === 'live'
+      ? <ErrorBanner error={bannerError} onRetry={vi.fn()} />
+      : <ErrorTailErrorBanner errorText={bannerError} onContinue={vi.fn()} onDismiss={vi.fn()} />}</I18nextProvider>);
+    expect(screen.getByText(locales[locale].chat.remoteError[code])).toBeTruthy();
+    expect(screen.queryByText(locales[locale].chat.errorBanner.replyFailed)).toBeNull();
+    expect(screen.queryByText(rawRemoteError)).toBeNull();
+    fireEvent.click(screen.getByText(locales[locale].chat.errorBanner.networkShowRaw));
+    expect(screen.getByText(/upstream HTTP 502/).textContent).toContain('[REDACTED]');
+    expect(screen.queryByText(/private-test-value/)).toBeNull();
+    const next = locale === 'en' ? 'ja' : 'en';
+    await act(async () => { await i18n.changeLanguage(next); });
+    expect(screen.getByText(locales[next].chat.remoteError[code])).toBeTruthy();
+    expect(screen.queryByText(locales[locale].chat.remoteError[code])).toBeNull();
   });
 
   it('does not mistake an unknown remote-code fallback for localized guidance', async () => {

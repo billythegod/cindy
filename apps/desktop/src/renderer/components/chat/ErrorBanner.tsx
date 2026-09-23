@@ -16,7 +16,7 @@ import { useProviders } from '@/hooks/useProviders';
 
 import { useEffect, useState } from 'react';
 import { isCodexResumeNotReadyProjectionError } from '@cindy/maker-shared/agent-input-projection';
-import { isCindyGatewayProxyTokenInvalidError, isResponsesLiteParallelToolCallsError, redactSensitiveText } from '@cindy/maker-shared/error-redaction';
+import { isCindyGatewayProxyTokenInvalidError, isResponsesLiteParallelToolCallsError, parseAgentErrorCode, redactSensitiveText } from '@cindy/maker-shared/error-redaction';
 import {
   AlertCircle,
   Check,
@@ -293,6 +293,9 @@ export function ErrorBanner({
       : errorReasonI18nKey
         ? t(errorReasonI18nKey)
         : undefined;
+  const remoteErrorCode = parseAgentErrorCode(error)?.code;
+  const remoteErrorKey = remoteErrorCode ? `chat.remoteError.${remoteErrorCode}` : undefined;
+  const remoteGuidance = remoteErrorKey && i18n.exists(remoteErrorKey) ? t(remoteErrorKey) : undefined;
   const terminalRateLimitRetryProgress = parseTerminalRateLimitRetryProgress(error, errorReason);
   const isCodexUsageLimitError =
     agentKind === 'codex' && usageLimitRecovery?.isAccountUsageLimit === true;
@@ -350,6 +353,11 @@ export function ErrorBanner({
   let hasSpecialGuidance = true;
   if (isResponsesLiteParallelToolCallsError(error)) {
     displayError = t('chat.errorBanner.requestFormatError');
+  } else if (remoteGuidance && !localizedReasonError) {
+    // The bracketed code is more specific than status words in its upstream
+    // fallback (for example, a transfer error can mention HTTP 502).
+    displayError = remoteGuidance;
+    hasSpecialGuidance = false;
   } else if (isCodexResumeNotReadyProjectionError(error)) {
     displayError = t('chat.errorBanner.codexResumeNotReady');
   } else if (isPiImageInputUnsupportedError(error)) {

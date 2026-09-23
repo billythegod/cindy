@@ -318,6 +318,12 @@ export function decodeRemoteErrorMessage(msg: string): string {
     ? i18n.t(`chat.remoteError.${parsed.code}`, { defaultValue: parsed.fallback })
     : msg;
 }
+
+/** Keep known codes for the banner's active locale; retain unknown-code fallback behavior. */
+export function remoteErrorMessageForBanner(msg: string): string {
+  const key = remoteErrorI18nKey(msg);
+  return key && i18n.exists(key) ? msg : decodeRemoteErrorMessage(msg);
+}
 // 专门给"出现在用户面前的红色 ErrorBanner"打日志,scope 以 `maker/` 开头
 // 是为了让它落在统一 agent 流(agent-*.ndjson,跟 agent runtime 抛出的底层错误同一份,
 // 且带 sessionId 可按 session 过滤),用户截图反馈时直接拉这一份就能看到完整因果链。
@@ -6151,7 +6157,7 @@ export function handleStreamEvent(
               ? i18n.t('logic.errors.silentStopExhausted')
               : reason === 'codex-auto-review-unavailable'
                 ? i18n.t('logic.errors.codexAutoReviewUnavailable')
-                : decodeRemoteErrorMessage(safeErrMsg);
+                : remoteErrorMessageForBanner(safeErrMsg);
       const isTerminalError = isTerminalErrorData(event.data);
       // 终态错误 = turn 收口（含失败）：清掉该 session 的「正在识别图片中」toast，
       // 避免视觉桥未输出就终结时 loading toast 残留（done/abort/terminal error 兜底）。
