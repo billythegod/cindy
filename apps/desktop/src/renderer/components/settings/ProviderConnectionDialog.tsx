@@ -2,7 +2,8 @@ import { providerEndpointBindings, canonicalProviderEndpoint, BUNDLED_CATALOG, c
 /**
  * Connection credentials and advanced routing only. Model capabilities are imported into the
  * shared catalog and edited through standard model settings. Stored per-runtime credentials,
- * OAuth definitions, explicit routes and user overrides remain unchanged when saving.
+ * OAuth definitions and user overrides are preserved. Model routes follow endpoint
+ * edits while retaining their independent protocol and path overrides.
  */
 
 import * as Dialog from '@radix-ui/react-dialog';
@@ -55,6 +56,7 @@ import {
 } from '@/lib/customProviders';
 import type { CodexImageGenerationRestartPolicy } from '@/../shared/customProviderUpdate';
 import { uniqueCustomProviderId } from '@/lib/customProviderId';
+import { modelsAfterProviderEndpointEdit } from '@/lib/customProviderEndpointEdit';
 import {
   areProviderRequestUrlsAllowed,
   canSendHydratedApiKey,
@@ -1223,7 +1225,10 @@ export function ProviderConnectionDialog({
       toast.error(t('settings.providers.custom.test.needFields'));
       return;
     }
-    const probeRoute = resolveProviderConnectionProbeRoute(agent, probeFields, presets);
+    const probeRoute = resolveProviderConnectionProbeRoute(agent, {
+      ...probeFields,
+      models: modelsAfterProviderEndpointEdit(rf.models, initial?.runtimes[agent]?.baseUrl, rf.baseUrl),
+    }, presets);
     if (!probeRoute) {
       toast.error(t('settings.providers.custom.test.unsupportedProtocol'));
       return;
@@ -1632,7 +1637,7 @@ export function ProviderConnectionDialog({
         reportFieldError(`${a}:baseUrl`, t('settings.providers.custom.errors.baseUrlInvalid'));
         return;
       }
-      const models = rf.models
+      const models = modelsAfterProviderEndpointEdit(rf.models, initial?.runtimes[a]?.baseUrl, rf.baseUrl)
         .map((m) => ({
           id: m.id.trim(),
           name: m.name.trim(),

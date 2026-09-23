@@ -208,6 +208,61 @@ async function renderNewImageGenerationReloadConfirmation(onSaved = vi.fn(), onC
 }
 
 describe('ProviderConnectionDialog accessibility', () => {
+  it.each(['claude-code', 'codex', 'pi'] as const)(
+    'rebases saved %s model routes for both testing and saving an edited HTTP endpoint', async agent => {
+      const initial: CustomProviderConfig = {
+        id: 'edited-endpoint', name: 'Edited endpoint', auth: { method: 'apiKey' },
+        runtimes: { [agent]: {
+          baseUrl: 'https://old.example.test/v1', wireProtocol: 'openai-chat',
+          models: [{ id: 'test-model', name: 'Test Model',
+            route: { baseUrl: 'https://old.example.test/v1', wireProtocol: 'openai-chat' } },
+          { id: 'special-model', name: 'Special Model',
+            route: { baseUrl: 'https://old.example.test/special', wireProtocol: 'anthropic-messages', requestPath: '/messages' } }],
+        } },
+      };
+      customProviderMocks.readCustomProviderKey.mockResolvedValue('old-key');
+      const user = userEvent.setup();
+      render(<ProviderConnectionDialog initial={initial} onSaved={vi.fn()} onClose={vi.fn()} />);
+      await waitForInitialDialogFocus();
+      await screen.findByText('settings.providers.custom.fields.apiKeySaved');
+      const baseUrl = screen.getByPlaceholderText('settings.providers.custom.fields.baseUrlPlaceholder');
+      await user.clear(baseUrl);
+      await user.type(baseUrl, 'http://127.0.0.1:8000/v2');
+      await user.type(screen.getByLabelText('settings.providers.custom.fields.apiKey'), 'new-key');
+      await user.click(screen.getByRole('button', { name: 'settings.providers.custom.test.button' }));
+      await waitFor(() => expect(window.electronAPI.maker.testProviderConnection).toHaveBeenCalledWith({
+        kind: 'adhoc', spec: expect.objectContaining({ agent, baseUrl: 'http://127.0.0.1:8000/v2',
+          wireProtocol: 'openai-chat', apiKey: 'new-key' }),
+      }));
+      await user.click(screen.getByRole('button', { name: 'settings.providers.custom.save' }));
+      await waitFor(() => expect(customProviderMocks.updateCustomProvider).toHaveBeenCalledOnce());
+      const saved = customProviderMocks.updateCustomProvider.mock.calls[0][0].runtimes[agent];
+      expect(saved.baseUrl).toBe('http://127.0.0.1:8000/v2');
+      expect(saved.models[0].route).toEqual({ baseUrl: saved.baseUrl, wireProtocol: 'openai-chat' });
+      expect(saved.models[1].route).toEqual({ baseUrl: 'http://127.0.0.1:8000/special',
+        wireProtocol: 'anthropic-messages', requestPath: '/messages' });
+      expect(initial.runtimes[agent]!.models[0].route!.baseUrl).toBe('https://old.example.test/v1');
+    },
+  );
+
+  it('preserves original model routes after clearing, editing and reverting the endpoint', async () => {
+    const initial = modelRoutedCodexProvider();
+    customProviderMocks.readCustomProviderKey.mockResolvedValue('saved-key');
+    const user = userEvent.setup();
+    render(<ProviderConnectionDialog initial={initial} onSaved={vi.fn()} onClose={vi.fn()} />);
+    await waitForInitialDialogFocus();
+    await screen.findByText('settings.providers.custom.fields.apiKeySaved');
+    const baseUrl = screen.getByPlaceholderText('settings.providers.custom.fields.baseUrlPlaceholder');
+    await user.clear(baseUrl);
+    await user.type(baseUrl, 'http://127.0.0.1:8000/v2');
+    await user.clear(baseUrl);
+    await user.type(baseUrl, initial.runtimes.codex!.baseUrl);
+    await user.click(screen.getByRole('button', { name: 'settings.providers.custom.save' }));
+    await waitFor(() => expect(customProviderMocks.updateCustomProvider).toHaveBeenCalledOnce());
+    expect(customProviderMocks.updateCustomProvider.mock.calls[0][0].runtimes.codex.models[0].route)
+      .toEqual(initial.runtimes.codex!.models[0].route);
+  });
+
   it.each(['target-model', 'flux-image-x'])('keeps %s in standard model settings instead of a second editor', async (modelId) => {
     const initial: CustomProviderConfig = {
       id: 'deep-link-provider',
