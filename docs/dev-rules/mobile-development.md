@@ -93,6 +93,9 @@ pnpm --filter mobile test:smoke
 - 仅 cn 和显式配置的 dev 构建消费微信配置；Global 忽略残留值。全空关闭入口，
   半配置或非法 Universal Link 在原生配置生成前报错。首次启用需重新出原生包，
   仅 OTA 无法添加回调配置；按下方冷更规则比对 fingerprint。
+- iOS config plugin 按[微信官方接入说明](https://developers.weixin.qq.com/doc/oplatform/Mobile_App/Access_Guide/iOS.html)
+  生成 `weixin`、`weixinULAPI`、`weixinURLParamsAPI` 三项查询白名单，并保留 AppID URL Scheme
+  与 Universal Link 的 Associated Domains。遗漏白名单需重建原生包，不能通过 JS 热更补齐。
 - 真机验证 iOS Universal Link/AASA、Android 包名/签名与 WXEntryActivity，覆盖
   同意授权、取消、未安装微信、回到前台超时后重试。iOS Simulator 不支持微信授权。
   iOS 登录页仅在 OpenSDK 确认已安装微信后显示微信入口；Android 保持入口可见，点击时
