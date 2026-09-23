@@ -195,9 +195,21 @@ describe('ManagerServer Phase 1 skeleton', () => {
       expect(reverseReq.type).toBe('request');
       expect(reverseReq.id).toBeLessThan(0);
 
-      // B 尝试注入伪造响应(同 id);给 server 一点时间错误地消费它(若未修复)
+      // B 尝试注入伪造响应(同 id)。随后在 B 上发一个标记请求:同一 socket 的帧
+      // 按序分发,等 B 收到标记响应即可确定伪造帧已被 server 处理完 —— 不依赖
+      // 固定延迟(Greptile review:两 socket 间无跨连接顺序保证,延迟法在 CI
+      // 慢跑时可能让 A 的真实响应先入队,回归测试误通过)。
       socketB.write(encodeMessage({ type: 'response', id: reverseReq.id, result: { injected: true } }));
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      socketB.write(encodeMessage({
+        type: 'request',
+        id: 3,
+        method: 'protocol/hello',
+        params: { protocolVersion: PROTOCOL_VERSION },
+      }));
+      for (;;) {
+        const frame = await readFrame(socketB);
+        if (frame.type === 'response' && frame.id === 3) break;
+      }
 
       // A 自己响应 —— 若 B 的注入生效,echoed 会是 { injected: true }
       socketA.write(encodeMessage({ type: 'response', id: reverseReq.id, result: { real: true } }));
