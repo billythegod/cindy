@@ -12,6 +12,7 @@ import * as os from 'node:os';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { RpcClient, RpcClientError } from '../src/client.js';
+import { encodeMessage } from '../src/codec.js';
 import { ManagerServer } from '../src/server.js';
 import { PROTOCOL_VERSION } from '../src/protocol.js';
 
@@ -113,5 +114,100 @@ describe('ManagerServer Phase 1 skeleton', () => {
     await ctx!.client.hello();
     const result = await ctx!.client.request<{ echoed: unknown }>('echo/test', { hello: 'world' });
     expect(result.echoed).toEqual({ hello: 'world' });
+  });
+
+  it('ignores reverse-request responses from a different connection', async () => {
+    // 攻击面:同 daemon 的另一条连接按小负数 id 猜中 pendingServerRequests,
+    // 注入伪造的 server→client 请求结果(approval / oauth 等)。修复后
+    // handleServerRequestResponse 校验 entry.ctx === ctx(对齐 pi-manager
+    // 轮 2 H-1),注入被忽略,发起方只接受目标连接自己的响应。
+    const { server, socketPath } = ctx!;
+    server.setHandler('test/trigger-inject', async (_params, srvCtx) => {
+      const result = await server.sendRequest(srvCtx, 'client/ping', {}, { timeoutMs: 5000 });
+      return { echoed: result };
+    });
+
+    const connectRaw = async (): Promise<net.Socket> => {
+      const s = net.connect(socketPath);
+      await new Promise<void>((resolve, reject) => {
+        s.once('connect', resolve);
+        s.once('error', reject);
+      });
+      return s;
+    };
+    const readFrame = (s: net.Socket): Promise<any> =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error('readFrame timeout'));
+        }, 15_000);
+        let buf = '';
+        const onData = (chunk: Buffer): void => {
+          buf += chunk.toString('utf8');
+          const nl = buf.indexOf('\n');
+          if (nl < 0) return;
+          const line = buf.slice(0, nl);
+          cleanup();
+          try {
+            resolve(JSON.parse(line));
+          } catch (err) {
+            reject(err);
+          }
+        };
+        const onClose = (): void => {
+          cleanup();
+          reject(new Error('socket closed before frame received'));
+        };
+        const onError = (err: Error): void => {
+          cleanup();
+          reject(err);
+        };
+        function cleanup(): void {
+          clearTimeout(timer);
+          s.removeListener('data', onData);
+          s.removeListener('close', onClose);
+          s.removeListener('error', onError);
+        }
+        s.on('data', onData);
+        s.once('close', onClose);
+        s.once('error', onError);
+      });
+    const doHello = async (s: net.Socket): Promise<void> => {
+      s.write(encodeMessage({
+        type: 'request',
+        id: 1,
+        method: 'protocol/hello',
+        params: { protocolVersion: PROTOCOL_VERSION },
+      }));
+      await readFrame(s);
+    };
+
+    const socketA = await connectRaw();
+    const socketB = await connectRaw();
+    try {
+      await doHello(socketA);
+      await doHello(socketB);
+
+      socketA.write(encodeMessage({ type: 'request', id: 2, method: 'test/trigger-inject', params: {} }));
+
+      // A 收到反向请求(负 id)
+      const reverseReq = await readFrame(socketA);
+      expect(reverseReq.type).toBe('request');
+      expect(reverseReq.id).toBeLessThan(0);
+
+      // B 尝试注入伪造响应(同 id);给 server 一点时间错误地消费它(若未修复)
+      socketB.write(encodeMessage({ type: 'response', id: reverseReq.id, result: { injected: true } }));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // A 自己响应 —— 若 B 的注入生效,echoed 会是 { injected: true }
+      socketA.write(encodeMessage({ type: 'response', id: reverseReq.id, result: { real: true } }));
+
+      const finalResp = await readFrame(socketA);
+      expect(finalResp.type).toBe('response');
+      expect(finalResp.result).toEqual({ echoed: { real: true } });
+    } finally {
+      socketA.destroy();
+      socketB.destroy();
+    }
   });
 });
