@@ -1083,7 +1083,7 @@
     },
     "about": {
       "title": "About",
-      "description": "Runtime versions of the app and integrated agents. All version numbers are detected by the main process at startup.",
+      "description": "Runtime versions of the app and integrated Agents.",
       "appVersionLabel": "App version",
       "claudeCodeVersionLabel": "Claude Code version",
       "codexVersionLabel": "Codex version",
@@ -1276,6 +1276,33 @@
         "reconcileFailed": "Check failed",
         "reconcileHealthy": "Ledger and disk match. No issues found.",
         "reconcileIssues": "Issues found: {{orphans}} untracked files ({{orphanSize}}), {{missing}} missing files, {{stray}} unrecognized entries. See the app log for the full list."
+      },
+      "piKernel": {
+        "manage": "Manage Pi version",
+        "checking": "Checking…",
+        "checkFailed": "Check failed",
+        "available": "Update available",
+        "lookup": "Preparing…",
+        "download": "Downloading…",
+        "verify": "Verifying…",
+        "activate": "Switching…",
+        "update": "Update from Pi GitHub",
+        "restore": "Restore Cindy release",
+        "check": "Check for updates",
+        "releaseNotes": "Pi release notes",
+        "checkedAt": "Last checked: {{time}}",
+        "updateTitle": "Update Pi to {{version}}?",
+        "restoreTitle": "Restore Pi {{version}}?",
+        "updateDescription": "This version is published by Pi and may not be compatible with Cindy. You can restore the Cindy release at any time. Existing sessions keep their current version.",
+        "restoreDescription": "Install the version distributed with the current Cindy release, even if it is older. Existing sessions keep their current version.",
+        "updateConfirm": "Update",
+        "restoreConfirm": "Restore",
+        "installed": "Pi {{version}} is ready for new sessions.",
+        "versionChanged": "The published version changed. Check again before installing.",
+        "busy": "Another Pi update is in progress.",
+        "installFailed": "Pi installation failed. The previous version is still selected. Check your connection and available disk space, then retry.",
+        "openFailed": "Could not open the release notes.",
+        "restartRequired": "Pi {{version}} is installed. Restart Cindy to enable Pi."
       }
     },
     "apiKey": {
@@ -2539,6 +2566,13 @@
         "modelCount": "{{count}} models configured",
         "modelsAutomatic": "Model details are imported automatically. Adjust individual models in the model list.",
         "manualModel": "Model IDs (if discovery is unavailable)"
+      },
+      "byok": {
+        "managed": "Managed by your organization",
+        "refresh": "Refresh enterprise settings",
+        "refreshFailed": "Enterprise settings could not be refreshed. Try again later.",
+        "pending": "Preparing credentials",
+        "unavailable": "Temporarily unavailable"
       }
     },
     "experimental": {
@@ -7795,6 +7829,7 @@
     },
     "permissionRequest": "{{name}} needs your go-ahead",
     "remote": {
+      "unknown": "Connection unknown",
       "online": "Online",
       "offline": "Offline",
       "thisDevice": "This computer",
@@ -9713,6 +9748,7 @@
       "reviewingChecks": "Reviewing check results…",
       "replying": "Replying…",
       "processing": "Working…",
+      "organizingConversation": "Organizing the conversation…",
       "thinking": "Thinking…",
       "generating": "Generating…",
       "editingFiles": "Editing files…",
@@ -10923,7 +10959,7 @@
         "intervalChip": "After completion · {{schedule}}"
       },
       "scheduleMenu": {
-        "intervalMinutes": "Minutes (every N minutes)",
+        "intervalMinutes": "Minutes (Every N Minutes)",
         "interval": "Hourly (every N hours)",
         "daily": "Daily (every day)",
         "weekdays": "Weekdays",
@@ -10944,7 +10980,10 @@
         "minuteLabel": "Minute",
         "scheduleHourAria": "Schedule hour",
         "scheduleMinuteAria": "Schedule minute",
-        "openTimePickerAria": "Open time picker"
+        "intervalMinutesAria": "Repeat Interval (Minutes)",
+        "openTimePickerAria": "Open time picker",
+        "minuteIntervalHint": "Only minute intervals that divide an hour are available: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, or 30 minutes. For 60 minutes, choose 1 hour.",
+        "unsupportedMinuteInterval": "This task uses the legacy {{count}}-minute Cron setting. Choose an available interval to correct it."
       },
       "model": {
         "loading": "Loading models…",
