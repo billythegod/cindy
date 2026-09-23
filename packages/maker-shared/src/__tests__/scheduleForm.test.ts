@@ -134,13 +134,20 @@ describe('mobile schedule form model', () => {
     // 90 分钟表单表达不了(非 1-59 分钟/整点小时),intervalMinutes 折叠成 ''
     const draft = createMobileScheduleDraft(schedule({ intervalMs: 90 * 60_000 }));
     expect(draft.intervalMinutes).toBe('');
+    expect(draft.sourceIntervalMs).toBe(90 * 60_000);
+
+    const nonMinuteDraft = createMobileScheduleDraft(schedule({ intervalMs: 7.5 * 60_000 }));
+    expect(nonMinuteDraft.intervalMinutes).toBe('');
+    expect(nonMinuteDraft.sourceIntervalMs).toBe(7.5 * 60_000);
 
     // 只改 prompt:间隔原值回传,不因「表单显示不了」被顺手清空
     const untouched = buildMobileScheduleInput({ ...draft, prompt: 'new prompt' });
     expect(untouched.intervalMs).toBe(90 * 60_000);
 
     // 用户经编辑入口清空 → 明确清空
-    const cleared = buildMobileScheduleInput(updateDraftIntervalMinutes(draft, ''));
+    const clearedDraft = updateDraftIntervalMinutes(draft, '');
+    expect(clearedDraft.intervalMinutesTouched).toBe(true);
+    const cleared = buildMobileScheduleInput(clearedDraft);
     expect(cleared.intervalMs).toBeNull();
 
     // 切 manual 是显式 cadence 操作:切回 recurring 也不复活旧间隔
@@ -300,6 +307,14 @@ describe('mobile schedule form model', () => {
     })).toMatchObject({
       field: 'intervalMinutes',
     });
+    for (const intervalMinutes of ['7', '28', '59']) {
+      expect(validateMobileScheduleDraft({
+        ...draft,
+        name: 'Bad',
+        prompt: 'run',
+        intervalMinutes,
+      })).toMatchObject({ field: 'intervalMinutes' });
+    }
     expect(validateMobileScheduleDraft({
       ...draft,
       name: 'Manual',
@@ -327,7 +342,7 @@ describe('mobile schedule form model', () => {
   });
 
   it('pins agent-only fields back to script-safe values when serializing a script draft (codex review 966 second pass)', () => {
-    // 表单残留或误操作把 draft 拨到 script 非法组合(worktree/绑定/持续会话/
+    // 表单残留或误操作把 draft 拨到 script 非法组合(worktree/持续会话/
     // dialogue 工作区/静默)时,序列化层必须钉回合法值——否则引擎合并态校验
     // 直接拒绝整个 patch,一个可见控件就能让保存失败。
     const draft = {
@@ -347,7 +362,7 @@ describe('mobile schedule form model', () => {
       persistentSession: false,
       silentWhenIdle: false,
     });
-    expect(input.targetSessionId).toBeUndefined();
+    expect(input.targetSessionId).toBe('sess-oops');
   });
 
   it('still requires a prompt for a regular agent-mode schedule', () => {

@@ -123,6 +123,12 @@ harness + provider + model + effort + fastMode
 
 - 第一项是首选；首次主任务启动和确定性重建从第一项开始尝试。
 - 只有连接、鉴权、配额、容量、模型不可用和启动失败等“候选不可用”错误才进入下一项。
+- 候选不可用与原路由自动续跑分开判定；Pi 原生重连耗尽（`pi-gateway-drop`）仍可切到伙伴候选链。
+  已落库失败回合只有在切换成功后才自动发送：有持久产出时只续跑，确认零产出才重发原文。
+  候选耗尽、切换失败或需要换窗确认时交还错误，不继续重试失效路由；复用现有恢复额度和退避，
+  不覆盖用户的新选择。实现与回归见 `maker-ipc/botCandidateRecovery.ts`、
+  `maker-ipc/__tests__/botCandidateRecovery.test.ts` 和 `sessionRuntimeFallbackIntent.test.ts`。
+  跨 harness 路由已提交但新引擎启动失败时停止自动恢复并显示错误；不使用提交前的路由代次继续推进候选。
 - 用户拒绝授权、工具业务失败、参数错误和已经产生副作用后的失败不得触发透明重放。
 - 同一轮最多按生效候选链各尝试一次；不得循环。用户显式配置的链不得追加目录候选。
 - 同 harness 可在安全边界切模型；跨 harness 必须走既有 agent-switch / 交接重建事务。
@@ -377,6 +383,14 @@ Session 任务遵守同一套机制与呈现契约：
 - 不得把 Home 根目录整体设为可写，或从 Home 内可写配置反向派生权限。
 - Bot 表全部只增量；旧代码打开含 Bot 表的库时按既有 migration compatibility 守卫失败关闭，
   不得强行降级。
+
+Codex 切模型重建时，线程索引里的路径不等于文件已经落盘。缺文件时仍保留原历史根与
+数据库根，先用原生 `thread/read` 核实有无已存线程，再走 `thread/resume`；只有原生明确
+没有线程元数据且无法找到 rollout，才在同一伙伴主任务内重建未开始的线程。
+原生 `no rollout` 错误本身不能证明线程未开始：已有历史文件丢失时也会返回它。
+已有线程元数据、读取异常或迟到落盘不得触发空白重建；不得换用旧副本，也不得重放已接受的输入。
+实现见 `codex-thread-locations.ts` 与 Codex adapter；原生契约回归见
+`packages/maker-core/src/agents/codex/app-server/external-auth.native.test.ts`。
 
 ## 8. 验收最低集
 

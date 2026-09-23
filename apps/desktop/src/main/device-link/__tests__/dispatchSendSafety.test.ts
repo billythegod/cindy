@@ -42,7 +42,7 @@ vi.mock('../settings-store', () => ({
   readDeviceLinkSettings: () => deviceLinkSettings.value,
 }));
 
-import { __testing, runInvoke, wireInboundDispatch } from '../dispatch';
+import { __testing, runInvoke, wireInboundDispatch, setRemoteTurnChangeAction } from '../dispatch';
 import { __testing as registry } from '../invoke-registry';
 import { setRemoteBotSessionLookup } from '../remoteBotSessionBoundary';
 import { currentDbRpcAdmissionClass } from '../../localDb/client/rpcAdmission';
@@ -987,39 +987,50 @@ describe('background database admission covers the complete remote list lifecycl
     } finally { finish(); await list; }
   });
 
-  it('rechecks cached and backpressured lists using background admission and fresh visibility', async () => {
+  it.each([false, true])(
+    'rechecks cached and backpressured lists using background admission and fresh visibility (catalog: %s)', async (catalog) => {
     const admissions: string[] = [];
     let hidden = false;
     setRemoteBotSessionLookup(async () => {
       admissions.push(currentDbRpcAdmissionClass());
       return hidden ? 'hidden' : 'ordinary';
     });
-    const handler = vi.fn(() => [{ id: 's1' }]);
+    const rows = [{ id: 's1', tags: [{ id: 'private', name: 'Private label' }] }];
+      const args = catalog ? [20, 'active', { tagCatalog: 1 }] : [];
+      const emptyResult = catalog
+        ? { format: 'session-tag-catalog-v1', sessions: [], tags: [] }
+        : [];
+      const handler = vi.fn(() => rows);
     registry.register('local-db:sessions:list', handler);
     const client = mkClient();
     wireInboundDispatch(client as never);
     const frame = client.onFrame.mock.calls[0][0];
-    const request = { v: PROTOCOL_VERSION, kind: 'invoke', src: 'ctrl-1', id: 'cached-list', payload: { channel: 'local-db:sessions:list', args: [] } };
+    const request = { v: PROTOCOL_VERSION, kind: 'invoke', src: 'ctrl-1', id: 'cached-list', payload: { channel: 'local-db:sessions:list', args },
+      };
     frame(request);
     await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(1));
     admissions.length = 0;
     hidden = true;
     frame(request);
     await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(2));
-    expect(client.sendInvokeResult.mock.calls[1][2]).toMatchObject({ ok: true, result: [] });
+    expect(client.sendInvokeResult.mock.calls[1][2]).toEqual({ ok: true, result: emptyResult });
     expect(handler).toHaveBeenCalledTimes(1);
     expect(admissions.length).toBeGreaterThan(0);
     expect(new Set(admissions)).toEqual(new Set(['background']));
 
     admissions.length = 0;
     client.sendInvokeResult.mockImplementationOnce(() => { throw new DeviceLinkError('BACKPRESSURE', 'full'); });
-    __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'queued-list', { ok: true, result: [{ id: 's1' }] }, 'local-db:sessions:list', []);
+    __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'queued-list', { ok: true, result: rows }, 'local-db:sessions:list',
+        args,
+      );
     __testing.flushRemoteInvokeResultOutbox();
     await vi.waitFor(() => expect(__testing.remoteInvokeResultOutboxSize()).toBe(0));
-    expect(client.sendInvokeResult.mock.calls.at(-1)![2]).toMatchObject({ ok: true, result: [] });
+    expect(client.sendInvokeResult.mock.calls.at(-1)![2]).toEqual({ ok: true, result: emptyResult,
+      });
     expect(admissions.length).toBeGreaterThan(0);
     expect(new Set(admissions)).toEqual(new Set(['background']));
-  });
+  },
+  );
 });
 
 
@@ -1137,5 +1148,39 @@ it('lets a controller fall back to individual reads when a detail batch exceeds 
     { ok: true, result: [{ id: 'large' }] }, 'local-db:sessions:get-many')).toBe(true);
   expect(client.sendInvokeResult).toHaveBeenLastCalledWith('ctrl-1', 'batch', {
     ok: false, error: { code: 'IPC_ERROR', message: '[PRECONDITION_FAILED] REMOTE_SESSION_BATCH_TOO_LARGE' },
+  });
+});
+
+
+describe('remote recorded-turn actions', () => {
+  const channel = 'maker:turn-change-set:apply';
+  it('uses the shared action without dispatching a synthetic renderer event', async () => {
+    const localHandler = vi.fn(() => { throw new Error('untrusted renderer'); });
+    registry.register(channel, localHandler);
+    const action = vi.fn(async (_session, _id, _action, assertAccess) => {
+      await assertAccess();
+      return { changed: true };
+    });
+    setRemoteTurnChangeAction(action);
+    expect(await runInvoke('ctrl', { channel, args: ['s1', 'change-1', 'undo'] }))
+      .toMatchObject({ ok: true, result: { changed: true } });
+    expect(action).toHaveBeenCalledWith('s1', 'change-1', 'undo', expect.any(Function));
+    expect(localHandler).not.toHaveBeenCalled();
+  });
+
+  it.each(['disabled', 'revoked', 'hidden'] as const)('rechecks %s access before the write', async (reason) => {
+    let hidden = false;
+    setRemoteBotSessionLookup(async () => hidden ? 'hidden' : 'ordinary');
+    const write = vi.fn();
+    setRemoteTurnChangeAction(async (_session, _id, _action, assertAccess) => {
+      if (reason === 'disabled') deviceLinkSettings.value.remoteControlEnabled = false;
+      if (reason === 'revoked') deviceLinkSettings.value.revokedControllers = ['ctrl'];
+      if (reason === 'hidden') hidden = true;
+      await assertAccess();
+      write();
+    });
+    expect(await runInvoke('ctrl', { channel, args: ['s1', 'change-1', 'undo'] }))
+      .toMatchObject({ ok: false });
+    expect(write).not.toHaveBeenCalled();
   });
 });

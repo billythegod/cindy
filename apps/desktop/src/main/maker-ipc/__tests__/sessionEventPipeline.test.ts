@@ -110,6 +110,7 @@ vi.mock('../../messagePersistBroadcaster.js', () => ({
   enqueueDurableWrite: effects.fn('enqueueDurableWrite'),
   flushAssistantBlock: effects.fn('flushAssistantBlock'),
   onAssistantTextEvent: effects.fn('onAssistantTextEvent'),
+  onStandaloneTextEvent: effects.fn('onStandaloneTextEvent'),
   onAgentTaskUpdateEvent: effects.fn('onAgentTaskUpdateEvent'),
   onThinkingEvent: effects.fn('onThinkingEvent'),
   onToolResultEvent: effects.fn('onToolResultEvent'),
@@ -241,6 +242,7 @@ function harness() {
   const activity = new SessionTurnActivityTracker();
   const deps = {
     onSuccessfulProductTurn: vi.fn(async () => {}),
+    onUnsuccessfulProductTurn: vi.fn(async () => {}),
     log,
     botCompactRuntimeRefreshCoordinator: { noteBoundary: vi.fn() },
     attemptBotCompactRuntimeRefresh: vi.fn(),
@@ -390,6 +392,62 @@ function ordered(...names: string[]) {
 }
 
 describe('production Session event pipeline', () => {
+  it('delivers Pi notices as durable rows without entering model streaming or turn bookkeeping', async () => {
+    const h = harness();
+    h.deps.redactEventForRenderer.mockImplementation((value) => value);
+    try {
+      h.emit(event('text', { text: 'Plan mode enabled.', isFinal: true }, {
+        source: 'pi', standaloneText: true, turnScope: 'background',
+      }));
+      await microtasks();
+      expect(effects.fn('onStandaloneTextEvent')).toHaveBeenCalledWith('task', 'Plan mode enabled.', null);
+      expect(effects.fn('onAssistantTextEvent')).not.toHaveBeenCalled();
+      expect(effects.fn('flushAssistantBlock')).not.toHaveBeenCalled();
+      expect(effects.fn('noteTurnStarted')).not.toHaveBeenCalled();
+      expect(effects.fn('markAssistantTurnCompleted')).not.toHaveBeenCalled();
+      expect(h.deps.broadcastToAllWindows).not.toHaveBeenCalled();
+      expect(h.deps.orcaTeamServiceForEvents?.captureWorkerText).not.toHaveBeenCalled();
+      h.emit(event('text', { text: 'Actual reply', isFinal: true, isFullText: true }, { source: 'pi' }));
+      expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledOnce();
+      expect(h.deps.broadcastToAllWindows).toHaveBeenCalled();
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it('drops a pre-clear Pi notice on delayed delivery while accepting a new notice', async () => {
+    const h = harness();
+    h.deps.redactEventForRenderer.mockImplementation((value) => value);
+    try {
+      effects.fn('backgroundTurnPredatesSessionClear').mockReturnValueOnce(true);
+      h.emit(event('text', { text: 'Old plan notice', isFinal: true }, {
+        source: 'pi', standaloneText: true, turnScope: 'background', backgroundTurnStartedAt: 1000,
+      }));
+      expect(effects.fn('backgroundTurnPredatesSessionClear')).toHaveBeenCalledWith('task', 1000);
+      expect(effects.fn('onStandaloneTextEvent')).not.toHaveBeenCalled();
+      expect(h.deps.broadcastToAllWindows).not.toHaveBeenCalled();
+      effects.fn('backgroundTurnPredatesSessionClear').mockReturnValueOnce(false);
+      h.emit(event('text', { text: 'New plan notice', isFinal: true }, {
+        source: 'pi', standaloneText: true, turnScope: 'background', backgroundTurnStartedAt: 3000,
+      }));
+      expect(effects.fn('onStandaloneTextEvent')).toHaveBeenCalledExactlyOnceWith('task', 'New plan notice', null);
+      expect(effects.fn('onAssistantTextEvent')).not.toHaveBeenCalled();
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it('retains accepted private-message visibility for independent Pi notices', async () => {
+    const h = harness();
+    h.deps.redactEventForRenderer.mockImplementation((value) => value);
+    h.deps.agentInputCoordinatorHolder.getActiveInputClientId.mockReturnValue('bot-dm:private-input');
+    h.emit(event('text', { text: 'Extension result', isFinal: true }, {
+      source: 'pi', standaloneText: true, turnScope: 'background',
+    }));
+    expect(effects.fn('onStandaloneTextEvent')).toHaveBeenCalledWith('task', 'Extension result', { botPrivateReply: true });
+    await h.dispose();
+  });
+
   it.each(['completed', 'failed', 'cancelled', 'interrupted'])(
     'runs the upstream-merge follow-up only for a successful product boundary: %s', async (status) => {
       const h = harness();
@@ -397,6 +455,7 @@ describe('production Session event pipeline', () => {
       h.emit(event('done', { status }));
       await microtasks();
       expect(h.deps.onSuccessfulProductTurn).toHaveBeenCalledTimes(status === 'completed' ? 1 : 0);
+      expect(h.deps.onUnsuccessfulProductTurn).toHaveBeenCalledTimes(status === 'completed' ? 0 : 1);
       await h.dispose();
     },
   );
@@ -463,6 +522,7 @@ describe('production Session event pipeline', () => {
     vi.setSystemTime(3000);
     h.emit(event('done', {}, { source, turnContinuationId: 0 }));
     expect(h.deps.onSuccessfulProductTurn).not.toHaveBeenCalled();
+    expect(h.deps.onUnsuccessfulProductTurn).not.toHaveBeenCalled();
     expect(h.activity.isSessionInTurn('task')).toBe(true);
     expect(h.deps.notifyGoalIdleAfterTurnSettled).not.toHaveBeenCalled();
     expect(effects.fn('turn-drain')).not.toHaveBeenCalled();
@@ -609,6 +669,7 @@ describe('production Session event pipeline', () => {
     expect(effects.fn('markAssistantTurnCompleted')).not.toHaveBeenCalled();
     expect(h.deps.autoResumeBookkeeping.stashOrcaSuppressedTerminal).toHaveBeenCalledOnce();
     expect(h.deps.orcaTeamServiceForEvents.handleWorkerTerminalTurn).not.toHaveBeenCalled();
+    expect(h.deps.onUnsuccessfulProductTurn).not.toHaveBeenCalled();
     await h.dispose();
   });
 
@@ -1351,6 +1412,44 @@ describe('usage through the production event pipeline', () => {
     );
     await h.dispose();
   });
+
+  it.each(['subscription', 'unpriced', 'api'] as const)(
+    'records MiMo Claude Code usage using its billing route (%s)', async (mode) => {
+      const h = harness();
+      pricing(true);
+      effects.fn('getSessionProvider').mockReturnValue('mimo-account');
+      effects.fn('getActiveCatalog').mockReturnValue({ providers: [{
+        id: 'mimo-account', auth: { method: 'apiKey' },
+        access: { kind: mode === 'api' ? 'api' : 'subscription' },
+      }] });
+      if (mode === 'unpriced') {
+        effects.fn('getCodexProviderSubscriptionValuePrice').mockReturnValue(undefined);
+        effects.fn('getSubscriptionDirectValuePrice').mockReturnValue(undefined);
+        effects.fn('getModelPriceQuote').mockReturnValue(undefined);
+      }
+      h.emit(event('done', {
+        total_cost_usd: 2,
+        modelUsageCumulativeStartsAtZero: true,
+        modelUsage: { 'mimo-v2-pro': { inputTokens: 100, outputTokens: 20, costUSD: 2 } },
+        usageSegmentsComplete: true,
+        usageSegments: [{ ...segment, model: 'mimo-v2-pro', cacheReadTokens: 0 }],
+      }, { source: 'claude-code' }));
+      await microtasks();
+      expect(effects.fn('recordModelTurnUsage')).toHaveBeenCalledWith(expect.objectContaining({
+        model: mode === 'api' ? 'mimo-v2-pro' : 'mimo-v2-pro#billing=subscription',
+        inputTokensDelta: 100, outputTokensDelta: 20,
+        money: expect.objectContaining({ kind: mode === 'api' ? 'actual-cost' : 'value-estimate' }),
+      }));
+      expect(effects.fn('recordTurnSpend')).toHaveBeenCalledTimes(mode === 'api' ? 1 : 0);
+      expect(effects.fn('recordSessionTurnSpend')).toHaveBeenCalledTimes(mode === 'api' ? 1 : 0);
+      if (mode === 'subscription') {
+        expect(effects.fn('recordSchedulerTurnCost')).toHaveBeenCalledWith(expect.objectContaining({
+          money: expect.objectContaining({ kind: 'value-estimate', amount: expect.any(Number) }),
+        }));
+      }
+      await h.dispose();
+    },
+  );
 
   it.each([[false, false], [true, false], [false, true], [true, true]])('keeps independent Claude subscription accounting out of actual spend (fallback=%s, deleted=%s)', async (fallback, deleted) => {
     const h = harness();

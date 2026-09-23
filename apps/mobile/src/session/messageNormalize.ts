@@ -1,3 +1,5 @@
+import { collectPluginInvocations, type PluginInvocation } from './pluginInvocations';
+import { extractPayloadToolResultFiles, extractPayloadToolCardIds, type PayloadToolFile } from '@cindy/maker-shared/payload-summary';
 import { placeBotTaskCardsAfterIntroduction, readBotCollaborationMeta, type BotCollaborationMeta } from '@cindy/maker-shared/botCollaboration';
 import { readBotDirectMessageMeta, type BotDirectMessageMeta } from '@cindy/maker-shared/botDirectMessage';
 import type { RemoteMessage, RemoteMessageRole } from '@/session/types';
@@ -51,6 +53,8 @@ import {
 } from '@/session/remoteMoney';
 import {
   localizeAgentError,
+  localizeUnclassifiedAgentError,
+  unclassifiedAgentErrorI18nKey,
   parseMobileToolLoopErrorDetails,
 } from '@/session/agentErrorI18n';
 import type { MobileToolInputProjection } from '@/session/messageToolPayloadProjection';
@@ -71,6 +75,8 @@ export interface NormalizedRemoteMessage {
   role: RemoteMessageRole;
   label: string;
   body: string;
+  rawError?: string;
+  errorSummaryKey?: string;
   /** user 消息正文包含产品引用编码；驱动跨端 marker/legacy 解析。 */
   quotesEncoded?: boolean;
   /** user 长文本粘贴原子的精确 wire ranges；正文仍保留完整 Agent payload。 */
@@ -87,6 +93,9 @@ export interface NormalizedRemoteMessage {
   /** user 专用：目标桌面落库的引用范围摘要，不含被引用消息正文。 */
   sessionReferences?: MobilePersistedSessionReferenceMetadata[];
   media?: NormalizedToolMedia[];
+  files?: PayloadToolFile[];
+  cardIds?: string[];
+  pluginInvocations?: PluginInvocation[];
   diff?: NormalizedToolDiff;
   align: 'user' | 'agent';
   createdAt: string;
@@ -159,6 +168,7 @@ export interface NormalizedAttachment {
 export interface NormalizedToolMedia {
   kind: 'image' | 'video' | 'audio';
   url: string;
+  mimeType?: string;
   title?: string;
   previewable: boolean;
   actions?: NormalizedToolMediaActions;
@@ -280,6 +290,8 @@ export function normalizeRemoteMessages(
         body: tool.summary,
         secondaryBody,
         media: extractToolResultMedia(secondaryBody ?? ''),
+        files: extractPayloadToolResultFiles(secondaryBody ?? ''),
+        cardIds: extractPayloadToolCardIds(secondaryBody ?? ''),
         diff: tool.diff,
         align: 'agent',
         createdAt: message.createdAt,
@@ -312,13 +324,13 @@ export function normalizeRemoteMessages(
     // turn 失败终态的持久化行(desktop main 落库):content = { message, reason? },
     // 提取 message 文案按 system 样式展示 —— 不加分支会 fall through 到通用兜底,
     // body 变成整段生 JSON。稳定的 tool-loop reason/toolLoop 走本地化，agent 未鉴权错误
-    // 换成带引导的中文提示(describeAgentAuthError)，其余未知错误保留原始 message。
+    // 换成本地化引导(describeAgentAuthError)，其余未知错误使用本地化摘要，原文留给折叠详情。
     if (message.role === 'error') {
       const c = parseMaybeJsonObject(message.content);
       const rawText = typeof c?.message === 'string' ? c.message : contentToPreview(message.content);
       const toolLoop = parseMobileToolLoopErrorDetails(c?.toolLoop);
-      const errText =
-        describeAgentAuthError(rawText) ?? localizeAgentError(c?.reason, toolLoop) ?? rawText;
+      const guidance = describeAgentAuthError(rawText) ?? localizeAgentError(c?.reason, toolLoop);
+      const errText = guidance ?? localizeUnclassifiedAgentError(rawText);
       result.push({
         key: messageNormalizeKey(message),
         source: message,
@@ -326,6 +338,8 @@ export function normalizeRemoteMessages(
         role: message.role,
         label: 'error',
         body: errText,
+        rawError: rawText,
+        ...(!guidance ? { errorSummaryKey: unclassifiedAgentErrorI18nKey(rawText) } : {}),
         align: 'agent',
         createdAt: message.createdAt,
       });
@@ -499,6 +513,12 @@ export function normalizeRemoteMessages(
     });
   }
 
+  const pluginInvocations = collectPluginInvocations(sorted, toolResultPairing);
+  for (const row of result) {
+    if (row.kind === 'user' && !row.isSyntheticTrigger && !row.hookSource && !row.automationOrigin) {
+      row.pluginInvocations = pluginInvocations.get(row.source.clientId || row.source.id);
+    }
+  }
   dedupeToolImagesAgainstAssistantMarkdown(result);
   return result;
 }
@@ -517,10 +537,15 @@ function dedupeToolImagesAgainstAssistantMarkdown(
       if (message.kind !== 'assistant') continue;
       for (const image of collectMobileMarkdownImages(message.body)) inlineUrls.add(image.url);
     }
-    if (inlineUrls.size === 0) return;
+    const cards = new Set<string>();
     for (const message of messages.slice(lo, hi)) {
-      if (message.kind !== 'tool' || !message.media?.length) continue;
-      message.media = message.media.filter(
+      if (message.kind !== 'tool') continue;
+      message.cardIds = message.cardIds?.filter((id) => {
+        if (cards.has(id)) return false;
+        cards.add(id);
+        return true;
+      });
+      message.media = message.media?.filter(
         (item) => item.kind !== 'image' || !inlineUrls.has(item.url),
       );
     }

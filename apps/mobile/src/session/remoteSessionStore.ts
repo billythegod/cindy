@@ -1,3 +1,4 @@
+import { normalizeTaskTags, reconcileTaskTags } from '@cindy/maker-shared';
 import {
   createContext,
   createElement,
@@ -2174,12 +2175,10 @@ function reanchorPendingLiveAssistantRows(
       messageIdentityMatches(message, row.message)
     )));
     if (groupedRows.length === 0) continue;
-    const withoutPending = next.filter((message) => !group.pendingRows.some((row) => (
-      messageIdentityMatches(message, row.message)
-    )));
-    const anchorIndex = withoutPending.findIndex((message) => (
-      messageIdentityMatches(message, group.afterMessage)
+    const withoutPending = next.filter((message) => !group.pendingRows.some((row) => messageIdentityMatches(message, row.message)
     ));
+    const anchorIndex = withoutPending.findIndex((message) =>
+      messageIdentityMatches(message, group.afterMessage));
     if (anchorIndex < 0) continue;
     next = [
       ...withoutPending.slice(0, anchorIndex + 1),
@@ -4255,6 +4254,18 @@ export const remoteSessionStore = {
       applySessionModelPrefPush(payload);
       return;
     }
+    if (channel === 'local-db:task-tags:changed' && isRecord(payload)) {
+      bumpDeviceSessionListMutationEpoch(deviceId);
+      const shard = shards.get(deviceId);
+      if (!shard) return;
+      const catalog = normalizeTaskTags(payload.tags, 256);
+      shard.sessions = shard.sessions.map((session) => ({
+        ...session,
+        tags: reconcileTaskTags(session.tags, catalog),
+      }));
+      recomputeSessions();
+      return;
+    }
     if (channel === 'local-db:sessions:patched' && isRecord(payload)) {
       const sessionId = readString(payload, 'sessionId');
       const patch = isRecord(payload.patch) ? payload.patch : null;
@@ -4502,6 +4513,7 @@ export const remoteSessionStore = {
         sessionId,
         phase,
         compactDetail,
+        workingPhase: readString(payload, 'workingPhase') ?? undefined,
         interactionKind: readString(payload, 'interactionKind') ?? undefined,
         attention: payload.attention === true,
       };

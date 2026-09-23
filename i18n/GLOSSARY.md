@@ -211,13 +211,13 @@ Cindy AI 个人账号的免费会员身份标签。只在服务端明确下发 a
 
 Cindy Make 设置中保留全部制作、修改轮次与合入记录的列表；结束制作及清理工作目录后仍可回看。
 
-### Reapply integration
+### Add back to personal version
 
 重新应用之前明确撤销的制作改动，区别于把尚未合入的新修改首次加入个人源码。
 
-### Undo integration
+### Remove from personal version
 
-撤销单次制作已合入个人源码的全部改动，保留其他制作与已有应用成品；通过新的反向提交实现。
+从个人版移除单次制作已经加入的全部改动，保留其他制作与已有应用成品；底层通过新的反向提交实现，不改写 Git 历史。
 
 ### Version Control
 
@@ -431,6 +431,10 @@ dev 版登录页区域徽标上的标签值（DESIGN.md §16.3），四语同值
 
 远程桌面传输状态，桌面端沿用手机端现有用语。表示画面不经过中转服务器；直连也可能穿过公网 NAT，不能据此标成内网直连。
 
+### Display & Sound
+
+Remote desktop panel containing picture and audio settings; icon-only toolbar trigger.
+
 ### Lock screen control
 
 Windows 远程桌面设置中的系统服务授权能力；不表示支持开机前解密或无人登录。
@@ -483,6 +487,10 @@ Orca Worker 创建卡上的命名字段。它只是派活用的名字，不改�
 
 日志上报文案里对「App 自身运行日志」的用户可见说法。刻意不直接叫「日志」: 设置页同屏已有「日志目录」「Debug 日志」两处指本地文件, 而这里要表达的是被上报的那部分内容(基础设施运行记录, 不含对话)。proposed: 与「日志」的分工尚未产品裁决。
 
+### Shared Session
+
+远程连接的多人版本，按单个任务共享完整上下文和同一 Agent，不作为独立会议产品。
+
 ### shortcut listener permission
 
 macOS TCC 的 kTCCServiceListenEvent(系统设置里叫「输入监控」)在 Cindy 内的对外称法。产品侧只按用途讲: 这个权限只服务语音输入快捷键的监听, 不讲系统实现, 所以 zh-CN 沿用设置页权限项已有的「监听权限」(settings.voiceInput.permissions.inputMonitoring.label), 不引入「输入监控」这个直译——后者听起来像 Cindy 在监控用户的全部输入, 与实际能力(只识别快捷键按键组合)不符, 反而制造隐私误解。禁用项都挂 whenEn 条件: 要引用 macOS 系统设置面板名本身时那是 OS 的 UI 名称, 不受本条约束。四语的比喻不统一(en listener / ja 監視 / ko 감지)是现状登记而非裁决——各语言内部一致但跨语言不同, 保持 proposed 等产品拍板, 先把清单摆出来防止继续在 listener / monitoring / detection 之间漂移。
@@ -496,6 +504,10 @@ macOS TCC 的 kTCCServiceListenEvent(系统设置里叫「输入监控」)在 Ci
 ### Smart routing
 
 Codex Subagent 的可选扩展调配开关。默认关闭以保留 Codex 原生 Sol/Terra 调配；开启后允许 Codex 从 Cindy 已连接的更多模型中按任务选择。
+
+### Tag
+
+任务列表的 Finder 式颜色标签；仅标识任务，不改变运行状态。用户已确认显示为重叠色球，整合现有任务菜单，当前不增加筛选入口。
 
 ### Teammate
 

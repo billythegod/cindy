@@ -1,3 +1,7 @@
+import { foldDesktopLayout } from './foldDesktopLayout';
+import { useAdaptiveWindow } from '@/platform/AdaptiveWindowContext';
+import { windowDivision, controlRegion } from '@/platform/windowGeometry';
+import { FoldTouchpad } from './FoldTouchpad';
 import {
   useCallback,
   useMemo,
@@ -77,7 +81,11 @@ import {
 import { Text } from "@/components/AppText";
 import { useScreenEdgePadding } from "@/components/screenEdgeInsets";
 import { goBackGuarded } from "@/utils/backGuard";
-import { mobileDebugLog } from "@/debug/mobileDebugLog";
+import { mobileDebugEnabled, mobileDebugLog } from "@/debug/mobileDebugLog";
+import {
+  RTC_DIAGNOSTIC_REVISION,
+  rtcDiagnosticSummary,
+} from "./rtcDiagnostics";
 import {
   fontWeight,
   iconSize,
@@ -105,7 +113,9 @@ import { useRemoteDesktopSafety } from "./useRemoteDesktopSafety";
 import { useVideoSettingsPreference } from "./useVideoSettingsPreference";
 import { usePictureInPicturePreference } from "./usePictureInPicturePreference";
 import { PermissionGuide } from "./PermissionGuide";
+import { navigationChrome } from "@/theme/tokens";
 import { RemoteDesktopBackButton } from "./RemoteDesktopBackButton";
+import { RemoteDesktopWindows } from "./RemoteDesktopWindows";
 import { RemoteDesktopNetworkStatus } from "./RemoteDesktopNetworkStatus";
 import type { DesktopNetworkStats } from "./networkStats";
 import {
@@ -254,23 +264,40 @@ export function RemoteDesktopSession({
     windowWidth: windowSize.width,
     windowHeight: windowSize.height,
   });
-  const screenSize = Dimensions.get("screen");
-  const landscape = screenSize.width > screenSize.height;
+  const screenSize = windowSize;
+  const geometry = useAdaptiveWindow();
+  const division = windowDivision(geometry);
+  const tableRegion = division && division.first.height >= 160 && division.second.height >= 160 && division.first.width >= 160 && division.second.width >= 160 ? division : null;
+
+  const systemSideRail = Platform.OS === 'ios' && !tableRegion && (geometry.barEdge !== 'none' || (geometry.reservedRegionsSupported && geometry.regularWidth && windowSize.width > windowSize.height));
+  // Android adjustResize shrinks the window for the IME, not the display.
+  // Keep its device orientation stable; iOS/Duo still use the adaptive window.
+  const orientationSize = Platform.OS === 'android' ? Dimensions.get('screen') : windowSize;
+  const landscape = systemSideRail || (!tableRegion && orientationSize.width > orientationSize.height);
+  const sideRailWidth = Math.max(60, geometry.insets.right + spacing.md);
+  // The native status/navigation center sits 6pt inward from the safe strip center.
+  // Use the reported status reservation for vertical clearance when available.
+  const statusReservation = geometry.regions.filter(r => r.kind === 'occlusion' && r.y === 0 && r.x + r.width >= geometry.width);
+  const sideRailTop = Math.max(insets.top, statusReservation.length ? Math.max(...statusReservation.map(r => r.y + r.height)) : 120);
   const [interfaceAngle, setInterfaceAngle] = useState<number | null>(null);
   const toolbarOnLeft =
+    systemSideRail ? false :
     Platform.OS === "ios" &&
     landscape &&
     (interfaceAngle === 270 ||
       (interfaceAngle === null && insets.right > insets.left));
   const webview = useRef<ComponentRef<typeof WebView>>(null);
   const nativeViewer = useRef<NativeRemoteDesktopHandle>(null);
-  const html = useRef(
+  // Memo survives ordinary renders, but Fast Refresh invalidates it when the
+  // bundled viewer changes. A ref kept the old script alongside new RN layout.
+  const html = useMemo(() =>
     remoteDesktopViewerHtml(
       colors.surface,
       colors.textPrimary,
       Boolean(NativeRemoteDesktopView),
     ),
-  ).current;
+  []);
+  const [viewerReadyRevision, setViewerReadyRevision] = useState(0);
   const active = useRef<RemoteDesktopLease | null>(null);
   const wantsControl = useRef(true);
   const [viewOnlySelected, setViewOnlySelected] = useState(false);
@@ -308,6 +335,10 @@ export function RemoteDesktopSession({
   const unlockFrame = useRef<((presented: boolean) => void) | null>(null);
   const inputBusy = useRef<string | null>(null);
   const [lease, setLease] = useState<RemoteDesktopLease | null>(null);
+  const [windowsOpen, setWindowsOpen] = useState(false);
+  useEffect(() => {
+    setWindowsOpen(false);
+  }, [lease?.lease, lease?.controlling, focused]);
   const [fittedDisplay, setFittedDisplay] = useState<{
     width: number;
     height: number;
@@ -418,6 +449,9 @@ export function RemoteDesktopSession({
     landscape && (Platform.OS === "ios" || fullKeys);
   const keyboardBottom =
     Platform.OS === "ios" && keyboard && !fullKeys ? nativeKeyboardHeight : 0;
+  const foldLayout = foldDesktopLayout(geometry, keyboardBottom, keyboardPanelHeight, keyboard);
+  const fullScreenFoldBackground = Boolean(foldLayout && division?.axis === 'horizontal');
+  const foldControls = foldLayout?.controls ?? controlRegion(geometry);
   const heldKeys = useRef(new Map<string, string[]>());
   const [keyPage, setKeyPage] = useState(0);
   const [comboMode, setComboMode] = useState(true);
@@ -437,8 +471,21 @@ export function RemoteDesktopSession({
           epoch: command.epoch ?? owner?.lease,
           ...(command.type === "init"
             ? {
-                net: REMOTE_DESKTOP_NETWORK,
+                net:
+                  owner?.display.id === "wayland-portal"
+                    ? {
+                        ...REMOTE_DESKTOP_NETWORK,
+                        // Shipped native receivers do not understand capturePending.
+                        // Their existing bounded retry timer must cover local consent
+                        // before using the normal network recovery attempts.
+                        retryMs: [
+                          ...Array<number>(15).fill(8000),
+                          ...REMOTE_DESKTOP_NETWORK.retryMs,
+                        ],
+                      }
+                    : REMOTE_DESKTOP_NETWORK,
                 iceServers: REMOTE_DESKTOP_ICE_SERVERS,
+                diagnostics: mobileDebugEnabled(),
               }
             : {}),
         })
@@ -503,13 +550,25 @@ export function RemoteDesktopSession({
       new RemoteDesktopViewerMedia({
         request,
         send,
-        loadIce: () =>
-          resolveDesktopIceServers(() =>
-            authRef.current.apiFetch(REMOTE_DESKTOP_ICE_CONFIG_PATH, {
-              baseUrl: DEVICE_LINK_API_BASE_URL,
-              timeoutMs: REMOTE_DESKTOP_ICE_CONFIG_TIMEOUT_MS,
-              cache: "no-store",
-            }),
+        loadIce: (attemptId) =>
+          resolveDesktopIceServers(
+            () =>
+              authRef.current.apiFetch(REMOTE_DESKTOP_ICE_CONFIG_PATH, {
+                baseUrl: DEVICE_LINK_API_BASE_URL,
+                timeoutMs: REMOTE_DESKTOP_ICE_CONFIG_TIMEOUT_MS,
+                cache: "no-store",
+              }),
+            (result) =>
+              mobileDebugLog(
+                "info",
+                "device-link",
+                "remote desktop ICE config",
+                {
+                  revision: RTC_DIAGNOSTIC_REVISION,
+                  attempt: attemptId.slice(0, 8),
+                  ...result,
+                },
+              ),
           ),
         current: () => {
           const lease = active.current,
@@ -614,7 +673,7 @@ export function RemoteDesktopSession({
     const updateFrame = (event: KeyboardEvent) => {
       const height = Math.max(
         0,
-        Dimensions.get("screen").height - event.endCoordinates.screenY,
+        Dimensions.get("window").height - event.endCoordinates.screenY,
       );
       setNativeKeyboardHeight(height);
       setNativeKeyboard(height > 0);
@@ -931,6 +990,17 @@ export function RemoteDesktopSession({
               capsRef.current = { deviceId, value: result };
               setHostCaps({ deviceId, value: result });
               if (supportsAutoUnlock(result.platform)) {
+                // Linux capture may be unavailable until its locker releases the session.
+                if (result.platform === "linux") {
+                  return securityRef.current.maybeUnlock(async () => {
+                    if (
+                      current !== generation.current ||
+                      !focusedRef.current ||
+                      !recovery.current.enabled
+                    )
+                      throw new Error("CREDENTIAL_CANCELLED");
+                  });
+                }
                 const firstFrame = new Promise<boolean>((resolve) => {
                   unlockFrame.current = resolve;
                 });
@@ -1027,20 +1097,26 @@ export function RemoteDesktopSession({
   );
   const connectRef = useRef(connect);
   connectRef.current = connect;
+  const portalAuthorization =
+    caps?.displays.some((display) => display.id === "wayland-portal") === true;
   useEffect(() => {
     if (!focused || appState !== "active" || !showConnectionStatus) return;
     // One deadline spans link setup, automatic retries and first presentation.
     // Background/navigation pauses it; a manual retry starts a fresh budget.
-    const timer = setTimeout(() => {
-      if (
-        alive.current &&
-        focusedRef.current &&
-        AppState.currentState === "active"
-      )
-        fail(new Error("DESKTOP_CONNECTION_TIMEOUT"));
-    }, REMOTE_DESKTOP_CONNECTION_TIMEOUT_MS);
+    const timer = setTimeout(
+      () => {
+        if (
+          alive.current &&
+          focusedRef.current &&
+          AppState.currentState === "active"
+        )
+          fail(new Error("DESKTOP_CONNECTION_TIMEOUT"));
+      },
+      REMOTE_DESKTOP_CONNECTION_TIMEOUT_MS +
+        (portalAuthorization ? 120_000 : 0),
+    );
     return () => clearTimeout(timer);
-  }, [focused, appState, showConnectionStatus, fail]);
+  }, [focused, appState, showConnectionStatus, fail, portalAuthorization]);
   useEffect(() => {
     // Authentication preparation is already running; only the native prompt
     // waits for a frame from this lease. stop() releases cancelled waiters.
@@ -1149,7 +1225,7 @@ export function RemoteDesktopSession({
   };
   useEffect(() => {
     send({ type: "viewport", fillHeight: landscape });
-  }, [landscape, send]);
+  }, [landscape, send, viewerReadyRevision]);
 
   useEffect(() => {
     alive.current = true;
@@ -1245,6 +1321,7 @@ export function RemoteDesktopSession({
             applyConfirmedControl(current, true);
         })
         .catch((cause) => {
+          if (active.current !== current) return;
           // A missing reply does not prove renewal failed; the next interval
           // retries within the lease. Explicit host revocation still stops us.
           if (
@@ -1397,8 +1474,10 @@ export function RemoteDesktopSession({
     send({
       type: "mouseButtons",
       native: Platform.OS === "ios",
-      topInset: edgePadding.paddingTop,
-      bottomInset:
+      fitToInsets: fullScreenFoldBackground,
+      topInset: fullScreenFoldBackground ? foldLayout!.media.y : tableRegion ? 0 : edgePadding.paddingTop,
+      bottomInset: fullScreenFoldBackground
+        ? Math.max(0, geometry.height - foldLayout!.media.y - foldLayout!.media.height) : tableRegion ? 0 :
         keyboard && landscapeKeyboardOverlay
           ? keyboardPanelHeight + keyboardBottom
           : !keyboard && !landscape
@@ -1406,19 +1485,13 @@ export function RemoteDesktopSession({
             : 0,
       keyboardOpen: keyboard && landscapeKeyboardOverlay,
       portraitKeyboardTopInset:
-        keyboard && !landscape
+        keyboard && !landscape && !tableRegion
           ? edgePadding.paddingTop + spacing.xs + backControlHeight + spacing.sm
           : 0,
-      rightInset: landscape
-        ? !keyboard && !toolbarOnLeft
-          ? toolbarSize.width
-          : insets.right
-        : 0,
-      leftInset: landscape
-        ? !keyboard && toolbarOnLeft
-          ? toolbarSize.width
-          : insets.left
-        : 0,
+      // Side controls float over the desktop; fit against the full canvas width
+      // in either landscape direction, including while the keyboard is open.
+      rightInset: 0,
+      leftInset: 0,
       enabled:
         showMouseButtons &&
         focused &&
@@ -1432,12 +1505,12 @@ export function RemoteDesktopSession({
       },
     });
   }, [
+    tableRegion?.first.height, tableRegion?.first.width,
+    fullScreenFoldBackground, foldLayout?.media.y, foldLayout?.media.height, geometry.height,
+    viewerReadyRevision,
     showMouseButtons,
     edgePadding.paddingTop,
     backControlHeight,
-    insets.left,
-    insets.right,
-    toolbarOnLeft,
     toolbarSize,
     keyboardPanelHeight,
     landscapeKeyboardOverlay,
@@ -1453,14 +1526,17 @@ export function RemoteDesktopSession({
   ]);
   useEffect(() => {
     if (link.status !== "online") {
-      // A native stream with an acknowledged background lease outlives signaling.
-      // Restoring fullscreen must not tear it down while that socket reconnects.
+      // Only a prepared background presentation can survive host signaling loss.
+      // The host stops foreground leases, so discard ours before reconnecting.
       if (
-        !presentation.current &&
-        !(NativeRemoteDesktopView && pipPrepared.current)
+        presentation.current ||
+        (NativeRemoteDesktopView && pipPrepared.current)
       )
-        pause();
-    } else if (!active.current) void connectRef.current();
+        return;
+      pause();
+      return;
+    }
+    if (!active.current) void connectRef.current();
     else restoreInlinePresentationRef.current();
   }, [link.status, pause]);
 
@@ -1488,6 +1564,7 @@ export function RemoteDesktopSession({
     }
     if (message.type === "ready") {
       ready.current = true;
+      setViewerReadyRevision(revision => revision + 1);
       void connectRef.current();
       return;
     }
@@ -1506,6 +1583,17 @@ export function RemoteDesktopSession({
     )
       return;
     switch (message.type) {
+      case "rtcDiagnostic": {
+        const summary = rtcDiagnosticSummary(message);
+        if (summary)
+          mobileDebugLog(
+            "info",
+            "device-link",
+            "remote desktop RTC diagnostic",
+            summary,
+          );
+        break;
+      }
       case "nativeViewport":
         if (NativeRemoteDesktopView)
           void nativeViewer.current?.receive(message).catch(() => {});
@@ -2379,6 +2467,21 @@ export function RemoteDesktopSession({
           .map((code) => ({ kind: "key", code, down: false })),
       ],
     });
+  const workspaceAction = (
+    action: "workspaceLeft" | "workspaceRight" | "omarchyMenu",
+  ) => {
+    if (!lease?.controlling) return;
+    const current = active.current;
+    void request({ op: "windowAction", action, lease: lease.lease }).catch(
+      () => {
+        if (active.current === current)
+          Alert.alert(
+            t(`remoteDesktop.${action}`),
+            t("remoteDesktop.settingFailed"),
+          );
+      },
+    );
+  };
   const button = (
     label: string,
     onPress: () => void,
@@ -2491,7 +2594,7 @@ export function RemoteDesktopSession({
   return (
     <KeyboardAvoidingView
       testID="remoteDesktop.layout"
-      enabled={!landscapeKeyboardOverlay}
+      enabled={!landscapeKeyboardOverlay && !foldLayout}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={styles.root}
     >
@@ -2500,7 +2603,9 @@ export function RemoteDesktopSession({
         <View
           style={[
             styles.canvas,
-            { marginLeft: landscape ? 0 : edgePadding.paddingLeft },
+            { marginLeft: landscape ? 0 : edgePadding.paddingLeft, marginRight: landscape ? 0 : edgePadding.paddingRight },
+            fullScreenFoldBackground ? { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, marginLeft: 0, marginRight: 0 } : foldLayout && { position: 'absolute', flex: 0, left: foldLayout.media.x, top: foldLayout.media.y,
+              width: foldLayout.media.width, height: foldLayout.media.height, marginLeft: 0, marginRight: 0 },
           ]}
         >
           <Animated.View
@@ -2561,6 +2666,7 @@ export function RemoteDesktopSession({
           </Animated.View>
           {frameReady &&
             Platform.OS === "ios" &&
+            !tableRegion &&
             showMouseButtons &&
             focused &&
             !operations &&
@@ -2710,6 +2816,20 @@ export function RemoteDesktopSession({
               top={edgePadding.paddingTop + spacing.sm}
             />
           )}
+          {windowsOpen &&
+            focused &&
+            lease?.controlling &&
+            caps?.windowActions && (
+              <RemoteDesktopWindows
+                key={lease.lease}
+                lease={lease.lease}
+                request={request}
+                caption={deviceName}
+                landscape={landscape}
+                topInset={edgePadding.paddingTop}
+                onClose={() => setWindowsOpen(false)}
+              />
+            )}
           {(operations || Platform.OS === "ios") && (
             <View
               pointerEvents="box-none"
@@ -2728,7 +2848,12 @@ export function RemoteDesktopSession({
               ]}
             >
               <RemoteDesktopPanel
+                railAnchor={systemSideRail ? {
+                  right: (sideRailWidth - navigationChrome.target) / 2,
+                  top: (sideRailTop + navigationChrome.target + spacing.lg + windowSize.height - insets.bottom - navigationChrome.target * (caps?.omarchyMenu ? 5 : 4)) / 2,
+                } : undefined}
                 toolbarOnLeft={toolbarOnLeft}
+                toolbarActionCount={caps?.omarchyMenu ? 5 : 4}
                 visible={operations && focused}
                 landscape={landscape}
                 topInset={edgePadding.paddingTop}
@@ -2772,7 +2897,7 @@ export function RemoteDesktopSession({
                   }
                   presentation={{
                     enabled: pipEnabled,
-                    canRotate: typeof remotePresentation?.rotate === "function",
+                    canRotate: typeof remotePresentation?.rotate === "function" && !(geometry.reservedRegionsSupported && Platform.OS === "ios" && !Platform.isPad && geometry.regularWidth && geometry.regularHeight),
                     canPip: Boolean(
                       remotePresentation &&
                       caps?.backgroundViewing &&
@@ -2828,6 +2953,16 @@ export function RemoteDesktopSession({
             </View>
           )}
         </View>
+        {tableRegion && frameReady && focused && !keyboard && !operations ? (
+          <View testID="remoteDesktop.foldControls" style={{ position: 'absolute', left: foldControls.x,
+            top: foldControls.y, width: foldControls.width, height: foldControls.height,
+            paddingBottom: toolbarSize.height + (showMouseButtons ? 80 : 0) }}>
+            <FoldTouchpad send={send} enabled={Boolean(lease?.controlling)} />
+            {showMouseButtons && lease?.controlling ? <RemoteDesktopMouseControls send={send}
+              bottom={toolbarSize.height} right={0} compact labels={{ left: t("remoteDesktop.leftClick"),
+                right: t("remoteDesktop.rightClick"), wheel: t("remoteDesktop.mouseWheel") }} /> : null}
+          </View>
+        ) : null}
         {!keyboard && (
           <Animated.View
             key={landscape ? "landscape-toolbar" : "portrait-toolbar"}
@@ -2879,24 +3014,74 @@ export function RemoteDesktopSession({
                       paddingBottom: Math.max(spacing.sm, insets.bottom),
                     }),
               },
+              tableRegion && { left: foldControls.x, right: undefined, width: foldControls.width,
+                bottom: geometry.height - foldControls.y - foldControls.height, paddingBottom: spacing.sm },
+              systemSideRail && {
+                left: toolbarOnLeft ? 0 : undefined,
+                right: toolbarOnLeft ? undefined : 0,
+                width: sideRailWidth,
+                // Leave room for the system clock/signal and the 44pt Back control.
+                top: sideRailTop + navigationChrome.target + spacing.lg,
+                bottom: insets.bottom,
+                paddingLeft: 0,
+                paddingRight: 0,
+                paddingBottom: 0,
+                alignItems: 'center',
+                justifyContent: 'center',
+              },
             ]}
           >
             <RemoteDesktopToolbar
-              landscape={landscape}
+              landscape={landscape || systemSideRail}
+              onWorkspaceLeft={
+                caps?.workspaceNavigation
+                  ? () => workspaceAction("workspaceLeft")
+                  : undefined
+              }
+              onWorkspaceRight={
+                caps?.workspaceNavigation
+                  ? () => workspaceAction("workspaceRight")
+                  : undefined
+              }
+              onOmarchyMenu={
+                caps?.omarchyMenu
+                  ? () => workspaceAction("omarchyMenu")
+                  : undefined
+              }
               canControl={Boolean(lease?.controlling)}
               keyboard={keyboard}
               operations={operations}
-              onWindows={() =>
+              onWindows={() => {
+                if (caps?.windowActions) {
+                  setOperations(false);
+                  Keyboard.dismiss();
+                  setKeyboard(false);
+                  setWindowsOpen(true);
+                  return;
+                }
                 shortcut(
                   caps?.platform === "darwin"
                     ? ["ControlLeft", "ArrowUp"]
                     : ["MetaLeft", "Tab"],
-                )
-              }
+                );
+              }}
               onDesktop={() =>
-                shortcut(
-                  caps?.platform === "darwin" ? ["F11"] : ["MetaLeft", "KeyD"],
-                )
+                caps?.windowActions && lease?.controlling
+                  ? void request({
+                      op: "windowAction",
+                      action: "desktop",
+                      lease: lease.lease,
+                    }).catch(() =>
+                      Alert.alert(
+                        t("remoteDesktop.showDesktop"),
+                        t("remoteDesktop.settingFailed"),
+                      ),
+                    )
+                  : shortcut(
+                      caps?.platform === "darwin"
+                        ? ["F11"]
+                        : ["MetaLeft", "KeyD"],
+                    )
               }
               onKeyboard={() => {
                 setOperations(false);
@@ -2934,10 +3119,15 @@ export function RemoteDesktopSession({
             // occupying the corner, not a centered island. Android left
             // insets are an unsafe strip (cutout/curve), not an island.
             left: landscape
-              ? (Platform.OS === "ios" && insets.top === 0 ? 0 : insets.left) +
+              ? (Platform.OS === "ios" && !geometry.reservedRegionsSupported && insets.top === 0 ? 0 : insets.left) +
                 spacing.lg +
                 (Platform.OS === "ios" ? spacing.xs : 0)
               : edgePadding.paddingLeft + spacing.lg,
+          },
+          systemSideRail && {
+            top: sideRailTop,
+            left: windowSize.width - (sideRailWidth + navigationChrome.target) / 2,
+            width: navigationChrome.target,
           },
         ]}
       >
@@ -2965,6 +3155,9 @@ export function RemoteDesktopSession({
                 ? Math.max(spacing.sm, insets.bottom)
                 : spacing.xs,
             },
+            foldLayout && { position: 'absolute', left: foldControls.x, width: foldControls.width,
+              bottom: geometry.height - foldControls.y - foldControls.height,
+              maxHeight: foldControls.height, paddingLeft: spacing.xs, paddingRight: spacing.sm, paddingBottom: 0 },
           ]}
         >
           <View style={styles.keyboardHeader}>
@@ -3114,7 +3307,7 @@ export function RemoteDesktopSession({
               </View>
               <ScrollView
                 testID="remoteDesktop.keyPageViewport"
-                style={{ maxHeight: landscape ? 156 : 300 }}
+                style={{ flexShrink: 1, maxHeight: landscape ? 156 : 300 }}
                 keyboardShouldPersistTaps="always"
               >
                 <View style={styles.tools}>
