@@ -390,10 +390,12 @@ export function ScheduleChip({
     // Re-selecting the visible mode is not an instruction to replace a legacy value.
     // An exact interval has its own activeMode and can still enter a supported preset.
     if (mode === 'intervalMinutes' && mode === activeMode) return;
+    // Exact intervals have no preset config; their compatibility Cron is not authoritative.
+    const presetConfig = activeMode === 'exactInterval' ? DEFAULT_CONFIG : config;
     const patch: Partial<CodexScheduleConfig> = { mode };
-    if (mode === 'interval') patch.intervalHours = config.mode === 'interval' ? config.intervalHours : 1;
+    if (mode === 'interval') patch.intervalHours = presetConfig.mode === 'interval' ? presetConfig.intervalHours : 1;
     if (mode === 'intervalMinutes') {
-      patch.intervalMinutes = resolveIntervalMinutesPresetValue(config);
+      patch.intervalMinutes = resolveIntervalMinutesPresetValue(presetConfig);
     }
     update(patch);
   };

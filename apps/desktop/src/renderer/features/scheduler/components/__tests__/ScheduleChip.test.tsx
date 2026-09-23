@@ -59,6 +59,24 @@ it.each([28, 59])('still lets an exact %i-minute interval explicitly enter the s
   expect(onChange).not.toHaveBeenCalled();
 });
 
+const staleCronValues = ['*/20 * * * *', '0 */8 * * *', '*/28 * * * *', '30 9 * * *'];
+
+it.each(staleCronValues)('starts the minute preset at its default, ignoring exact-interval metadata %s', (cronExpr) => {
+  const onChange = renderChip(cronExpr, 28 * 60_000);
+  expect(onChange).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'scheduler.chips.timingMode.currentExact' }));
+  expect(onChange).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'scheduler.chips.scheduleMenu.intervalMinutes' }));
+  expect(onChange).toHaveBeenCalledWith({ cronExpr: '*/5 * * * *', intervalMs: 300_000 });
+});
+
+it.each(staleCronValues)('starts the hour preset at its default, ignoring exact-interval metadata %s', (cronExpr) => {
+  const onChange = renderChip(cronExpr, 28 * 60_000);
+  expect(onChange).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'scheduler.chips.scheduleMenu.interval' }));
+  expect(onChange).toHaveBeenCalledWith({ cronExpr: '0 */1 * * *', intervalMs: 3_600_000 });
+});
+
 it.each([7, 28, 59])('switches a stale Cron from the current %i-minute interval and keeps the legacy value on menu re-selection', (minutes) => {
   const onChange = renderChip('*/5 * * * *', minutes * 60_000);
   fireEvent.click(screen.getByRole('button', { name: 'scheduler.chips.timingMode.cron' }));
