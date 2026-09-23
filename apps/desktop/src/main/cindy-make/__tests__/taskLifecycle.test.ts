@@ -98,6 +98,17 @@ describe('Main-owned Cindy Make task lifecycle', () => {
     const release = manager.claimPersonalBuild();
     release();
   });
+  it('keeps manual source sync and personal build claims mutually exclusive', () => {
+    const manager = new CindyMakeManager();
+    const releaseSync = manager.claimManualSourceSync();
+    expect(manager.hasActiveWork()).toBe(true);
+    expect(() => manager.claimPersonalBuild()).toThrow('manual source sync is running');
+    releaseSync();
+    const releaseBuild = manager.claimPersonalBuild();
+    expect(() => manager.claimManualSourceSync()).toThrow('personal build or source sync is running');
+    releaseBuild();
+    expect(manager.hasActiveWork()).toBe(false);
+  });
   it('publishes only the current build owners and clears them when the lease settles', () => {
     const manager = new CindyMakeManager();
     const changed = vi.fn();

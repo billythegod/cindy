@@ -99,6 +99,7 @@ export class CindyMakeManager {
   private readonly projectJobs = new Map<string, Promise<unknown>>();
   private readonly projectUsers = new Map<string, number>();
   private personalBuild: { sessionIds: string[]; isCurrent: () => boolean } | undefined;
+  private manualSourceSync = false;
   private readonly reports = new Map<
     string,
     { report: MakeDoctorReport; isCurrent: () => boolean }
@@ -149,6 +150,7 @@ export class CindyMakeManager {
       this.preparingTasks.size > 0 ||
       this.runningTaskActions.size > 0 ||
       this.projectUsers.size > 0 ||
+      this.manualSourceSync ||
       !!this.personalBuild ||
       this.projectJobs.size > 0
     );
@@ -158,6 +160,18 @@ export class CindyMakeManager {
     return !!this.personalBuild;
   }
 
+  /** Reserve a manual source update before its first asynchronous step. */
+  claimManualSourceSync(): () => void {
+    if (this.personalBuild || this.manualSourceSync)
+      throw Object.assign(new Error('personal build or source sync is running'), { code: 'busy' });
+    this.manualSourceSync = true;
+    this.notify();
+    return () => {
+      this.manualSourceSync = false;
+      this.notify();
+    };
+  }
+
   /** Both entry points reserve synchronously, before any asynchronous build work. */
   claimPersonalBuild(
     sessionIds: readonly string[] = [],
@@ -165,6 +179,8 @@ export class CindyMakeManager {
   ): () => void {
     if (this.versionSwitching())
       throw Object.assign(new Error('version switch is running'), { code: 'busy' });
+    if (this.manualSourceSync)
+      throw Object.assign(new Error('manual source sync is running'), { code: 'busy' });
     if (this.projectUsers.size > 0)
       throw Object.assign(new Error('source work is running'), { code: 'busy' });
     if (this.personalBuild)

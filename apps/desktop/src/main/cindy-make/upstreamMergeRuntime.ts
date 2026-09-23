@@ -167,7 +167,6 @@ export function configureUpstreamMerge(isRunning: (id: string) => boolean): void
         cindyMakeManager.withProjectUse(root, () =>
           cindyMakeManager.withProject(root, async () => {
             if (cindyMakeManager.isPreparingSource(root)) throw mergeError('busy');
-            if (cindyMakeManager.isPersonalBuildRunning()) throw mergeError('busy');
             return run();
           }),
         ),
@@ -322,8 +321,14 @@ export async function actUpstreamMerge(raw: unknown): Promise<CindyMakeMergeStat
   }).createOptions;
   if (!controller || unavailable)
     throwIpcError('PRECONDITION_FAILED', 'Upstream merge is unavailable');
-  if (action === 'update' && cindyMakeManager.isPersonalBuildRunning())
-    throwIpcError('PRECONDITION_FAILED', 'busy');
+  let releaseManualSync: (() => void) | undefined;
+  if (action === 'update') {
+    try {
+      releaseManualSync = cindyMakeManager.claimManualSourceSync();
+    } catch {
+      throwIpcError('PRECONDITION_FAILED', 'busy');
+    }
+  }
   try {
     return action === 'update'
       ? await controller.update(options)
@@ -334,6 +339,8 @@ export async function actUpstreamMerge(raw: unknown): Promise<CindyMakeMergeStat
           : controller.status();
   } catch {
     throwIpcError('PRECONDITION_FAILED', 'Upstream merge is unavailable');
+  } finally {
+    releaseManualSync?.();
   }
 }
 

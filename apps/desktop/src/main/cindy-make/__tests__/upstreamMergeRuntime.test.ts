@@ -27,7 +27,7 @@ const h = vi.hoisted(() => ({
   tree: 'd'.repeat(40),
   dirty: false,
   building: false,
-  buildingWhenProjectBegins: false,
+  manualClaimed: false,
   projected: undefined as CindyMakeMergeState | undefined,
   source: {
     status: 'ready',
@@ -109,10 +109,7 @@ vi.mock('../manager.js', () => ({
     setUpstreamMerge: (state: CindyMakeMergeState) => {
       h.projected = state;
     },
-    withProjectUse: async (_root: string, run: () => unknown) => {
-      if (h.buildingWhenProjectBegins) h.building = true;
-      return run();
-    },
+    withProjectUse: async (_root: string, run: () => unknown) => run(),
     withProject: async (_root: string, run: () => unknown) => {
       expect(h.locked).toBe(false);
       h.locked = true;
@@ -124,6 +121,11 @@ vi.mock('../manager.js', () => ({
     },
     isPreparingSource: () => false,
     isPersonalBuildRunning: () => h.building,
+    claimManualSourceSync: () => {
+      if (h.building || h.manualClaimed) throw Object.assign(new Error('busy'), { code: 'busy' });
+      h.manualClaimed = true;
+      return () => { h.manualClaimed = false; };
+    },
     refreshSourceStatus: async () => {},
   },
 }));
@@ -220,7 +222,7 @@ beforeEach(() => {
   h.tree = 'd'.repeat(40);
   h.dirty = false;
   h.building = false;
-  h.buildingWhenProjectBegins = false;
+  h.manualClaimed = false;
   h.actualRollback = false;
   h.afterReadError = undefined;
   h.refs = new Map();
@@ -314,10 +316,10 @@ it('rejects a manual source sync during a personal build without queuing it', as
   expect(h.fetch).not.toHaveBeenCalled();
   expect(h.projected).toBeUndefined();
 });
-it('rechecks for a build after a source sync waits for the project', async () => {
-  h.buildingWhenProjectBegins = true;
-  await expect(actUpstreamMerge({ action: 'update' })).rejects.toThrow('unavailable');
-  expect(h.fetch).not.toHaveBeenCalled();
+it('releases the manual source reservation after an update', async () => {
+  h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'f'.repeat(40) })));
+  await actUpstreamMerge({ action: 'update' });
+  expect(h.manualClaimed).toBe(false);
 });
 it('uses the same fresh official sync before a task worktree is created', async () => {
   h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'f'.repeat(40) })));
@@ -336,6 +338,7 @@ it('stops task preparation when latest source cannot be fetched', async () => {
   });
 });
 it('publishes source sync as a distinct personal build step', async () => {
+  h.building = true;
   h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'f'.repeat(40) })));
   const publish = vi.fn(async () => {});
   await syncSourceBeforeCindyMakeBuild(new AbortController().signal, publish);
