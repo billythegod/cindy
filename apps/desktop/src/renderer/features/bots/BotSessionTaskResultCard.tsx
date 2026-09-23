@@ -11,6 +11,7 @@ export function BotSessionTaskResultCard({ data }: { data?: Record<string, unkno
   const card = readBotCollaborationMeta(data?.botCollaboration);
   if (card?.role !== 'delegation-result' || !card.result) return null;
   const { result } = card;
+  const workingDir = result.workingDir ?? fileContext.workingDir;
   return (
     <details className="my-2 rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] text-14 text-[var(--text-primary)]">
       <summary className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl px-3 py-2 focus-visible:outline focus-visible:outline-2">
@@ -21,9 +22,9 @@ export function BotSessionTaskResultCard({ data }: { data?: Record<string, unkno
       </summary>
       <div className="space-y-2 border-t border-[var(--border-default)] px-3 py-3">
         <p className="whitespace-pre-wrap break-words">{result.text || t('bots.collab.noWrittenResult')}</p>
-        <ChatSessionFileProvider value={{ ...fileContext, sessionId: card.childSessionId ?? undefined }}>
+        <ChatSessionFileProvider value={{ ...fileContext, workingDir, sessionId: card.childSessionId ?? undefined }}>
           {result.artifacts.map((artifact) => (
-            <MarkdownRenderer key={artifact.absolutePath} workingDir="" currentSessionId={card.childSessionId ?? undefined}
+            <MarkdownRenderer key={artifact.absolutePath} workingDir={workingDir} currentSessionId={card.childSessionId ?? undefined}
               content={`[${artifact.absolutePath.split(/[\\/]/).pop()?.replace(/[\[\]\\]/g, '\\$&') ?? t('bots.collab.viewResult')}](<${encodeURI(artifact.absolutePath).replace(/[<>?#]/g, encodeURIComponent)}>)`} />
           ))}
         </ChatSessionFileProvider>

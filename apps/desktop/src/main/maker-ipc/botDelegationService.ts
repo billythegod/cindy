@@ -872,6 +872,9 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         clearCompletionRetryTimer(params.id);
         return false;
       }
+      const child = params.childSessionId ? await getDbClient().drizzle
+        .select({ workingDir: sessions.workingDir }).from(sessions)
+        .where(eq(sessions.id, params.childSessionId)).get() : undefined;
       // Durable, per-execution receipt: retries reuse the same message identity.
       // Publish before waking the teammate so queued/hidden model work cannot hide results.
       await persistTimelineMessage({
@@ -884,6 +887,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
             ...await collaborationMeta(params, 'delegation-result'),
             parentSessionId: targetSessionId,
             result: {
+              workingDir: child?.workingDir ?? '',
               runSequence: params.runSequence,
               status: params.status,
               text: notificationPlainText(params.resultSummary ?? ''),
@@ -1097,7 +1101,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
             ${messages.agentMeta} IS NULL
             OR json_extract(${messages.agentMeta}, '$.botCollaboration.role') IS NULL
             OR json_extract(${messages.agentMeta}, '$.botCollaboration.role')
-               NOT IN ('delegation-request', 'interjection')
+               NOT IN ('delegation-request', 'interjection', 'delegation-result')
           )`,
         ),
       )

@@ -110,11 +110,12 @@ const latestMessageText = vi.fn<
 vi.mock('../localDb/latestMessageText', () => ({
   latestMessageText: (sessionId: string, role: string) => latestMessageText(sessionId, role),
 }));
-const readSessionNotificationPreview = vi.fn(async (_sessionId: string): Promise<{ teammateName?: string; reply?: { clientId: string; text: string } }> => ({}));
+const readSessionNotificationPreview = vi.fn(async (_sessionId: string, _includeReply = true): Promise<import('../localDb/sessionNotificationPreview').SessionNotificationPreview> => ({}));
 vi.mock('../localDb/sessionNotificationPreview', () => ({ readSessionNotificationPreview }));
+let ownerScopeCurrent = true;
 vi.mock('../device-link/broadcast-tap', () => ({
   captureDataOwnerBroadcastScope: () => ({}),
-  isDataOwnerBroadcastScopeCurrent: () => true,
+  isDataOwnerBroadcastScopeCurrent: () => ownerScopeCurrent,
 }));
 const drainPersistQueue = vi.fn((): Promise<void> => Promise.resolve());
 vi.mock('../messagePersistBroadcaster', () => ({
@@ -140,13 +141,15 @@ async function freshService() {
   notificationCtor.mockClear();
   warn.mockClear();
   notificationSupported = true;
+  ownerScopeCurrent = true;
   markSessionNeedsAttention.mockClear();
   sendMobileSessionNotify.mockClear();
   getMobileNotifyGeneration.mockClear();
   latestMessageText.mockClear();
-  readSessionNotificationPreview.mockReset().mockImplementation(async (sessionId) => {
+  readSessionNotificationPreview.mockReset().mockImplementation(async (sessionId, includeReply = true) => {
+    if (!includeReply) return {};
     const text = await latestMessageText(sessionId, 'assistant');
-    return text ? { reply: { clientId: 'reply-id', text } } : {};
+    return text ? { reply: { clientId: 'reply-id', text }, eventId: 'reply-id' } : {};
   });
   drainPersistQueue.mockClear();
   const service = await import('../notificationService');
@@ -251,25 +254,75 @@ describe('notificationService — channels 分发', () => {
     expect(sendMobileSessionNotify).toHaveBeenCalledTimes(1);
   });
 
-  it('持久化队列挂死时不阻塞 invoke 与飞书分支(mobile 摘要 fire-and-forget)', async () => {
+  it('delivers a bounded fallback when persistence stalls, without a late or retried duplicate', async () => {
     const { initNotificationService } = await freshService();
     const feishuIm = makeFeishuIm('ou_owner');
     initNotificationService(baseDeps(feishuIm));
-    // 队列 pending 不 resolve —— 模拟别的会话慢写入长期占住全局队列。
-    drainPersistQueue.mockReturnValueOnce(new Promise<void>(() => {}));
-
-    await expect(
-      invokeHandler({
-        sessionId: 's1',
-        title: 'Hello',
-        kind: 'done',
-        channels: { desktop: false, feishu: true, mobile: true },
-      }),
-    ).resolves.toBeUndefined();
+    vi.useFakeTimers();
+    let release!: () => void;
+    drainPersistQueue.mockReturnValueOnce(new Promise<void>((resolve) => { release = resolve; }));
+    readSessionNotificationPreview.mockImplementation(async (_id, includeReply = true) => ({
+      teammateName: 'Cindy', eventId: 'turn:100:200',
+      ...(includeReply ? { reply: { clientId: 'final-2', text: '**Finished**' } } : {}),
+    }));
+    const payload = { sessionId: 's1', title: 'Cindy', kind: 'done', channels: { desktop: true, feishu: true, mobile: true } };
+    await registeredHandlers.get('notification:show-session-event')!({}, payload);
     expect(feishuIm.sendMarkdownText).toHaveBeenCalledTimes(1);
-    // mobile 发送仍卡在队列上,不应已触发
-    await flushAsync();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(notificationCtor).toHaveBeenCalledWith(expect.objectContaining({ title: 'Cindy', body: '有新回复' }));
+    expect(sendMobileSessionNotify).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'turn:100:200', fallbackBody: '有新回复' }));
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    await registeredHandlers.get('notification:show-session-event')!({}, payload);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(notificationCtor).toHaveBeenCalledTimes(1);
+    expect(sendMobileSessionNotify).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops the bounded fallback after the data owner changes', async () => {
+    const { initNotificationService } = await freshService();
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    vi.useFakeTimers();
+    drainPersistQueue.mockReturnValueOnce(new Promise<void>(() => {}));
+    await registeredHandlers.get('notification:show-session-event')!({}, {
+      sessionId: 's1', title: 'Old account', kind: 'done', channels: { desktop: true, mobile: true },
+    });
+    ownerScopeCurrent = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(notificationCtor).not.toHaveBeenCalled();
     expect(sendMobileSessionNotify).not.toHaveBeenCalled();
+  });
+
+  it.each(['error', 'needs-reply'])('%s desktop notice does not wait for the transcript', async (kind) => {
+    const { initNotificationService } = await freshService();
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    vi.useFakeTimers();
+    drainPersistQueue.mockReturnValueOnce(new Promise<void>(() => {}));
+    await registeredHandlers.get('notification:show-session-event')!({}, {
+      sessionId: 's1', title: 'Hello', kind, channels: { desktop: true, mobile: true },
+    });
+    expect(notificationCtor).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sendMobileSessionNotify).toHaveBeenCalledTimes(1);
+    drainPersistQueue.mockReset().mockResolvedValue();
+  });
+
+  it('keeps the teammate fallback when final preview lookup rejects', async () => {
+    const { initNotificationService } = await freshService();
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    readSessionNotificationPreview.mockResolvedValueOnce({ teammateName: 'Cindy', eventId: 'turn:100:200' })
+      .mockRejectedValueOnce(new Error('read unavailable'));
+    await invokeHandler({ sessionId: 's1', title: 'Cindy', kind: 'done', channels: { desktop: true, mobile: true } });
+    expect(notificationCtor).toHaveBeenCalledWith(expect.objectContaining({ title: 'Cindy', body: '有新回复' }));
+    expect(sendMobileSessionNotify).toHaveBeenCalledWith(expect.objectContaining({ fallbackBody: '有新回复' }));
+  });
+
+  it('still delivers the base notice if even the initial lookup fails', async () => {
+    const { initNotificationService } = await freshService();
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    readSessionNotificationPreview.mockRejectedValueOnce(new Error('read unavailable'));
+    await invokeHandler({ sessionId: 's1', title: 'Task', kind: 'done' });
+    expect(notificationCtor).toHaveBeenCalledTimes(1);
   });
 
   it('channels.mobile === true → 调用手机推送分发(标题兜底后的 safeTitle)', async () => {
@@ -541,12 +594,12 @@ describe('notificationService — channels 分发', () => {
 describe('teammate reply previews', () => {
   it('shows current final Markdown as plain text on desktop and keeps mobile routing/fallback', async () => {
     const { initNotificationService } = await freshService();
-    readSessionNotificationPreview.mockResolvedValue({ teammateName: 'Cindy', reply: { clientId: 'final-2', text: '**完成**：[报告](https://example.com) `a_b * 2`' } });
+    readSessionNotificationPreview.mockResolvedValue({ teammateName: 'Cindy', eventId: 'turn:100:200', reply: { clientId: 'final-2', text: '**完成**：[报告](https://example.com) `a_b * 2`' } });
     initNotificationService(baseDeps(makeFeishuIm('owner')));
     const payload = { sessionId: 'bot-main', title: 'Cindy · Old title', kind: 'done', channels: { desktop: true, mobile: true } };
     await invokeHandler(payload);
     expect(notificationCtor).toHaveBeenCalledWith(expect.objectContaining({ title: 'Cindy', body: '完成：报告 a_b * 2' }));
-    expect(sendMobileSessionNotify).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'bot-main', title: 'Cindy', eventId: 'final-2', fallbackBody: '有新回复' }));
+    expect(sendMobileSessionNotify).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'bot-main', title: 'Cindy', eventId: 'turn:100:200', fallbackBody: '有新回复' }));
     await invokeHandler(payload);
     expect(notificationCtor).toHaveBeenCalledTimes(1);
     expect(sendMobileSessionNotify).toHaveBeenCalledTimes(1);

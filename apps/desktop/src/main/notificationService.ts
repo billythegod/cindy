@@ -30,7 +30,7 @@ import * as path from 'node:path';
 import { markSessionNeedsAttention } from './appBadgeService';
 import { getMobileNotifyGeneration, sendMobileSessionNotify } from './device-link';
 import { notificationPreview } from './notificationPreview';
-import { readSessionNotificationPreview } from './localDb/sessionNotificationPreview';
+import { readSessionNotificationPreview, type SessionNotificationPreview } from './localDb/sessionNotificationPreview';
 import { captureDataOwnerBroadcastScope, isDataOwnerBroadcastScopeCurrent } from './device-link/broadcast-tap';
 import { latestMessageText } from './localDb/latestMessageText';
 import { drainPersistQueue } from './messagePersistBroadcaster';
@@ -98,6 +98,8 @@ interface ShowSessionEventPayload {
 // close/click 后再 release。
 const liveNotifications = new Set<Notification>();
 const notifiedReplies = new Map<string, string>();
+// A slow transcript must not indefinitely hide a completion or an action request.
+const NOTIFICATION_PREVIEW_WAIT_MS = 1_000;
 
 /**
  * 把窗口拉到前台并广播 sessionId 给 renderer 路由跳转。
@@ -173,25 +175,54 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
       const wantFeishu = channels?.feishu === true;
       markSessionNeedsAttention(sessionId);
 
-      // Content is read from main's durable transcript, never supplied by renderer.
-      // Keep unrelated channels independent of the persistence barrier.
+      // Action/error desktop notices have no transcript preview and must be immediate.
+      if (wantDesktop && kind !== 'done') {
+        showDesktopSessionEvent(getWindow, { sessionId, title: safeTitle, kind });
+      }
+      // Content is read from main's transcript. Bound only enrichment, not delivery;
+      // a timeout is not a dedupe window and never causes a second late toast.
       void (async () => {
-        await drainPersistQueue();
-        if (!isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
-        const preview = kind === 'done' ? await readSessionNotificationPreview(sessionId) : undefined;
-        if (!isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
-        if (preview?.suppress) return;
-        const teammate = preview?.teammateName !== undefined;
+        let preview: SessionNotificationPreview | undefined;
+        let detail: string | undefined;
+        if (kind === 'done' || (kind === 'needs-reply' && channels?.mobile === true)) {
+          let finished = false;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              (async () => {
+                if (kind === 'done') {
+                  // Read identity/turn first so a blocked write still has the correct
+                  // teammate fallback, suppression and semantic event id.
+                  preview = await readSessionNotificationPreview(sessionId, false);
+                }
+                if (finished || !isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
+                await drainPersistQueue();
+                if (finished || !isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
+                if (kind === 'done') {
+                  preview = await readSessionNotificationPreview(sessionId);
+                  detail = preview.reply?.text;
+                } else {
+                  detail = await latestMessageText(sessionId, 'assistant');
+                }
+              })(),
+              new Promise<void>((resolve) => { timer = setTimeout(resolve, NOTIFICATION_PREVIEW_WAIT_MS); }),
+            ]);
+          } catch (err) {
+            log.warn('[notification] preview unavailable; using fallback', err);
+          } finally {
+            finished = true;
+            clearTimeout(timer);
+          }
+        }
+        if (!isDataOwnerBroadcastScopeCurrent(ownerScope) || preview?.suppress) return;
+        const teammate = !!preview?.teammateName;
         const notificationTitle = preview?.teammateName ?? safeTitle;
-        const eventId = preview?.eventId ?? preview?.reply?.clientId;
+        const eventId = preview?.eventId;
         const eventKey = `${generation}:${sessionId}`;
         if (eventId && notifiedReplies.get(eventKey) === eventId) return;
         if (eventId) notifiedReplies.set(eventKey, eventId);
         const fallbackBody = teammate ? getTeammateNotificationFallback() : undefined;
-        const detail = kind === 'done' ? preview?.reply?.text
-          : kind === 'needs-reply' ? await latestMessageText(sessionId, 'assistant') : undefined;
-        if (!isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
-        if (wantDesktop) showDesktopSessionEvent(getWindow, {
+        if (wantDesktop && kind === 'done') showDesktopSessionEvent(getWindow, {
           sessionId, title: notificationTitle, kind, teammate,
           body: teammate ? notificationPreview(detail ?? '') || fallbackBody : undefined,
         });

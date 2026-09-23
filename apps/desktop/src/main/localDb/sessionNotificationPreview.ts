@@ -1,11 +1,11 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDbClient } from './client/current.js';
 import { botProfiles, botSessionLinks, messages, sessions } from './schema.js';
 import { isTopLevelTitleAssistant } from './latestMessageText.logic.js';
 import { extractText } from '../sessionTaskSummary.logic.js';
 import { selectNotificationReply } from './sessionNotificationPreview.logic.js';
 
-interface SessionNotificationPreview {
+export interface SessionNotificationPreview {
   teammateName?: string;
   reply?: { clientId: string; text: string };
   eventId?: string;
@@ -13,7 +13,7 @@ interface SessionNotificationPreview {
 }
 
 /** Use the durable current turn, never the previous answer or an internal task receipt. */
-export async function readSessionNotificationPreview(sessionId: string): Promise<SessionNotificationPreview> {
+export async function readSessionNotificationPreview(sessionId: string, includeReply = true): Promise<SessionNotificationPreview> {
   const db = getDbClient().drizzle;
   const rows = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
   const current = rows[0];
@@ -28,8 +28,11 @@ export async function readSessionNotificationPreview(sessionId: string): Promise
   const endedAt = current.lastTurnEndedAt ?? 0;
   if (startedAt > endedAt) return { teammateName, suppress: true };
   if (startedAt <= 0) return { teammateName };
-  const recent = await db.select().from(messages).where(eq(messages.sessionId, sessionId))
-    .orderBy(desc(messages.createdAt), desc(messages.clientId)).limit(100);
+  // Stable across preview readiness: a retry after a fallback must not notify twice.
+  const eventId = `turn:${startedAt}:${endedAt}`;
+  if (!includeReply) return { teammateName, eventId };
+  const recent = await db.select().from(messages).where(and(eq(messages.sessionId, sessionId), isNull(messages.rewindAt)))
+    .orderBy(desc(messages.createdAt), desc(sql`rowid`)).limit(100);
   const reply = selectNotificationReply(recent.map((row) => {
     let meta: Record<string, unknown> = {};
     try { meta = row.agentMeta ? JSON.parse(row.agentMeta) : {}; } catch { /* fail closed */ }
@@ -39,5 +42,5 @@ export async function readSessionNotificationPreview(sessionId: string): Promise
       topLevel: isTopLevelTitleAssistant(meta),
     };
   }), Math.max(startedAt, current.clearedAt ?? 0));
-  return { teammateName, reply, eventId: reply?.clientId ?? `turn:${startedAt}:${endedAt}` };
+  return { teammateName, reply, eventId };
 }

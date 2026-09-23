@@ -5886,6 +5886,7 @@ describe('Bot Session task end-to-end runtime', () => {
       const first = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'First report' });
       const second = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Second report' });
       if (!first.ok || !second.ok) throw new Error('Tasks did not start');
+      h.sqlite!.prepare('UPDATE sessions SET working_dir = ? WHERE id IN (?, ?)').run('/child-task', first.childSessionId, second.childSessionId);
       await runtime.dispatch({ targetSessionId: 'session-1', message: 'Another input', clientId: 'interleaved' });
       await Promise.all([
         runtime.settleChild(first.childSessionId, '**First** report'),
@@ -5894,6 +5895,7 @@ describe('Bot Session task end-to-end runtime', () => {
       const results = h.sqlite!.prepare('SELECT client_id, agent_meta FROM messages WHERE session_id = ? AND client_id LIKE ? ORDER BY created_at')
         .all('session-1', 'bot-delegation-result:%') as { agent_meta: string }[];
       expect(results).toHaveLength(2);
+      expect(results.every(row => JSON.parse(row.agent_meta).botCollaboration.result.workingDir === '/child-task')).toBe(true);
       expect(results.map(row => JSON.parse(row.agent_meta).botCollaboration.result.text).sort()).toEqual(['First report', 'Second report']);
       expect(results.every(row => JSON.parse(row.agent_meta).botCollaboration.result.artifacts[0].absolutePath === '/reports/report.pdf')).toBe(true);
       expect(runtime.started.filter(turn => turn.sessionId === first.childSessionId)).toHaveLength(1);
@@ -5951,9 +5953,10 @@ describe('Bot Session task end-to-end runtime', () => {
       const resultCards = h.sqlite!.prepare(
         'SELECT client_id, agent_meta FROM messages WHERE session_id = ? AND client_id LIKE ? ORDER BY created_at',
       ).all('session-1', `bot-delegation-result:${started.delegationId}:%`) as Array<{ client_id: string; agent_meta: string }>;
+      const workingDir = h.sqlite!.prepare('SELECT working_dir FROM sessions WHERE id = ?').pluck().get(started.childSessionId);
       expect(resultCards.map(row => JSON.parse(row.agent_meta).botCollaboration.result)).toEqual([
-        { runSequence: 1, status: 'completed', text: '第一版结果。', artifacts: [] },
-        { runSequence: 2, status: 'completed', text: '第二版结果，含风险清单。', artifacts: [] },
+        { workingDir, runSequence: 1, status: 'completed', text: '第一版结果。', artifacts: [] },
+        { workingDir, runSequence: 2, status: 'completed', text: '第二版结果，含风险清单。', artifacts: [] },
       ]);
       expect(h.sqlite!.prepare('SELECT COUNT(*) AS n FROM messages WHERE client_id = ?')
         .get(`bot-delegation-request:${started.delegationId}`)).toEqual({ n: 1 });
@@ -6033,7 +6036,7 @@ describe('Bot Session task end-to-end runtime', () => {
     }
   });
 
-  it('recovers the child answer from the transcript when done.result is empty', async () => {
+  it.each(['delegation-request', 'interjection', 'delegation-result'])('recovers the child answer without promoting a nested %s receipt', async (nestedRole) => {
     await seedPair();
     const runtime = createDelegationRuntime();
     try {
@@ -6052,6 +6055,9 @@ describe('Bot Session task end-to-end runtime', () => {
         '三个版本都兼容。交付物：cindy-media://blobs/recovered-result.png',
         20_000,
       );
+      h.sqlite!.prepare(`INSERT INTO messages (id, client_id, session_id, role, content, created_at, agent_meta)
+        VALUES ('nested', 'nested', ?, 'assistant', 'Nested result, not the outer answer', 21000, ?)`)
+        .run(childSessionId, JSON.stringify({ botCollaboration: { role: nestedRole } }));
       await runtime.delegation.settleSession({
         childSessionId,
         outcome: 'done',
