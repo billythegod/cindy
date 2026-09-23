@@ -160,6 +160,39 @@ describe('initialization failure diagnostics', () => {
     expect(prefs.isModelEnabled('pi', 'xd', { id: 'kept-off', defaultEnabled: true })).toBe(false);
   });
 
+  it('保留损坏的 initialization，直到显式恢复默认后才允许目录迁移', async () => {
+    ownerClaim.profileOrigin = 'existing';
+    const initializationKey = 'xdt:modelVisibilityPrefs:v1.initialization.owner.owner-a';
+    const mapKey = 'xdt:modelVisibilityPrefs:v1.owner.owner-a';
+    const initialization = '{ damaged initialization';
+    const map = JSON.stringify({ 'pi:xd:kept-off': false });
+    memStorage.setItem('xdt:modelVisibilityPrefs:v1.migration-complete.owner.owner-a', '1');
+    memStorage.setItem(initializationKey, initialization);
+    memStorage.setItem(mapKey, map);
+    const prefs = await loadModuleForOwner();
+    const catalog = {
+      id: 'xd', agents: ['pi'], routing: {},
+      models: { pi: [{ id: 'recovered', defaultEnabled: true }] },
+    } as unknown as ProviderView;
+
+    expect(prefs.getModelVisibilityInitializationFailure('owner-a', 1)).toBe('preferences-corrupt');
+    expect(await prefs.migrateModelVisibilityDefaults('owner-a', 1, [catalog])).toBe(false);
+    expect(memStorage.getItem(initializationKey)).toBe(initialization);
+    expect(memStorage.getItem(mapKey)).toBe(map);
+    expect(prefs.getModelVisibilityInitializationFailure('owner-a', 1)).toBe('preferences-corrupt');
+
+    expect(await prefs.resetModelVisibilities('xd', [{ agent: 'pi', modelId: 'recovered' }])).toBe(true);
+    expect(prefs.getModelVisibilityInitializationFailure('owner-a', 1)).toBeNull();
+    expect(JSON.parse(memStorage.getItem(initializationKey)!)).toMatchObject({
+      eligibleForDefaults: false,
+      followCatalogKeys: ['pi:xd:recovered'],
+    });
+    expect(await prefs.migrateModelVisibilityDefaults('owner-a', 1, [catalog])).toBe(true);
+    expect(prefs.isModelEnabled('pi', 'xd', { id: 'recovered', defaultEnabled: false })).toBe(false);
+    expect(prefs.isModelEnabled('pi', 'xd', { id: 'recovered', defaultEnabled: true })).toBe(true);
+    expect(prefs.isModelEnabled('pi', 'xd', { id: 'kept-off', defaultEnabled: true })).toBe(false);
+  });
+
   it('does not attribute a late lock rejection to the next account', async () => {
     let reject!: (error: Error) => void;
     const locks = new Locks();
