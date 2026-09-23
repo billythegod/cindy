@@ -297,6 +297,36 @@ describe("RpcClient", () => {
     expect(stream.destroyed).toBe(true);
   });
 
+  it("rejects requests created inside a close subscriber instead of letting them hang", async () => {
+    // Greptile review: closeFired 在订阅者执行前置位, close 回调期间同步
+    // request() 会通过 stream.destroyed 入口检查加入 pending, 随后的 close
+    // 事件被 once 守卫跳过, 该请求永远等不到拒绝(禁用超时时永久挂起)。
+    // request() 必须在 closeFired 后立即拒绝(对齐 cc-manager)。
+    const { stream } = makeTestStream();
+    const client = new RpcClient(stream, { requestTimeoutMs: 60_000 });
+    let duringClose: Promise<void> | null = null;
+    client.subscribeClose(() => {
+      // 断言在订阅者内同步挂上,避免 rejection 在 tick 间成为 unhandled。
+      duringClose = expect(
+        client.request(
+          "pi/list" as Parameters<typeof client.request>[0],
+          {},
+          { timeoutMs: 0 },
+        ),
+      ).rejects.toThrow("pi-manager client stream closed");
+    });
+
+    stream.push(null); // end → close subscriber 同步 request()
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(duringClose).not.toBeNull();
+    await duringClose!;
+    // after-close 入口同样拒绝
+    await expect(
+      client.request("pi/list" as Parameters<typeof client.request>[0], {}, { timeoutMs: 0 }),
+    ).rejects.toThrow("pi-manager client stream closed");
+  });
+
   /* ---------------------------------------------------------------------- */
   /*  5. dispose 幂等：调两次不抛                                            */
   /* ---------------------------------------------------------------------- */
