@@ -17,7 +17,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { promises as fs, renameSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 
@@ -156,16 +156,27 @@ function sanitizeBaseName(name: string): string {
   return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '');
 }
 
-/** 截短到 maxLen 且**保留扩展名**:缓存副本的应用内预览(xdt-file:// 白名单、
+/** 截短到 maxBytes UTF-8 字节且**保留扩展名**:缓存副本的应用内预览(xdt-file:// 白名单、
  *  图片/视频分派)按缓存文件名的扩展名判定,截断丢了 .png/.mp4 会 415。
  *  超长"扩展名"(最后一个点离结尾很远)按无扩展名处理,不为它牺牲主干。 */
-function shortenKeepExt(name: string, maxLen: number): string {
-  if (name.length <= maxLen) return name;
+function shortenKeepExt(name: string, maxBytes: number): string {
+  if (Buffer.byteLength(name, 'utf8') <= maxBytes) return name;
+  const truncate = (text: string, budget: number) => {
+    let result = '';
+    for (const character of text) {
+      const bytes = Buffer.byteLength(character, 'utf8');
+      if (bytes > budget) break;
+      result += character;
+      budget -= bytes;
+    }
+    return result;
+  };
   const ext = path.extname(name);
-  if (ext.length > 1 && ext.length <= 16) {
-    return name.slice(0, Math.max(1, maxLen - ext.length)) + ext;
+  const extBytes = Buffer.byteLength(ext, 'utf8');
+  if (ext.length > 1 && extBytes <= 16) {
+    return truncate(name.slice(0, -ext.length), maxBytes - extBytes) + ext;
   }
-  return name.slice(0, maxLen);
+  return truncate(name, maxBytes);
 }
 
 function cachePathFor(id: RemoteFileIdentity): string {
@@ -269,10 +280,6 @@ export async function fetchRemoteFileToCache(
   assertCacheOwner(scope);
   if (signal?.aborted) throw new Error('FILE_PEER_CANCELLED');
   id = { ...id, scope };
-  const report: FetchProgressFn = (...args) => {
-    assertCacheOwner(scope);
-    onProgress(...args);
-  };
   const dest = cachePathFor(id);
   const existing = inflight.get(dest);
   if (existing && !existing.controller.signal.aborted) {
@@ -295,6 +302,10 @@ export async function fetchRemoteFileToCache(
   const assertActive = () => {
     assertCacheOwner(scope);
     if (controller.signal.aborted) throw new Error('FILE_PEER_CANCELLED');
+  };
+  const report: FetchProgressFn = (...args) => {
+    assertCacheOwner(scope);
+    if (!controller.signal.aborted) onProgress(...args);
   };
   const firstConsumer = Symbol('remote-file-consumer');
   const run = (async () => {
@@ -328,9 +339,11 @@ export async function fetchRemoteFileToCache(
         // 远端文件在取回途中变化(size 对不上)——废弃,让 caller 报错重试。
         throw new Error(`fetched size mismatch: got ${got.size}, expect ${id.size}`);
       }
-      await fs.rename(tmp, dest);
-      if (scope !== activeOwnerScopeKey()) await fs.rm(dest, { force: true });
-      assertCacheOwner(scope);
+      // Only the same-directory metadata publication is synchronous: cancellation
+      // cannot interleave between the active check and rename and let an abandoned
+      // publisher overwrite a replacement. Download/write/stat remain asynchronous.
+      assertActive();
+      renameSync(tmp, dest);
     } finally {
       await fs.rm(tmp, { force: true }).catch(() => undefined);
     }

@@ -1,7 +1,13 @@
 import fs from 'node:fs/promises';
+import * as nodeFs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, renameSync: vi.fn(actual.renameSync) };
+});
 
 const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-cache-versions-'));
 vi.mock('electron', () => ({ app: { getPath: () => userDataDir } }));
@@ -82,11 +88,19 @@ it.each([true, false])(
   },
 );
 
-it('downloads long multibyte filenames using a short independent staging name', async () => {
-  const file = { ...id, relPath: `${'文'.repeat(60)}.txt` };
-  const result = await fetchRemoteFileToCache(file, (dest) => fs.writeFile(dest, 'new'), vi.fn());
-  expect(await fs.readFile(result, 'utf8')).toBe('new');
-});
+it.each(['文'.repeat(70), '😀'.repeat(60)])(
+  'bounds multibyte cache components: %s',
+  async (stem) => {
+    const file = { ...id, relPath: `${stem}.txt` };
+    const result = await fetchRemoteFileToCache(file, (dest) => fs.writeFile(dest, 'new'), vi.fn());
+    expect(await fs.readFile(result, 'utf8')).toBe('new');
+    expect(Buffer.byteLength(path.basename(result), 'utf8')).toBeLessThanOrEqual(255);
+    expect(path.extname(result)).toBe('.txt');
+    const inline = { ...file, mtimeMs: 2000 };
+    await putCachedContent(inline, 'end');
+    expect(await fs.readFile(__cacheTesting.cachePathFor(inline), 'utf8')).toBe('end');
+  },
+);
 
 it('distinguishes same-size sub-millisecond versions in downloads and write-through', async () => {
   await putCachedContent(id, 'old');
@@ -130,17 +144,19 @@ it.each(['resolve', 'reject'] as const)(
     const controller = new AbortController();
     let oldTemp = '';
     let newTemp = '';
+    const oldProgress = vi.fn();
     const first = fetchRemoteFileToCache(
       id,
-      async (dest) => {
+      async (dest, report) => {
         oldTemp = dest;
         await fs.writeFile(dest, 'old');
         oldStarted.resolve();
         await releaseOld.promise;
+        report(3, 3);
         if (settle === 'reject') throw new Error('late failure');
         // Deliberately ignore abort and attempt to finish with stale bytes.
       },
-      vi.fn(),
+      oldProgress,
       controller.signal,
     );
     await oldStarted.promise;
@@ -161,6 +177,7 @@ it.each(['resolve', 'reject'] as const)(
         await expect(fs.stat(oldTemp)).rejects.toMatchObject({ code: 'ENOENT' });
       });
       expect(await fs.readFile(newTemp, 'utf8')).toBe('new');
+      expect(oldProgress).not.toHaveBeenCalled();
       const unexpected = vi.fn();
       const joined = fetchRemoteFileToCache(id, unexpected, vi.fn());
       releaseNew.resolve();
@@ -175,6 +192,56 @@ it.each(['resolve', 'reject'] as const)(
     }
   },
 );
+
+it('does not change the retry result when cancellation meets the publication boundary', async () => {
+  const publishing = barrier();
+  const release = barrier();
+  const cleaned = barrier();
+  const rename = fs.rename.bind(fs);
+  const { renameSync } = await vi.importActual<typeof import('node:fs')>('node:fs');
+  const rm = fs.rm.bind(fs);
+  let oldTemp = '';
+  // An async publisher may be queued in the OS while a replacement publishes.
+  vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+    if (from === oldTemp) {
+      publishing.resolve();
+      await release.promise;
+    }
+    await rename(from, to);
+  });
+  vi.spyOn(nodeFs, 'renameSync').mockImplementation((from, to) => {
+    renameSync(from, to);
+    if (from === oldTemp) publishing.resolve();
+  });
+  vi.spyOn(fs, 'rm').mockImplementation(async (target, options) => {
+    await rm(target, options);
+    if (target === oldTemp) cleaned.resolve();
+  });
+  const controller = new AbortController();
+  const first = fetchRemoteFileToCache(
+    id,
+    async (dest) => {
+      oldTemp = dest;
+      await fs.writeFile(dest, 'old');
+    },
+    vi.fn(),
+    controller.signal,
+  );
+  const firstSettled = first.catch(() => undefined);
+  await publishing.promise;
+  try {
+    controller.abort();
+    await firstSettled;
+    const result = await fetchRemoteFileToCache(id, (dest) => fs.writeFile(dest, 'new'), vi.fn());
+    const returnedContent = await fs.readFile(result, 'utf8');
+    release.resolve();
+    await cleaned.promise;
+    expect(await fs.readFile(result, 'utf8')).toBe(returnedContent);
+  } finally {
+    release.resolve();
+    await cleaned.promise;
+  }
+});
 
 it('does not start work for an already cancelled caller', async () => {
   const controller = new AbortController();
