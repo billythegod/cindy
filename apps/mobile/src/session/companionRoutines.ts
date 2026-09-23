@@ -68,7 +68,11 @@ export function parseRoutineDetail(raw: unknown): RoutineDetail {
   if (!r || (r.id !== null && !bounded(r.id, 128)) || !Number.isSafeInteger(r.revision) || typeof r.editable !== 'boolean' || !Array.isArray(r.sources) || !Array.isArray(r.history)) throw new Error('Invalid automation detail');
   const input = r.input === null ? null : parseRoutineDefinition(r.input);
   if (r.input !== null && input === null) throw new Error('Unsupported automation definition');
-  return { supportsPreRunCheck: r.supportsPreRunCheck === true, id: r.id as string | null, revision: Number(r.revision), editable: r.editable, input,
+  return { supportsPreRunCheck: r.supportsPreRunCheck === true, id: r.id as string | null, revision: Number(r.revision), editable: r.editable,
+    // Older saved routines were quiet when this field was absent. Keep their
+    // visible choice while blank new forms continue to start with false.
+    input: input && r.id !== null && r.supportsPreRunCheck === true
+      ? { ...input, silentWhenIdle: input.silentWhenIdle ?? true } : input,
     sources: r.sources.slice(0, 64).flatMap((raw) => {
       const s = record(raw);
       if (!s || !bounded(s.id) || !bounded(s.name) || !bounded(s.status) || !Array.isArray(s.events)) return [];

@@ -111,7 +111,9 @@ async function execute(scope: string, routine: Routine, run: RoutineRun, signal:
     workspaceKind: 'dialogue',
     useWorktree: false,
     targetSessionId: bot.canonicalSessionId,
-    silentWhenIdle: routine.silentWhenIdle ?? false,
+    // Rules saved before this preference existed were quiet; only new omissions
+    // are persisted as false by RoutineEngine.
+    silentWhenIdle: routine.silentWhenIdle ?? true,
     preRunHook: routine.preRunHook ?? undefined,
     notify: { desktop: true, feishu: false },
     status: 'active',

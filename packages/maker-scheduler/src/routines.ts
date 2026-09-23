@@ -45,7 +45,7 @@ export interface Routine {
   prompt: string;
   enabled: boolean;
   triggers: RoutineTrigger[];
-  /** Omitted on legacy rules: preserve their existing silent behavior. */
+  /** Omitted on legacy rules: preserve their existing silent behavior; new omissions persist false. */
   silentWhenIdle?: boolean;
   /** null explicitly removes the check; omission preserves it on older clients. */
   preRunHook?: PreRunHookConfig | null;

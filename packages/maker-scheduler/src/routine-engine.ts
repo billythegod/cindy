@@ -217,7 +217,13 @@ export class RoutineEngine {
           )
         : undefined;
       // Omitted optional fields from older clients preserve saved choices.
-      const input = parseRoutineInput({ ...existing, ...parsed });
+      const input = parseRoutineInput({
+        ...existing,
+        ...parsed,
+        // Legacy saved definitions may omit this field and must stay quiet.
+        // A newly created, unclassified reminder must retain delivery.
+        ...(!existing && parsed.silentWhenIdle === undefined ? { silentWhenIdle: false } : {}),
+      });
       if (id && !existing && !creationId) throw new Error("Routine not found");
       if (creationId && state.routines.some(row => row.id === creationId && row.botId !== botId)) throw new Error("Routine creation ID already used");
       if (creationId && existing && JSON.stringify(parseRoutineInput(existing)) !== JSON.stringify(input)) throw new Error("Routine already created; refresh before editing");

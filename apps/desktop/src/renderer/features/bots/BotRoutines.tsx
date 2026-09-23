@@ -120,7 +120,7 @@ export function BotRoutines({
       prompt: value.prompt,
       enabled: value.enabled,
       triggers: value.triggers,
-      silentWhenIdle: value.silentWhenIdle ?? false,
+      silentWhenIdle: value.silentWhenIdle ?? true,
       preRunHook: value.preRunHook ?? null,
     });
   const saved = routines.find((item) => item.id === selected);
@@ -312,7 +312,7 @@ export function BotRoutines({
           <details className="space-y-3">
             <summary className="min-h-8 cursor-pointer rounded-full py-2 focus-visible:outline focus-visible:outline-[var(--focus-ring)]">{t('routines.advancedSettings')}</summary>
             <label className="flex min-h-8 items-center gap-2">
-              <Switch aria-label={t('routines.quiet')} checked={draft.silentWhenIdle ?? false} onCheckedChange={(silentWhenIdle) => setDraft({ ...draft, silentWhenIdle })} />
+              <Switch aria-label={t('routines.quiet')} checked={draft.silentWhenIdle ?? true} onCheckedChange={(silentWhenIdle) => setDraft({ ...draft, silentWhenIdle })} />
               {t('routines.quiet')}
             </label>
             <p className="text-12 text-[var(--text-secondary)]">{t('routines.quietHint')}</p>

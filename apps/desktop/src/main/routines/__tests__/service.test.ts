@@ -106,8 +106,26 @@ it('keeps an unclassified teammate reminder audible when quiet is omitted', asyn
     triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
   });
   await routineTools.runNow('bot', reminder.id);
+  expect(reminder.silentWhenIdle).toBe(false);
   await vi.waitFor(() => expect(mock.storage.insert).toHaveBeenCalledWith(
     expect.objectContaining({ silentWhenIdle: false }),
+  ));
+});
+it('keeps a persisted legacy routine quiet when its preference is absent', async () => {
+  const routine = await routineTools.save('bot', {
+    name: 'Old check', prompt: 'Check the PR', enabled: true,
+    triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
+  });
+  const saved = structuredClone(mock.save.mock.calls.at(-1)![0]) as RoutineState;
+  delete saved.routines[0]!.silentWhenIdle;
+  await stopRoutines();
+  mock.load.mockResolvedValue(saved);
+  mock.profiles = [{ id: 'bot', status: 'active' }];
+  const restored = await routineTools.list('bot');
+  expect(restored[0]?.silentWhenIdle).toBeUndefined();
+  await routineTools.runNow('bot', routine.id);
+  await vi.waitFor(() => expect(mock.storage.insert).toHaveBeenCalledWith(
+    expect.objectContaining({ silentWhenIdle: true }),
   ));
 });
 it('invalidates an in-progress startup before reset completes', async () => {

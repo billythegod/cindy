@@ -47,4 +47,7 @@ it('round trips quiet settings and distinguishes model skips without guessing ho
   const detail = { id: 'check', revision: 1, editable: true, input, sources: [], history: [{ id: 'run', status: 'skipped', createdAt: 1 }] };
   expect(parseRoutineDetail(detail).supportsPreRunCheck).toBe(false);
   expect(parseRoutineDetail({ ...detail, supportsPreRunCheck: true })).toMatchObject({ supportsPreRunCheck: true, input, history: [{ status: 'skipped' }] });
+  const legacy = { ...detail, input: { name: input.name, prompt: input.prompt, enabled: input.enabled, triggers: input.triggers } };
+  expect(parseRoutineDetail({ ...legacy, supportsPreRunCheck: true }).input?.silentWhenIdle).toBe(true);
+  expect(parseRoutineDetail(legacy).input?.silentWhenIdle).toBeUndefined();
 });

@@ -716,6 +716,20 @@ it('keeps committed deduplication across restart and expires it after the bounde
 });
 
 describe('routine check configuration', () => {
+  it('persists an audible default for new rules without migrating legacy omissions', async () => {
+    const f = await fixture();
+    try {
+      const created = await f.engine.put('bot', input);
+      expect(created.silentWhenIdle).toBe(false);
+      const oldState = f.snapshot()!;
+      delete oldState.routines[0]!.silentWhenIdle;
+      const restarted = await fixture(undefined, oldState);
+      try {
+        const edited = await restarted.engine.put('bot', { ...input, name: 'Edited old rule' }, created.id);
+        expect(edited.silentWhenIdle).toBeUndefined();
+      } finally { await restarted.engine.stop(); }
+    } finally { await f.engine.stop(); }
+  });
   it('round trips preferences, preserves omitted fields from old clients, and allows removal', async () => {
     const f = await fixture();
     try {
