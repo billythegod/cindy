@@ -92,13 +92,27 @@ it('exposes caller-bound notification and installer without executing checks dur
       hookScript: { install, resolveSessionWorkDir: async () => '/routine' } },
   }, () => 'canonical');
   expect(registry.list('bots').map((tool) => tool.name)).toContain('schedule_notify_current_run');
+  expect(registry.get('schedule_set_pre_run_hook')?.inputShape).not.toHaveProperty('workingDir');
   expect(install).not.toHaveBeenCalled();
   expect((await registry.call('schedule_notify_current_run', {})).isError).not.toBe(true);
   expect(resolveInflightRunForSession).toHaveBeenCalledWith('canonical');
   expect(notifyRun).toHaveBeenCalledExactlyOnceWith('current-run');
   expect((await registry.call('schedule_notify_current_run', { runId: 'other' })).isError).toBe(true);
   expect((await registry.call('schedule_set_pre_run_hook', { script: 'process.exit(2)', scheduleId: 'other' })).isError).toBe(true);
+  expect((await registry.call('schedule_set_pre_run_hook', { script: 'process.exit(2)', workingDir: '/unrelated' })).isError).toBe(true);
   expect(install).not.toHaveBeenCalled();
   expect((await registry.call('schedule_set_pre_run_hook', { script: 'process.exit(2)' })).isError).not.toBe(true);
   expect(install).toHaveBeenCalledWith(expect.objectContaining({ workingDir: '/routine' }));
+});
+
+it('does not install a companion check when its canonical workspace cannot be resolved', async () => {
+  const registry = new XdtHelperToolRegistry();
+  const install = vi.fn<SchedulerHookScriptService['install']>();
+  registerBotRoutineTools(registry, {
+    service: {} as BotRoutineCallbacks['service'], resolveBotId: async () => 'bot',
+    scheduler: { getScheduler: () => ({}) as never,
+      hookScript: { install, resolveSessionWorkDir: async () => undefined } },
+  }, () => 'canonical');
+  expect((await registry.call('schedule_set_pre_run_hook', { script: 'process.exit(2)' })).isError).toBe(true);
+  expect(install).not.toHaveBeenCalled();
 });

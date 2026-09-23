@@ -28,8 +28,12 @@ export function registerBotRoutineTools(
     const definition = routines.get(summary.name)!;
     const inputShape = { ...definition.inputShape };
     delete inputShape.botId;
-    // Teammates may install a check for routine_save, never mutate arbitrary schedules.
-    if (summary.name === 'schedule_set_pre_run_hook') delete inputShape.scheduleId;
+    // Teammates may install a check for routine_save, never mutate arbitrary
+    // schedules or choose a directory outside their canonical session root.
+    if (summary.name === 'schedule_set_pre_run_hook') {
+      delete inputShape.scheduleId;
+      delete inputShape.workingDir;
+    }
     if (summary.name === 'schedule_notify_current_run') delete inputShape.runId;
     registry.register({
       ...definition,
@@ -45,7 +49,9 @@ export function registerBotRoutineTools(
           if (summary.name === 'schedule_notify_current_run') delete scopedArgs.runId;
           if (summary.name === 'schedule_set_pre_run_hook') {
             delete scopedArgs.scheduleId;
-            scopedArgs.workingDir ??= await callbacks.scheduler?.hookScript?.resolveSessionWorkDir?.(sessionId);
+            const workingDir = await callbacks.scheduler?.hookScript?.resolveSessionWorkDir?.(sessionId);
+            if (!workingDir?.trim()) throw new Error('无法确定伙伴任务的工作目录');
+            scopedArgs.workingDir = workingDir;
           }
           return definition.handler(scopedArgs);
         } catch (error) {
