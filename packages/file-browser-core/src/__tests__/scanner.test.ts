@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, readFile as fsReadFile, rm, symlink, writeFile as fsWriteFile } from 'node:fs/promises';
+import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createFile,
@@ -31,6 +32,41 @@ async function makeSymlinkFixture(): Promise<
   }
   return { kind: 'ready', root, workdir, relPath: 'linked-outside.txt' };
 }
+
+describe('file-browser scanner readFile short reads', () => {
+  it('loops over short reads until the requested length is filled', async () => {
+    // 回归:readFile 曾用单次 handle.read 且忽略 bytesRead —— NFS/FUSE 式短读
+    // 下未填充的尾部保持 0x00(NUL 落在前 4KiB 二进制探测窗口之外,不会被
+    // 判成 binary),返回的"文本"尾部静默损坏。与 readFileChunk 的循环同因。
+    const root = await mkdtemp(path.join(os.tmpdir(), 'xdt-file-browser-'));
+    try {
+      const content = `${'a'.repeat(8192)}-tail-marker-`;
+      await fsWriteFile(path.join(root, 'short-read.txt'), content, 'utf8');
+
+      const realOpen = fsp.open.bind(fsp);
+      const openSpy = vi.spyOn(fsp, 'open').mockImplementation(async (...args: Parameters<typeof fsp.open>) => {
+        const handle = await realOpen(...args);
+        const realRead = handle.read.bind(handle);
+        const handleAny = handle as unknown as {
+          read: (buf: Buffer, offset: number, length: number, position: number) => Promise<{ bytesRead: number; buffer: Buffer }>;
+        };
+        handleAny.read = async (buf, offset, length, position) =>
+          realRead(buf, offset, Math.min(length, 1000), position);
+        return handle;
+      });
+
+      try {
+        const result = await readFile(root, 'short-read.txt');
+        expect(result.content).toBe(content);
+        expect(result.truncated).toBe(false);
+      } finally {
+        openSpy.mockRestore();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('file-browser scanner symlink boundaries', () => {
   it('rejects read/stat/write through a symlink that escapes the workdir', async () => {
