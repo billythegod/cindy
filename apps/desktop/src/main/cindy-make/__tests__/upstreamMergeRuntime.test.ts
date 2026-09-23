@@ -26,6 +26,7 @@ const h = vi.hoisted(() => ({
   head: 'c'.repeat(40),
   tree: 'd'.repeat(40),
   dirty: false,
+  building: false,
   projected: undefined as CindyMakeMergeState | undefined,
   source: {
     status: 'ready',
@@ -118,6 +119,7 @@ vi.mock('../manager.js', () => ({
       }
     },
     isPreparingSource: () => false,
+    isPersonalBuildRunning: () => h.building,
     refreshSourceStatus: async () => {},
   },
 }));
@@ -213,6 +215,7 @@ beforeEach(() => {
   h.head = 'c'.repeat(40);
   h.tree = 'd'.repeat(40);
   h.dirty = false;
+  h.building = false;
   h.actualRollback = false;
   h.afterReadError = undefined;
   h.refs = new Map();
@@ -300,6 +303,12 @@ it.each(['dev', 'beta', 'release'] as const)(
     ]);
   },
 );
+it('rejects a manual source sync during a personal build without queuing it', async () => {
+  h.building = true;
+  await expect(actUpstreamMerge({ action: 'update' })).rejects.toThrow('busy');
+  expect(h.fetch).not.toHaveBeenCalled();
+  expect(h.projected).toBeUndefined();
+});
 it('uses the same fresh official sync before a task worktree is created', async () => {
   h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'f'.repeat(40) })));
   await syncSourceBeforeCindyMakeTask(new AbortController().signal);

@@ -321,6 +321,8 @@ export async function actUpstreamMerge(raw: unknown): Promise<CindyMakeMergeStat
   }).createOptions;
   if (!controller || unavailable)
     throwIpcError('PRECONDITION_FAILED', 'Upstream merge is unavailable');
+  if (action === 'update' && cindyMakeManager.isPersonalBuildRunning())
+    throwIpcError('PRECONDITION_FAILED', 'busy');
   try {
     return action === 'update'
       ? await controller.update(options)

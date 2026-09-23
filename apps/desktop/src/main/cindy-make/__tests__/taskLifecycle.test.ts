@@ -67,6 +67,7 @@ describe('Main-owned Cindy Make task lifecycle', () => {
   it('reserves one build across entry points and ignores an old release after retry', () => {
     const manager = new CindyMakeManager();
     const release = manager.claimPersonalBuild();
+    expect(manager.isPersonalBuildRunning()).toBe(true);
     expect(manager.hasActiveWork()).toBe(true);
     expect(() => manager.claimPersonalBuild()).toThrow('personal build is running');
     release();
@@ -74,6 +75,7 @@ describe('Main-owned Cindy Make task lifecycle', () => {
     release();
     expect(manager.hasActiveWork()).toBe(true);
     releaseRetry();
+    expect(manager.isPersonalBuildRunning()).toBe(false);
     expect(manager.hasActiveWork()).toBe(false);
   });
   it('publishes only the current build owners and clears them when the lease settles', () => {

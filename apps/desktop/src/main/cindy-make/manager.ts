@@ -145,6 +145,10 @@ export class CindyMakeManager {
     );
   }
 
+  isPersonalBuildRunning(): boolean {
+    return !!this.personalBuild;
+  }
+
   /** Both entry points reserve synchronously, before any asynchronous build work. */
   claimPersonalBuild(
     sessionIds: readonly string[] = [],
