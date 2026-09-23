@@ -75,6 +75,12 @@ export function createDurableOutboxDelivery(deps: DurableOutboxDeliveryDeps) {
       attempts.delete(id(record));
     };
     try {
+      if (record.draftHandoff) {
+        await deps.store.reconcileDrafts(record.item.sessionId);
+        const reconciled = deps.store.getSnapshot().find((r) => id(r) === id(record));
+        if (!reconciled || !current(reconciled)) return;
+        record = reconciled;
+      }
       // Persisted completion never re-enters delivery, even after missing files or lost host history.
       if (isDurableOutboxSettled(record)) return await finish();
       let projection: DeliveryProjection;
@@ -88,9 +94,9 @@ export function createDurableOutboxDelivery(deps: DurableOutboxDeliveryDeps) {
           const session = await deps.session(record);
           if (!current(record)) return;
           if (session?.id === record.item.sessionId && session.status === "deleted") {
-            // Deletion does not prove an earlier enqueue was cancelled. Release
-            // remote uploads only when preparation never permitted an enqueue.
-            return await finish(!record.prepared);
+            // Local preparation is not a send. Older prepared rows remain
+            // uncertain; only an explicit pre-enqueue record proves ownership.
+            return await finish(!record.prepared || record.enqueueStarted === false);
           }
         }
         throw error;
@@ -242,12 +248,13 @@ export function createDurableOutboxDelivery(deps: DurableOutboxDeliveryDeps) {
               : {}),
           },
           retrySafe: projection.inputDeliveryVersion === 1,
+          enqueueStarted: record.enqueueStarted ?? (record.sendAtMs === undefined ? false : undefined),
           clearBoundaryMs: projection.clearBoundaryMs ?? record.clearBoundaryMs,
           sendAtMs: record.sendAtMs ?? Date.now(),
         });
       }
       // This write precedes every external enqueue. Crash recovery therefore knows it must reconcile.
-      await update({ state: "sending", error: undefined });
+      await update({ state: "sending", enqueueStarted: true, error: undefined });
       const result = await deps.enqueue(record);
       if (!current(record)) return;
       deps.applyProjection(record, result);

@@ -193,6 +193,12 @@ export interface AgentEvent {
    */
   runtimeRecovery?: true;
   /**
+   * A complete extension notice, independent of model text assembly and turn
+   * settlement. Hosts deliver it as its own durable message, never as a delta
+   * or a full-text replacement for the currently streaming assistant reply.
+   */
+  standaloneText?: true;
+  /**
    * Provider-owned claim attached synchronously to a `done` boundary when that
    * boundary has an automatic continuation. Consumers pass it back to the
    * session lifecycle API; unlike a live task-map sample it cannot race later
@@ -445,6 +451,10 @@ export interface ImageEventData {
 
 export interface RewindFilesResult {
   canRewind: boolean;
+  /** True when conversation rewind can proceed but no file restore plan exists. */
+  conversationOnly?: boolean;
+  /** Git savepoints are disabled, so file restoration was not available. */
+  gitSafetyDisabled?: boolean;
   error?: string;
   filesChanged?: string[];
   insertions?: number;
@@ -457,6 +467,18 @@ export interface RewindCommitOptions {
    * Claude 路径不消费此字段。
    */
   tailTurnsToDrop?: number;
+  /**
+   * Codex 分页线程拒绝 thread/rollback(-32600 "paginated threads do not support
+   * thread/rollback")时的原生边界:回退目标之前最后一个已完成 turn 的原生
+   * turn id(持久化的 nativeForkAnchor)。有它就直接 thread/fork(lastTurnId)。
+   */
+  lastTurnId?: string;
+  /**
+   * 没有持久化锚点时的兜底:回退目标之前最后一条真实模型/工具输出的时间戳
+   * (ms),由 thread/turns/list 解析出对应原生 turn 边界。与 ForkSdkSessionOptions
+   * 的 forkAtTimestampMs 语义一致。
+   */
+  forkAtTimestampMs?: number;
 }
 
 export interface RewindCommitResult {

@@ -86,7 +86,8 @@ describe("buildUserProvider (per-runtime)", () => {
     expect(a.agents).toEqual(['codex', 'claude-code', 'pi']);
     expect(a.titleModel).toBeTruthy();
     expect(a.models.pi?.length).toBeGreaterThan(0);
-    expect(a.imageModels?.every((model) => model.id.startsWith('openai-a/'))).toBe(true);
+    expect(a.imageModels).toBeUndefined(); // bound from the current public catalog by the host
+    expect(a.imageDefaults).toBeUndefined();
     expect(a.routing.codex?.authStrategy).toBe('oauth-passthrough');
     expect(a.routing.codex?.supportsResponsesCustomTools).not.toBe(false);
     expect(a.id).not.toBe(b.id);
@@ -288,13 +289,91 @@ describe("buildUserProvider (per-runtime)", () => {
       id: "meta/llama-4-405b",
       name: "Llama 4 405B",
       contextWindow: DEFAULT_CUSTOM_CONTEXT_WINDOW,
-      // codex runtime：参考内置默认 effort 档位（low/medium/high/xhigh/max，默认 medium）。
-      efforts: ["low", "medium", "high", "xhigh", "max"],
-      defaultEffort: "medium",
+      // 未声明能力时不指定推理档位，让供应商使用默认行为。
+      efforts: [],
+      defaultEffort: null,
       group: "custom:openrouter",
-      defaultEnabled: true,
+      defaultEnabled: false,
     });
   });
+
+  it.each(["claude-code", "codex", "pi"] as const)(
+    "%s leaves unknown reasoning unspecified and preserves declared capabilities",
+    (agent) => {
+      for (const modelRegistry of [
+        undefined,
+        LEGACY_REGISTRY,
+        BUNDLED_CATALOG.modelRegistry,
+      ]) {
+        const models = [
+          { id: "unknown-model", name: "Unknown" },
+          {
+            id: "discovered-model",
+            name: "Discovered",
+            discoveredMetadata: {
+              efforts: ["low", "high"] as const,
+              defaultEffort: "high" as const,
+            },
+          },
+          {
+            id: "configured-model",
+            name: "Configured",
+            reasoning: true,
+            reasoningEfforts: ["high", "max"] as const,
+            reasoningDefaultEffort: "max" as const,
+            discoveredMetadata: {
+              efforts: ["low"] as const,
+              defaultEffort: "low" as const,
+            },
+          },
+          {
+            id: "disabled-model",
+            name: "Disabled",
+            reasoning: false,
+            discoveredMetadata: {
+              efforts: ["high"] as const,
+              defaultEffort: "high" as const,
+            },
+          },
+        ];
+        const config: CustomProviderConfig = {
+          id: "unknown-provider",
+          name: "Unknown provider",
+          runtimes: {
+            [agent]: { baseUrl: "https://unknown.example/v1", models },
+          },
+        };
+        const before = structuredClone(config);
+        const provider = buildUserProvider(config, { modelRegistry });
+        expect(provider.models[agent]).toEqual([
+          expect.objectContaining({
+            id: "unknown-model",
+            efforts: [],
+            defaultEffort: null,
+          }),
+          expect.objectContaining({
+            id: "discovered-model",
+            efforts: ["low", "high"],
+            defaultEffort: "high",
+          }),
+          expect.objectContaining({
+            id: "configured-model",
+            efforts: ["high", "max"],
+            defaultEffort: "max",
+          }),
+          expect.objectContaining({
+            id: "disabled-model",
+            efforts: [],
+            defaultEffort: null,
+          }),
+        ]);
+        expect(config).toEqual(before);
+        expect(provider.models[agent]?.[0].userModelConfig).not.toHaveProperty(
+          "reasoning",
+        );
+      }
+    },
+  );
 
   it("projects a model-specific protocol route into the provider catalog", () => {
     const provider = buildUserProvider({
@@ -362,14 +441,14 @@ describe("buildUserProvider (per-runtime)", () => {
       }),
       expect.objectContaining({
         id: "unregistered-model",
-        efforts: ["low", "medium", "high", "xhigh", "max"],
-        defaultEffort: "medium",
+        efforts: [],
+        defaultEffort: null,
       }),
     ]);
     expect(provider.models["claude-code"]?.[0]).toMatchObject({
       id: "gpt-5.6-sol",
-      efforts: ["low", "medium", "high", "xhigh", "max"],
-      defaultEffort: "medium",
+      efforts: [],
+      defaultEffort: null,
     });
   });
 
@@ -477,7 +556,7 @@ describe("buildUserProvider (per-runtime)", () => {
     });
   });
 
-  it("unregistered prefix falls back to CUSTOM_EFFORTS", () => {
+  it("unregistered prefix does not invent reasoning efforts", () => {
     const p = buildUserProvider(
       {
         id: "unknown-relay",
@@ -491,11 +570,11 @@ describe("buildUserProvider (per-runtime)", () => {
       },
       { modelRegistry: LEGACY_REGISTRY },
     );
-    // custom/my-model → no registry match → CUSTOM_EFFORTS for codex
+    // custom/my-model has no matching capability declaration.
     expect(p.models.codex?.[0]).toMatchObject({
       id: "custom/my-model",
-      efforts: ["low", "medium", "high", "xhigh", "max"],
-      defaultEffort: "medium",
+      efforts: [],
+      defaultEffort: null,
     });
   });
 
@@ -608,8 +687,8 @@ describe("buildUserProvider (per-runtime)", () => {
     );
 
     expect(provider.models.codex?.[0]).toMatchObject({
-      efforts: ["low", "medium", "high", "xhigh", "max"],
-      defaultEffort: "medium",
+      efforts: [],
+      defaultEffort: null,
     });
   });
 
@@ -648,8 +727,8 @@ describe("buildUserProvider (per-runtime)", () => {
       { modelRegistry: registry },
     );
     expect(ambiguous.models.codex?.[0]).toMatchObject({
-      efforts: ["low", "medium", "high", "xhigh", "max"],
-      defaultEffort: "medium",
+      efforts: [],
+      defaultEffort: null,
     });
 
     registry.models.pop();
@@ -687,8 +766,8 @@ describe("buildUserProvider (per-runtime)", () => {
       { modelRegistry: LEGACY_REGISTRY },
     );
     expect(noTargetRoute.models.codex?.[0]).toMatchObject({
-      efforts: ["low", "medium", "high", "xhigh", "max"],
-      defaultEffort: "medium",
+      efforts: [],
+      defaultEffort: null,
     });
   });
 
@@ -1041,7 +1120,7 @@ describe("buildUserProvider (per-runtime)", () => {
     );
     // xd/codex/gpt-5.6-sol → strips xd/ → codex/gpt-5.6-sol → matches route for claude-code
     // without prefix-stripping, the model ID wouldn't match any registry entry
-    // and efforts would fall back to CUSTOM_EFFORTS (no 'xhigh' from registry).
+    // and efforts would remain empty.
     const model = p.models["claude-code"]?.[0];
     expect(model?.efforts?.length).toBeGreaterThan(0);
     expect(model?.efforts).toContain("xhigh");
@@ -1138,7 +1217,7 @@ describe("buildUserProvider (per-runtime)", () => {
     );
     expect(pChatgpt.models["claude-code"]?.[0]?.efforts).toContain("ultra");
 
-    // unknown prefix: should NOT match registry, gets default CUSTOM_EFFORTS (no 'ultra')
+    // Unknown prefix must not borrow capability declarations.
     const pUnknown = buildUserProvider(
       {
         id: "relay",
@@ -1255,7 +1334,7 @@ describe("buildUserProvider (per-runtime)", () => {
     expect(p.models["claude-code"]?.[0]?.defaultEffort).toBe("max");
   });
 
-  it("Case C: no exact match → prefix fallback yields ambiguity → CUSTOM_EFFORTS", () => {
+  it("Case C: no exact match → prefix fallback yields ambiguity → no declared efforts", () => {
     // Two entries both have route.modelId='baz' after stripping openai/
     const reg: ModelRegistry = {
       updatedAt: "2026-01-01T00:00:00Z",
@@ -1288,7 +1367,7 @@ describe("buildUserProvider (per-runtime)", () => {
       },
       { modelRegistry: reg },
     );
-    // Ambiguous → falls back to CUSTOM_EFFORTS (no 'ultra')
+    // Ambiguous declarations must not invent capabilities.
     expect(p.models.codex?.[0]?.efforts).not.toContain("ultra");
   });
 
@@ -1528,9 +1607,10 @@ describe("official Pi catalog defaults for preset-marked sources (#4295)", () =>
       supportsImageInput: true,
       maxOutput: 131072,
     });
-    // 官方目录对该模型只声明 reasoning 而无档位表:与 pi-host 运行期同样得到通用四档。
+    // 旧连接缺少档位时，继承 K2.8 官方目录的三档和 max 默认值。
     expect(models.find((m) => m.id === "kimi-for-coding")).toMatchObject({
-      efforts: ["minimal", "low", "medium", "high"],
+      efforts: ["low", "high", "max"],
+      defaultEffort: "max",
     });
   });
 
@@ -1561,7 +1641,8 @@ describe("official Pi catalog defaults for preset-marked sources (#4295)", () =>
     ).models.pi!;
     expect(models.find((m) => m.id === "k3-256k")).toMatchObject({ efforts: ["low", "high"], defaultEffort: "low" });
     expect(models.find((m) => m.id === "kimi-for-coding")).toMatchObject({
-      efforts: ["minimal", "low", "medium", "high"],
+      efforts: ["low", "high", "max"],
+      defaultEffort: "max",
       supportsImageInput: true,
     });
   });
@@ -1587,6 +1668,41 @@ describe("official Pi catalog defaults for preset-marked sources (#4295)", () =>
     delete (unmarked as { piCatalogProviderId?: string }).piCatalogProviderId;
     expect(
       build({ id: "kimi-code", name: "Kimi Code", runtimes: { pi: unmarked } }).find((m) => m.id === "k3-256k"),
-    ).toMatchObject({ efforts: [] });
+    ).toMatchObject({ efforts: ["low", "high", "max"] });
+  });
+});
+
+
+describe('imported model native engine defaults', () => {
+  it.each([
+    ['anthropic-messages', [true, false, true]],
+    ['openai-responses', [false, true, true]],
+    ['openai-completions', [false, false, true]],
+    ['google-generative-ai', [false, false, true]],
+  ] as const)('%s only enables native engines', (api, expected) => {
+    const agents = ['claude-code', 'codex', 'pi'] as const;
+    const config: CustomProviderConfig = {
+      id: 'native-default-test', name: 'Test',
+      runtimes: Object.fromEntries(agents.map(agent => [agent, {
+        baseUrl: 'https://example.com/v1',
+        models: [{ id: 'test-model', name: 'Test', api }],
+      }])),
+    };
+    const provider = buildUserProvider(config, { modelRegistry: {
+      schemaVersion: 5, updatedAt: '2026-09-13T00:00:00Z',
+      models: [{ id: 'test-model', name: 'Test', nativeApi: api, routes: [{
+        providerId: config.id, modelId: 'test-model', agents: ['claude-code', 'codex'],
+      }] }],
+    } });
+    expect(agents.map(agent => provider.models[agent]?.[0]?.defaultEnabled)).toEqual(expected);
+  });
+
+  it('preserves explicit configuration defaults', () => {
+    const provider = buildUserProvider({ id: 'explicit-defaults', name: 'Test', runtimes: {
+      pi: { baseUrl: 'https://example.com/v1', models: [{ id: 'test', name: 'Test', api: 'anthropic-messages', defaultEnabled: false }] },
+      codex: { baseUrl: 'https://example.com/v1', models: [{ id: 'test', name: 'Test', api: 'anthropic-messages', defaultEnabled: true }] },
+    } });
+    expect(provider.models.pi?.[0]?.defaultEnabled).toBe(false);
+    expect(provider.models.codex?.[0]?.defaultEnabled).toBe(true);
   });
 });

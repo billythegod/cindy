@@ -129,6 +129,70 @@ async function setup(storage = disk()) {
 }
 
 describe("durable mobile outbox ownership", () => {
+  it.each([false, true, undefined])('deleted prepared task respects enqueueStarted=%s', async (enqueueStarted) => {
+    const { store, runner, deps } = await setup();
+    await store.add({ ...message(), prepared: { clientId: 'id-1' } as QueuedRemoteMessage, enqueueStarted });
+    deps.projection.mockRejectedValue(Object.assign(new Error('not found'), { code: 'NOT_FOUND' }));
+    deps.session.mockResolvedValue({ id: 'session-a', status: 'deleted' });
+    await runner.run();
+    expect(deps.cleanup).toHaveBeenCalledWith(expect.anything(), enqueueStarted === false);
+    expect(deps.enqueue).not.toHaveBeenCalled();
+  });
+  it('recovers draft handoff before delivery and retains the proof when reconciliation fails', async () => {
+    const storage = disk();
+    const seed = createDurableOutbox(storage);
+    await seed.activate('alice');
+    const record = { ...message(), draftHandoff: {
+      before: { version: 1 as const, nodes: [{ type: 'text' as const, text: 'sent' }] },
+      after: { version: 1 as const, nodes: [] },
+    } };
+    await seed.add(record);
+    const recover = vi.fn(async () => {});
+    recover.mockRejectedValueOnce(new Error('draft storage busy'));
+    const restarted = createDurableOutbox(storage, recover);
+    await restarted.activate('alice');
+    await expect(restarted.reconcileDrafts()).rejects.toThrow('draft storage busy');
+    expect(restarted.getSnapshot()[0]?.draftHandoff).toEqual(record.draftHandoff);
+    await restarted.reconcileDrafts();
+    const again = createDurableOutbox(storage, recover);
+    await again.activate('alice');
+    await again.reconcileDrafts();
+    expect(recover).toHaveBeenCalledTimes(2);
+    expect(again.getSnapshot()[0]?.draftHandoff).toBeUndefined();
+  });
+  it('does not send before draft reconciliation succeeds or block a different task on its failure', async () => {
+    const { deps, storage } = await setup();
+    const recover = vi.fn(async () => { throw new Error('draft busy'); });
+    const store = createDurableOutbox(storage, recover);
+    await store.activate('alice');
+    await store.add({ ...message(), draftHandoff: {
+      before: { version: 1, nodes: [{ type: 'text', text: 'sent' }] },
+      after: { version: 1, nodes: [] },
+    } });
+    await store.add(message('other', 'session-b'));
+    const runner = createDurableOutboxDelivery({ ...deps, store });
+    await runner.run();
+    expect(deps.enqueue).toHaveBeenCalledOnce();
+    expect(deps.enqueue.mock.calls[0]?.[0].item.clientId).toBe('other');
+    expect(store.getSnapshot().find((r) => r.item.clientId === 'id-1')?.draftHandoff).toBeDefined();
+  });
+  it('keeps preparation explicitly unsent if the sending write fails before a crash', async () => {
+    const { store, runner, deps, storage } = await setup();
+    await store.add(message());
+    const write = storage.setItem;
+    vi.spyOn(storage, 'setItem').mockImplementation(async (key, value) => {
+      if (JSON.parse(value).state === 'sending') throw new Error('disk busy');
+      await write(key, value);
+    });
+    await runner.run();
+    expect(deps.enqueue).not.toHaveBeenCalled();
+    expect(store.getSnapshot()[0]).toMatchObject({ enqueueStarted: false, prepared: { clientId: 'id-1' } });
+    const recovered = await setup(storage);
+    recovered.deps.projection.mockRejectedValue(Object.assign(new Error('missing'), { code: 'NOT_FOUND' }));
+    recovered.deps.session.mockResolvedValue({ id: 'session-a', status: 'deleted' });
+    await recovered.runner.run();
+    expect(recovered.deps.cleanup).toHaveBeenCalledWith(expect.anything(), true);
+  });
   it.each([false, true])('cleans a positively deleted task even when cancellation is %s', async (cancelRequested) => {
     const { store, runner, deps } = await setup();
     await store.add({ ...message(), cancelRequested, state: 'confirming',

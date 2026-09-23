@@ -5,8 +5,26 @@ import { durableOutboxUploadUri, removeOutboxFiles } from "./durableOutboxFiles"
 import { outboxItemAttachments, type MobileOutboxItem } from "./sessionOutbox";
 import { discardMobileUploadedAttachment } from "./mobileAttachmentUpload";
 import type { RemoteSerializedAttachment } from "./types";
+import { reconcileCommittedComposerDraft } from './composerDraftStore';
 
-export const mobileDurableOutbox = createDurableOutbox(AsyncStorage);
+export const mobileDurableOutbox = createDurableOutbox(AsyncStorage, async (record, guard) => {
+  if (!record.draftHandoff) return;
+  const owner = getMobileAuthOwner();
+  const check = () => {
+    guard();
+    if (owner.accountKey !== record.accountId || !isMobileAuthOwnerCurrent(owner)) {
+      throw new Error('OUTBOX_OWNER_CHANGED');
+    }
+  };
+  await reconcileCommittedComposerDraft(record.item.sessionId, record.draftHandoff, check);
+});
+export async function reconcileMobileOutboxDrafts(sessionId: string): Promise<void> {
+  const owner = getMobileAuthOwner();
+  if (!owner.accountKey) return;
+  await mobileDurableOutbox.activate(owner.accountKey);
+  if (!isMobileAuthOwnerCurrent(owner)) throw new Error('OUTBOX_OWNER_CHANGED');
+  await mobileDurableOutbox.reconcileDrafts(sessionId);
+}
 /** Local filesystem failures must not suppress disposal of confirmed-cancelled uploads. */
 export async function cleanupOutboxResources(
   record: DurableOutboxRecord,

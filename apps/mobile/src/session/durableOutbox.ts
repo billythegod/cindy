@@ -1,4 +1,5 @@
 import type { NewSessionDraft } from "./newSession";
+import type { ComposerDocument } from './composerDocument';
 import type { MobileOutboxItem } from "./sessionOutbox";
 import type { QueuedRemoteMessage, RemoteSerializedAttachment } from "./types";
 
@@ -22,6 +23,9 @@ export interface DurableOutboxRecord {
   state: "queued" | "sending" | "confirming" | "host-owned" | "failed";
   uploads: DurableUpload[];
   prepared?: QueuedRemoteMessage;
+  /** Persisted before enqueue; absent on older records means unknown, not unsent. */
+  enqueueStarted?: boolean;
+  draftHandoff?: { before: ComposerDocument; after: ComposerDocument };
   clearBoundaryMs?: number | null;
   /** Only hosts advertising durable delivery may receive an uncertain retry. */
   retrySafe?: boolean;
@@ -52,7 +56,8 @@ export function isDurableOutboxSettled(record: DurableOutboxRecord): boolean {
   return record.cleanupOutcome !== undefined;
 }
 
-const PREFIX = "cindy.mobile.outbox.v1.";
+export const DURABLE_OUTBOX_PREFIX = "cindy.mobile.outbox.v1.";
+const PREFIX = DURABLE_OUTBOX_PREFIX;
 const EMPTY: readonly DurableOutboxRecord[] = Object.freeze([]);
 const keyFor = (
   r: Pick<DurableOutboxRecord, "accountId" | "deviceId" | "item">,
@@ -63,7 +68,9 @@ const keyFor = (
     .join("/");
 
 /** Write-through message ownership. Views are published only after the durable write succeeds. */
-export function createDurableOutbox(storage: OutboxStorage) {
+export function createDurableOutbox(storage: OutboxStorage, reconcileDraft?: (
+  record: DurableOutboxRecord, guard: () => void,
+) => Promise<void>) {
   let accountId = "";
   let generation = 0;
   let records: readonly DurableOutboxRecord[] = EMPTY;
@@ -118,6 +125,26 @@ export function createDurableOutbox(storage: OutboxStorage) {
     },
     getSnapshot: () => records,
     getAccountId: () => accountId,
+    async reconcileDrafts(sessionId?: string): Promise<void> {
+      const owner = accountId;
+      const epoch = generation;
+      await store.ready();
+      if (!reconcileDraft) return;
+      await serialize(async () => {
+        const guard = () => assertOwner(owner, epoch);
+        guard();
+        for (const record of records) {
+          if (!record.draftHandoff || (sessionId !== undefined && record.item.sessionId !== sessionId)) continue;
+          await reconcileDraft(record, guard);
+          guard();
+          const next = { ...record, draftHandoff: undefined };
+          await storage.setItem(keyFor(record), JSON.stringify(next));
+          guard();
+          records = records.map((r) => r === record ? next : r);
+          emit();
+        }
+      });
+    },
     activate(owner: string): Promise<void> {
       if (owner === accountId && !activationFailed) return ready;
       accountId = owner;

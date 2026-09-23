@@ -1,3 +1,4 @@
+import { buildUserProvider } from '../user-provider.js';
 import { expandedRegistryEntries } from "../modelMetadataLayers.js";
 /**
  * 目录校验 + 内置供应商契约(2026-07-19 模型列表统一重构后的新契约)。
@@ -29,6 +30,7 @@ const DYNAMIC_PROVIDER_IDS = ["anthropic", "openai", "xd"] as const;
 
 /** xAI 随包 fallback 元数据清单。 */
 const EXPECTED_XAI_IDS = [
+  "xai/grok-4.7",
   "xai/grok-4.6",
   "xai/grok-4.5",
   "xai/grok-4.3",
@@ -43,6 +45,7 @@ const EXPECTED_XAI_PI_IDS = [
   "grok-4.3",
   "grok-4.5",
   "grok-4.6",
+  "grok-4.7",
   "grok-build-0.1",
 ];
 
@@ -414,8 +417,9 @@ describe("bundled catalog validity (dynamic-first contract)", () => {
     const presets = BUNDLED_CATALOG.presets ?? [];
     const kimiCode = presets.find((p) => p.id === "moonshot-kimi-code");
     expect(kimiCode).toBeDefined();
+    const projected = buildUserProvider({ id: kimiCode!.id, name: kimiCode!.name, runtimes: kimiCode!.runtimes });
     for (const [agent, rt] of Object.entries(kimiCode!.runtimes)) {
-      for (const m of rt!.models) {
+      for (const m of projected.models[agent as AgentKind] ?? []) {
         expect(
           Number.isFinite(m.contextWindow) && (m.contextWindow ?? 0) > 0,
           `${agent}/${m.id} 缺 contextWindow`,
@@ -996,12 +1000,12 @@ describe("provider OAuth and upstream URL validation", () => {
       },
     ],
     [
-      "Claude-incompatible protocol",
-      { baseUrl: "https://api.example/v1", wireProtocol: "openai-responses" },
+      "native API used as portable wire",
+      { baseUrl: "https://api.example/v1", wireProtocol: "google-vertex" },
     ],
   ])("rejects %s model routes", (_label, route) => {
     const catalog = oauthCatalog();
-    if (_label === "Claude-incompatible protocol") {
+    if (_label === "native API used as portable wire") {
       catalog.providers[0]!.agents = ["claude-code"];
       catalog.providers[0]!.routing = {
         "claude-code": {

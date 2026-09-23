@@ -21,6 +21,14 @@ function readSource(relativePath: string): string {
 const SCREEN = 'app/sessions/[sessionId].tsx';
 
 describe('mobile optimistic composer while session is not ready', () => {
+  it('waits for committed draft ownership recovery before submitting the visible draft', () => {
+    const source = readSource(SCREEN);
+    const send = source.slice(source.indexOf('  async function send(options:'));
+    expect(send.indexOf('if (!composerDraftHydrated) return;')).toBeGreaterThan(0);
+    expect(send.indexOf('if (!composerDraftHydrated) return;')).toBeLessThan(send.indexOf('const documentAtSend ='));
+    expect(source).toContain('reconcileMobileOutboxDrafts(sessionId).then(() => Promise.all([');
+  });
+
   it('keeps the composer out of the read-only slot while gating remote controls separately', () => {
     const source = readSource(SCREEN);
 
@@ -219,7 +227,7 @@ describe('mobile optimistic composer while session is not ready', () => {
     const delivery = readSource('src/session/durableOutboxDelivery.ts');
     expect(source).not.toContain('const dispatchOutboxItem =');
     expect(bridge).toContain('preSend: guardRecord');
-    expect(delivery).toMatch(/await update\(\{\s*state: ["']sending["'],\s*error: undefined\s*\}\)/);
+    expect(delivery).toMatch(/await update\(\{\s*state: ["']sending["'],\s*enqueueStarted: true,\s*error: undefined\s*\}\)/);
     expect(delivery).toContain('record.retrySafe && projection.inputDeliveryVersion === 1');
     expect(delivery).not.toContain('createOutboxClientId');
   });
@@ -345,7 +353,8 @@ describe('mobile optimistic composer while session is not ready', () => {
     expect(memo).toContain('locallyRemovedClientIds: locallyRemovedQueueClientIds,');
     // 依赖 ⊇ 输入。
     const deps = memo.slice(memo.indexOf('}),') + 3);
-    for (const dep of ['settlingBaseline', 'locallyRemovedQueueClientIds', 'queueHiddenClientIds']) {
+    expect(memo).toContain('hiddenClientIds: confirmedUserClientIds,');
+    for (const dep of ['settlingBaseline', 'locallyRemovedQueueClientIds', 'confirmedUserClientIds']) {
       expect(deps).toContain(dep);
     }
     // 自激防护:基线已是本帧 projection 时 layout effect 直接返回,否则 setState 会让
@@ -421,7 +430,7 @@ describe('mobile optimistic composer while session is not ready', () => {
     expect(source).toContain('const sessionSettingsLocked = isRemoteSessionMissing(currentSession);');
     expect(source).toContain('disabled={controlBusy || !canUseRemoteSessionControls}');
     // 2) 会话设置 RPC 的硬门(统一入口,覆盖全部 runControlAction 调用点)。
-    expect(source).toContain('if (!canUseRemoteSessionControls) return;\n    setControlBusy(true);');
+    expect(source).toContain('if (!canUseRemoteSessionControls) return false;\n    setControlBusy(true);');
     // 3) 消息派发:复合判据,「不存在」是它的子集。
     expect(source).toContain('outboxConnectionBlockedNow() || isRemoteSessionMissing(row)');
     expect(source).not.toContain('const sessionSettingsLocked = currentSession?.pendingLocalCreation === true;');

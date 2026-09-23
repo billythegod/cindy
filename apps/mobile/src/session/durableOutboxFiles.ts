@@ -1,6 +1,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import { Directory } from "expo-file-system";
-import type { DurableOutboxRecord, DurableUpload } from "./durableOutbox";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DURABLE_OUTBOX_PREFIX, type DurableOutboxRecord, type DurableUpload } from "./durableOutbox";
 import type { MobileLocalAttachmentUploadCandidate } from "./mobileLocalAttachmentUpload";
 import { isAttachmentOssRef } from './attachmentOssRef';
 
@@ -32,6 +33,7 @@ export async function retainOutboxFile(
   slot: number,
   source: MobileLocalAttachmentUploadCandidate,
 ): Promise<DurableUpload> {
+  await initializeOutboxFiles();
   const extension =
     source.name.match(/\.([a-z0-9]{1,12})$/i)?.[1]?.toLowerCase() ?? "bin";
   const upload: DurableUpload = {
@@ -51,7 +53,52 @@ export async function retainOutboxFile(
 }
 
 /** Keep the once marker across Fast Refresh: mounted composers can still own stage files. */
-const runtime = globalThis as typeof globalThis & { __cindyOutboxStageInitialized?: boolean };
+const runtime = globalThis as typeof globalThis & {
+  __cindyOutboxStageInitialized?: boolean;
+  __cindyOutboxFilesInitialized?: Promise<void>;
+};
+
+/** Before any new copies, reconcile previous-runtime files against ALL accounts' ledgers.
+ * No current-runtime writer runs until this completes; keep the promise over Fast Refresh.
+ */
+export function initializeOutboxFiles(): Promise<void> {
+  if (runtime.__cindyOutboxFilesInitialized) return runtime.__cindyOutboxFilesInitialized;
+  const pending = (async () => {
+    if (!FileSystem.documentDirectory) throw new Error('OUTBOX_STORAGE_UNAVAILABLE');
+    const root = `${FileSystem.documentDirectory}message-outbox/`;
+    const retained = new Set<string>();
+    const keys = await AsyncStorage.getAllKeys();
+    for (const key of keys.filter((key) => key.startsWith(DURABLE_OUTBOX_PREFIX))) {
+      const raw = await AsyncStorage.getItem(key);
+      if (raw === null) continue;
+      const record = JSON.parse(raw) as DurableOutboxRecord;
+      if (record.version !== 1 || !record.accountId || !record.deviceId
+        || !record.item?.sessionId || !record.item.clientId || !Array.isArray(record.uploads)) {
+        throw new Error('OUTBOX_STORAGE_INVALID');
+      }
+      for (const upload of record.uploads) retained.add(durableOutboxUploadUri(record, upload));
+    }
+    // Read/validate every ledger before deleting anything. Unknown storage never means empty.
+    const visit = async (directory: string, depth: number): Promise<void> => {
+      const info = await FileSystem.getInfoAsync(directory);
+      if (!info.exists || !info.isDirectory) return;
+      for (const name of await FileSystem.readDirectoryAsync(directory)) {
+        if (!name || name === '.' || name === '..' || /[\\/]/.test(name)) continue;
+        const uri = directory + name;
+        if (depth < 4) await visit(uri + '/', depth + 1);
+        else if (/^slot-\d+(?:-[a-z0-9]+)?\.[a-z0-9]{1,12}$/.test(name) && !retained.has(uri)) {
+          await FileSystem.deleteAsync(uri, { idempotent: true });
+        }
+      }
+    };
+    await visit(root, 0);
+  })();
+  runtime.__cindyOutboxFilesInitialized = pending;
+  void pending.catch(() => {
+    if (runtime.__cindyOutboxFilesInitialized === pending) delete runtime.__cindyOutboxFilesInitialized;
+  });
+  return pending;
+}
 export function initializeComposerAttachmentStage(): void {
   if (runtime.__cindyOutboxStageInitialized) return;
   if (!FileSystem.documentDirectory) throw new Error('OUTBOX_STORAGE_UNAVAILABLE');

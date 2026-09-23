@@ -5,19 +5,26 @@ import type {
 } from "../session/durableOutbox";
 import { buildMobileRemoteFileAttachment, buildMobileUploadedAttachment } from '../session/attachments';
 const fs = vi.hoisted(() => ({
+  ledger: new Map<string, string>(),
+  directories: new Map<string, string[]>(),
   stageExists: true,
   removeStage: vi.fn(),
   stagePaths: [] as string[],
   documentDirectory: "file:///sandbox/Documents/",
   makeDirectoryAsync: vi.fn(async () => {}),
   copyAsync: vi.fn(async (_options: { from: string; to: string }) => {}),
-  getInfoAsync: vi.fn(async () => ({
+  getInfoAsync: vi.fn(async (_uri: string) => ({
     exists: true,
     isDirectory: false,
     size: 123,
   })),
   deleteAsync: vi.fn(async () => {}),
+  readDirectoryAsync: vi.fn(async (uri: string): Promise<string[]> => fs.directories.get(uri) ?? []),
 }));
+vi.mock('@react-native-async-storage/async-storage', () => ({ default: {
+  getAllKeys: vi.fn(async () => [...fs.ledger.keys()]),
+  getItem: vi.fn(async (key: string) => fs.ledger.get(key) ?? null),
+} }));
 vi.mock("expo-file-system/legacy", () => fs);
 vi.mock('expo-file-system', () => ({ Directory: class {
   constructor(uri: string) { fs.stagePaths.push(uri); }
@@ -31,6 +38,7 @@ import {
   retainComposerAttachmentFile,
   removeRetainedOutboxFiles,
   initializeComposerAttachmentStage,
+  initializeOutboxFiles,
   outboxAttachmentNeedsLocalBytes,
 } from "../session/durableOutboxFiles";
 const record = {
@@ -49,6 +57,9 @@ const source = {
 beforeEach(() => {
   vi.clearAllMocks();
   delete (globalThis as { __cindyOutboxStageInitialized?: boolean }).__cindyOutboxStageInitialized;
+  delete (globalThis as { __cindyOutboxFilesInitialized?: Promise<void> }).__cindyOutboxFilesInitialized;
+  fs.ledger.clear();
+  fs.directories.clear();
   fs.stageExists = true;
   fs.stagePaths.length = 0;
   fs.removeStage.mockReset();
@@ -60,6 +71,37 @@ beforeEach(() => {
   });
 });
 describe("outbox-owned attachment bytes", () => {
+  it('reclaims pre-commit and replaced files while preserving every account ledger', async () => {
+    const root = fs.documentDirectory + 'message-outbox/';
+    fs.directories.set(root, ['alice', 'bob']);
+    for (const accountId of ['alice', 'bob']) {
+      const r = { ...record, version: 1, accountId, uploads: [{ fileName: 'slot-0.jpg' }] } as DurableOutboxRecord;
+      const dir = durableOutboxDirectory(r);
+      fs.ledger.set(`cindy.mobile.outbox.v1.${accountId}/mac/session/id`, JSON.stringify(r));
+      fs.directories.set(root + accountId + '/', ['mac']);
+      fs.directories.set(root + accountId + '/mac/', ['%2E%2E%2Fsession']);
+      fs.directories.set(root + accountId + '/mac/%2E%2E%2Fsession/', ['id', 'uncommitted']);
+      fs.directories.set(dir, ['slot-0.jpg', 'slot-1.jpg']);
+      fs.directories.set(dir.replace('/id/', '/uncommitted/'), ['slot-0.jpg']);
+    }
+    fs.getInfoAsync.mockImplementation(async (uri) => ({ exists: true, isDirectory: fs.directories.has(uri), size: 123 }));
+    await initializeOutboxFiles();
+    expect(fs.deleteAsync).toHaveBeenCalledTimes(4);
+    expect(fs.deleteAsync.mock.calls.flat()).not.toContain(durableOutboxDirectory({ ...record, accountId: 'alice' }) + 'slot-0.jpg');
+    expect(fs.deleteAsync.mock.calls.flat()).not.toContain(durableOutboxDirectory({ ...record, accountId: 'bob' }) + 'slot-0.jpg');
+    await retainOutboxFile(record, 0, source);
+    await initializeOutboxFiles();
+    expect(fs.deleteAsync).toHaveBeenCalledTimes(4);
+  });
+  it('blocks copying and deletion on a corrupt ledger, then retries safely', async () => {
+    fs.ledger.set('cindy.mobile.outbox.v1.broken', '{broken');
+    await expect(retainOutboxFile(record, 0, source)).rejects.toThrow();
+    expect(fs.copyAsync).not.toHaveBeenCalled();
+    expect(fs.deleteAsync).not.toHaveBeenCalled();
+    fs.ledger.clear();
+    await retainOutboxFile(record, 0, source);
+    expect(fs.copyAsync).toHaveBeenCalledOnce();
+  });
   it('requires retry bytes for phone uploads but preserves Desktop file references without a phone copy', () => {
     const remote = buildMobileRemoteFileAttachment('/Users/dash/report.pdf')!;
     const uploaded = buildMobileUploadedAttachment({ ossKey: 'uploads/report.pdf', name: 'report.pdf', size: 123, sha256: 'a'.repeat(64) })!;

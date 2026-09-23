@@ -31,6 +31,8 @@ export interface MobileLocalAttachmentUploadCandidate {
   name: string;
   /** 发起上传的 composer 作用域(sessionId 等)；仅供宿主隔离迟到异步结果。 */
   attachmentScopeKey?: string;
+  /** Destination captured when enqueued, never read from a later active task. */
+  sharedTaskId?: string;
   /** 同一作用域重复进入时也会递增的代际；避免 A → B → A 后接回最早 A 的旧结果。 */
   attachmentScopeGeneration?: number;
   mimeType?: string;
@@ -50,7 +52,8 @@ export interface MobileLocalAttachmentUploadCandidate {
   /** resolve 阶段已完成优化编码(如 HEIC 转码+缩边),跳过 preprocess 防二次有损。 */
   skipPreprocess?: boolean;
   /**
-   * 仅由明确拥有输入文件的调用方提供(当前是 WebView 粘贴落盘):
+   * 仅由明确拥有输入文件的调用方提供(当前是 WebView 粘贴落盘与 iOS Share
+   * Extension 复制进 App Group 的文件):
    * controller 会把 resolve / preprocess 生成的同任务临时 uri 一并交回清理。
    * 系统相册、相机与文件选择器的 uri 不设置此钩子,避免误删宿主管理的文件。
    */
@@ -100,7 +103,7 @@ export interface MobileLocalAttachmentUploadDeps {
   assertSize(size: number, candidate: MobileLocalAttachmentUploadCandidate): void;
   /** 真正的 presign + PUT(uploadMobileAttachmentFromFile);signal 中止时应尽快断掉传输。 */
   upload(
-    candidate: { name: string; size: number; mimeType?: string },
+    candidate: { name: string; size: number; mimeType?: string; sharedTaskId?: string },
     fileUri: string,
     opts: { token: string; signal?: AbortSignal },
   ): Promise<RemoteSerializedAttachment>;
@@ -407,7 +410,7 @@ export function createMobileLocalAttachmentUploadController(
         return;
       }
       const attachment = uploadedAttachment = await step(deps.upload(
-        { name: prepared.name, size, mimeType: prepared.mimeType || undefined },
+        { name: prepared.name, size, mimeType: prepared.mimeType || undefined, ...(source.sharedTaskId ? { sharedTaskId: source.sharedTaskId } : {}) },
         prepared.uri,
         { token, signal },
       ), (late) => deps.discard(late, token));
