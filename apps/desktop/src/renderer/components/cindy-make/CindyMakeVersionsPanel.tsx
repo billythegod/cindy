@@ -10,12 +10,14 @@ import type { CindyVersionInfo, CindyVersionsState } from '../../../shared/cindy
 export function CindyMakeVersionsPanel({
   active = true,
   busy = false,
+  buildRunning = false,
   refreshKey,
   onState,
   children,
 }: {
   active?: boolean;
   busy?: boolean;
+  buildRunning?: boolean;
   refreshKey?: string;
   onState?: (state?: CindyVersionsState) => void;
   children?: ReactNode;
@@ -25,7 +27,8 @@ export function CindyMakeVersionsPanel({
   const { confirm } = useConfirmDialog();
   const [expanded, setExpanded] = useState(false);
   const listId = useId();
-  const disabled = busy || !!versions.pending || versions.state?.switching;
+  const switchDisabled = !!versions.pending || versions.state?.switching;
+  const removeDisabled = busy || switchDisabled;
   const supported = typeof window.electronAPI.getCindyVersions === 'function';
   useEffect(() => onState?.(versions.state), [onState, versions.state]);
   const current =
@@ -39,7 +42,8 @@ export function CindyMakeVersionsPanel({
       : t('cindyMake.versions.personal');
   const personal = versions.state?.versions.find((version) => version.kind === 'personal');
   const switchBlockedReason = (version: CindyVersionInfo) => {
-    if (disabled) return 'busy' as const;
+    if (switchDisabled) return 'busy' as const;
+    if (buildRunning) return 'building' as const;
     if (!version.available) return 'unavailable' as const;
     if (!version.compatible) return 'incompatible' as const;
     return undefined;
@@ -47,7 +51,11 @@ export function CindyMakeVersionsPanel({
   const switchBlockedLabel = (version: CindyVersionInfo) => {
     const reason = switchBlockedReason(version);
     if (!reason) return undefined;
-    return t(reason === 'busy' ? 'cindyMake.versions.errors.busy' : 'cindyMake.versions.' + reason);
+    return t(
+      reason === 'busy' || reason === 'building'
+        ? 'cindyMake.versions.errors.' + reason
+        : 'cindyMake.versions.' + reason,
+    );
   };
   const renderSwitchButton = (version: CindyVersionInfo, actionLabel: string) => {
     const blockedLabel = switchBlockedLabel(version);
@@ -60,7 +68,7 @@ export function CindyMakeVersionsPanel({
         title={blockedLabel}
         aria-label={blockedLabel ?? actionLabel}
       >
-        {blockedLabel ?? actionLabel}
+        {buildRunning ? actionLabel : (blockedLabel ?? actionLabel)}
       </Button>
     );
   };
@@ -183,7 +191,9 @@ export function CindyMakeVersionsPanel({
                       {version.kind === 'personal' && (
                         <Button
                           variant="secondary"
-                          disabled={disabled || versions.state?.selectedId === version.id}
+                          disabled={
+                            removeDisabled || versions.state?.selectedId === version.id
+                          }
                           onClick={async () => {
                             if (
                               await confirm({

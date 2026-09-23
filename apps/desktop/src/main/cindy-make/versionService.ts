@@ -13,7 +13,6 @@ import {
   captureDataOwnerBroadcastScope,
   isDataOwnerBroadcastScopeCurrent,
 } from '../device-link/broadcast-tap.js';
-import { readRelaunchBlockingActivity } from '../relaunchBusyActivityIpc.js';
 import {
   describeOriginalVersion,
   getCurrentCindyVersionId,
@@ -37,8 +36,10 @@ import {
 import { cleanupPersonalVersions } from './personalVersionCleanup.js';
 
 let makeBusy: () => boolean = () => true;
-export function configureCindyVersions(probe: () => boolean): void {
+let buildBusy: () => boolean = () => false;
+export function configureCindyVersions(probe: () => boolean, buildProbe: () => boolean = () => false): void {
   makeBusy = probe;
+  buildBusy = buildProbe;
 }
 export async function getCindyVersions(): Promise<CindyVersionsState> {
   const profile = app.getPath('userData');
@@ -93,22 +94,25 @@ export async function actCindyVersion(action: unknown, id: unknown): Promise<Cin
   const current = () =>
     isDataOwnerBroadcastScopeCurrent(scope) && app.getPath('userData') === profile;
   try {
-    if (makeBusy() || isCindyVersionSwitching()) throwIpcError('PRECONDITION_FAILED', 'busy');
+    // An explicit switch may interrupt tasks and tests, but a personal build must
+    // finish or stop first. Normal quit does not replay background build jobs.
+    // Removing the personal version still requires the broad busy guard below.
+    if (action === 'switch' && buildBusy())
+      throwIpcError('PRECONDITION_FAILED', 'building');
+    if ((action === 'remove' && makeBusy()) || isCindyVersionSwitching())
+      throwIpcError('PRECONDITION_FAILED', 'busy');
     if (action === 'switch') {
       // Old completion cards carry generation UUIDs. They now address the same personal
       // slot instead of resurrecting the application built for that historical task.
       const targetId = id === 'original' ? id : personalVersionId(profile);
       if (!targetId) throwIpcError('PRECONDITION_FAILED', 'unavailable');
       if (getCurrentCindyVersionId() === targetId) return getCindyVersions();
-      if ((await readRelaunchBlockingActivity()).busy || !current())
-        throwIpcError('PRECONDITION_FAILED', 'busy');
       await startVersionHandoff(
         targetId,
         async () =>
           current() &&
-          !makeBusy() &&
-          (targetId === 'original' || personalVersionId(profile) === targetId) &&
-          !(await readRelaunchBlockingActivity()).busy,
+          !buildBusy() &&
+          (targetId === 'original' || personalVersionId(profile) === targetId),
       );
       if (!current()) throwIpcError('PRECONDITION_FAILED', 'busy');
       // Normal quit awaits the existing Maker, plugin, credential and DB disposers.
@@ -156,7 +160,7 @@ export async function actCindyVersion(action: unknown, id: unknown): Promise<Cin
     return getCindyVersions();
   } catch (error) {
     const code = (error as { code?: string }).code;
-    if (code === 'busy' || code === 'incompatible' || code === 'launchFailed')
+    if (code === 'busy' || code === 'building' || code === 'incompatible' || code === 'launchFailed')
       throwIpcError('PRECONDITION_FAILED', code);
     if (isIpcError(error)) throw error;
     throwIpcError('PRECONDITION_FAILED', 'unavailable');

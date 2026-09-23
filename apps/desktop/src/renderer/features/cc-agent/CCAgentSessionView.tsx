@@ -69,6 +69,8 @@ import {
   getCindyMakePreparation,
 } from '@/lib/cindyMakeComposer';
 import { CindyMakeTestCard } from '@/components/cindy-make/CindyMakeTestCard';
+import { SessionResourceCards } from '@/features/device-link/SessionResourceCards';
+import { useSessionResourceCards } from '@/features/device-link/useSessionResourceCards';
 import { CindyMakeEditingActions } from '@/components/cindy-make/CindyMakeEditingActions';
 import { useCindyMakeEditing } from '@/components/cindy-make/useCindyMakeEditing';
 import { useCindyMakeState } from '@/lib/cindyMakeState';
@@ -204,7 +206,7 @@ import type { Session } from '@/lib/ccAgent.types';
 import { toast } from '@/lib/toast';
 import {
   buildCreateOptsForCurrentSession,
-  decodeRemoteErrorMessage,
+  remoteErrorMessageForBanner,
   makerChatStore,
   type AgentTaskUpdate,
   type MessageDeliveryMode,
@@ -1781,6 +1783,16 @@ export function CCAgentSessionView({
     updateQueueItem,
     chatDisplaySnapshot,
   } = useCCAgentChat(sessionId, handleTitleUpdate, { chatRealtime });
+  const remoteMakeCards = useSessionResourceCards({
+    deviceId: session?.source === 'cindy-make' && session.status === 'active' && !session.clearedAt
+      ? remoteDeviceId : undefined,
+    sessionId,
+    source: session?.source,
+    connected: remoteConn === 'connected',
+    active: chatRealtime,
+    readOnly,
+    running: isAgentBusy,
+  });
   const makeState = useCindyMakeState();
   const cindyMakePreparation = useMemo(
     () =>
@@ -1797,7 +1809,7 @@ export function CCAgentSessionView({
   );
   const cindyMakeComposerPhase = useMemo(
     () =>
-      getCindyMakeComposerPhase({
+      remoteMakeCards.handlesSession ? null : getCindyMakeComposerPhase({
         session,
         report: cindyMakePreparation?.report,
         messages,
@@ -1805,7 +1817,7 @@ export function CCAgentSessionView({
         busy: isAgentBusy,
         error,
       }),
-    [session, cindyMakePreparation, messages, historyLoaded, isAgentBusy, error],
+    [session, cindyMakePreparation, messages, historyLoaded, isAgentBusy, error, remoteMakeCards.handlesSession],
   );
   const cindyMakePendingTest = useMemo(
     () => !remoteDeviceId && !readOnly && typeof window.electronAPI.cindyMakeTest === 'function'
@@ -1826,7 +1838,7 @@ export function CCAgentSessionView({
         })
       : null;
   const cindyMakeInputLocked = Boolean(
-    cindyMakeComposerPhase || cindyMakePendingTest,
+    cindyMakeComposerPhase || cindyMakePendingTest || remoteMakeCards.blocked,
   );
   useEffect(() => {
     if (!sessionId || !isOrcaLeadSessionView || !historyLoaded) return;
@@ -2093,14 +2105,14 @@ export function CCAgentSessionView({
     syntheticContinuationQueued || continuationInFlightClientId !== null;
   const errorTailKind: 'interrupted' | 'error' =
     errorTailMsg?.errorReason === APP_EXIT_INTERRUPTED_REASON ? 'interrupted' : 'error';
-  // 普通失败行传给 ErrorBanner 的错误文本:**保持 raw**(只解码 [REMOTE_*]
-  // bracket code,不做 reason→i18n 转换,review P2)—— ErrorBanner 的门控判定
+  // 普通失败行传给 ErrorBanner 的错误文本:**保持 raw**(包括可识别的
+  // bracket code,由 ErrorBanner 按当前语言翻译)—— ErrorBanner 的门控判定
   // (codex thread not found / 401 / invalid-encrypted 等)靠对原文的正则命中,
   // i18n 化会让不可重试错误漏过门控;live 报错时 banner 显示的本来也是 raw
   // message,重载后同文案反而更一致。
   const errorTailText = useMemo(() => {
     if (!errorTailMsg || errorTailKind !== 'error') return '';
-    return decodeRemoteErrorMessage(errorTailMsg.content);
+    return remoteErrorMessageForBanner(errorTailMsg.content);
   }, [errorTailKind, errorTailMsg]);
   // 本地隐藏态:点主按钮后立即隐藏,不等新消息入流(视觉连续性,规则 7)。
   // 「忽略/关闭」走 store 的乐观 errorDismissed 更新,无需本地态。
@@ -3447,7 +3459,7 @@ export function CCAgentSessionView({
       },
     ) => {
       if (readOnly) return false;
-      if (cindyMakeComposerPhase || cindyMakePendingTest) return false;
+      if (cindyMakeInputLocked) return false;
       const deliveryMode = opts?.deliveryMode ?? 'queue';
       const originalMessage = message;
       const navigationRequestVersion =
@@ -3730,8 +3742,7 @@ export function CCAgentSessionView({
       vendorAuthGate,
       remoteDeviceId,
       sessionHandoffPreparing,
-      cindyMakeComposerPhase,
-      cindyMakePendingTest,
+      cindyMakeInputLocked,
     ],
   );
 
@@ -4547,7 +4558,7 @@ export function CCAgentSessionView({
       botUnreadBoundaryAt={botChatIdentity ? botUnreadBoundaryAt : null}
       messages={messages}
       cindyMakeSessionId={session?.source === 'cindy-make' ? sessionId : undefined}
-      cindyMakeCompletionInComposer={session?.source === 'cindy-make' && !remoteDeviceId && !readOnly && typeof window.electronAPI.cindyMakeTest === 'function'}
+      cindyMakeCompletionInComposer={session?.source === 'cindy-make' && (remoteMakeCards.supported || (!remoteDeviceId && !readOnly && typeof window.electronAPI.cindyMakeTest === 'function'))}
       historyLoaded={historyLoaded}
       historyCleared={Boolean(session?.clearedAt)}
       taskUpdates={taskUpdates}
@@ -4834,7 +4845,8 @@ export function CCAgentSessionView({
               {botChatIdentity ? (
                 <BotWorkingStatus
                   key={sessionId}
-                  sessionId={remoteDeviceId ? undefined : sessionId ?? undefined}
+                  sessionId={sessionId ?? undefined}
+                  remote={remoteDeviceId ? { deviceId: remoteDeviceId, botId: botChatIdentity.id } : undefined}
                   visible={composerRuntimeVisible}
                   status={
                     pendingPermission ? 'Waiting on approval'
@@ -5244,6 +5256,8 @@ export function CCAgentSessionView({
                   userId={sessionBinding.identity?.userId ?? null}
                   displayName={sessionBinding.displayName}
                 />
+              ) : remoteMakeCards.blocked ? (
+                <SessionResourceCards state={remoteMakeCards} />
               ) : cindyMakeComposerPhase ? (
                 <CindyMakeComposerMask
                   phase={cindyMakeComposerPhase}
@@ -5277,7 +5291,7 @@ export function CCAgentSessionView({
                       sessionId={session.id}
                       messageId={cindyMakeRecoveryId}
                     />
-                  ) : undefined}
+                  ) : remoteMakeCards.handlesSession ? <SessionResourceCards state={remoteMakeCards} /> : undefined}
                   onSend={handleSend}
                   onBeforeVoiceInputStart={handleBeforeVoiceInputStart}
                   sessionId={sessionId}
