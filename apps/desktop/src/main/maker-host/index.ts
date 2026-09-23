@@ -17,6 +17,7 @@ import { createMediaDownloadContext } from '../cindy-media/mediaDownloadApproval
 import { isCodexAccountProvider, codexAccountHome, setCodexAccountRetirement } from './codex-account-auth.js';
 import { CodexThreadLocations } from './codex-thread-locations.js';
 import { getActiveAppSession } from '../appSessionState.js';
+import { getActiveAuthRealm } from '../authManager.js';
 import { getCustomProvider, updateCustomProviderIfUnchanged } from './custom-provider-store.js';
 import { refreshCustomProvidersIntoCatalog } from './createDesktopProviderService.js';
 import { acquireWorktreeRuntimeLease, releaseWorktreeRuntimeLease, type WorktreeRuntimeLease } from '../worktree/runtimeLeases';
@@ -1950,9 +1951,11 @@ export function getMaker(): Maker {
       },
       createCodexAuthTokenReader: (providerId) => {
         const owner = getActiveAppSession();
+        const authRealm = getActiveAuthRealm();
         const assertOwner = () => {
           const current = getActiveAppSession();
           if (isAppSessionBoundaryPending() || _codexAgent !== codexAgent ||
+              getActiveAuthRealm() !== authRealm ||
               current.mode !== owner.mode || current.dataOwnerId !== owner.dataOwnerId) {
             throw new Error('Codex authentication owner changed');
           }

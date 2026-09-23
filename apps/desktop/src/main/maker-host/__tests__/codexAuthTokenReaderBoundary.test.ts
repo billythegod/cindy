@@ -29,6 +29,7 @@ describe('Codex token reader owner boundary', () => {
     const createReader = runInNewContext(`(${callback})`, {
       activeOwnerScopeKey: () => owner,
       getActiveAppSession: () => ({ mode: 'cloud', dataOwnerId: owner }),
+      getActiveAuthRealm: () => 'global',
       codexAgent: agent,
       _codexAgent: agent,
       isAppSessionBoundaryPending: () => pending,
@@ -45,16 +46,18 @@ describe('Codex token reader owner boundary', () => {
     }
   });
 
-  function fixture(oldToken = 'fixture-old-token', newToken = 'fixture-new-token') {
+  function fixture(oldToken = 'fixture-old-token', newToken = 'fixture-new-token', initialRealm = 'global') {
     const owner = { mode: 'cloud', dataOwnerId: 'owner-a', generation: 1 };
     const agent = {};
     let pending = false;
+    let realm = initialRealm;
     let accessToken = oldToken;
     const readOneShotCreds = vi.fn(() => ({ accessToken, accountId: 'account-b' }));
     const getState = vi.fn(async () => ({ authenticated: true }));
     const context = {
       activeOwnerScopeKey: () => `${owner.mode}:${owner.dataOwnerId}:${owner.generation}`,
       getActiveAppSession: () => ({ ...owner }),
+      getActiveAuthRealm: () => realm,
       isAppSessionBoundaryPending: () => pending,
       codexAgent: agent,
       _codexAgent: agent as object | null,
@@ -63,6 +66,7 @@ describe('Codex token reader owner boundary', () => {
     const createReader = runInNewContext(`(${callback})`, context);
     return { owner, context, getState, readOneShotCreds, reader: createReader('account-b'),
       setPending: (value: boolean) => { pending = value; },
+      setRealm: (value: string) => { realm = value; },
       renew: () => { accessToken = newToken; },
     };
   }
@@ -133,6 +137,34 @@ describe('Codex token reader owner boundary', () => {
     });
     await expect(f.reader()).rejects.toThrow('Codex authentication owner changed');
     expect(f.readOneShotCreds).not.toHaveBeenCalled();
+  });
+
+  it.each(['global', 'cn'])('rejects same-ID realm changes from %s between reads', async realm => {
+    const f = fixture('fixture-old-token', 'fixture-new-token', realm);
+    await f.reader();
+    f.getState.mockClear();
+    f.readOneShotCreds.mockClear();
+    f.setRealm(realm === 'global' ? 'cn' : 'global');
+    f.owner.generation++;
+    f.renew();
+    // Same membership ID and retained CodexAgent are insufficient across realms.
+    await expect(f.reader()).rejects.toThrow('Codex authentication owner changed');
+    expect(f.getState).not.toHaveBeenCalled();
+    expect(f.readOneShotCreds).not.toHaveBeenCalled();
+  });
+
+  it.each(['global', 'cn'])('rejects a realm change from %s during a credential read', async realm => {
+    const f = fixture('fixture-old-token', 'fixture-new-token', realm);
+    f.getState.mockImplementationOnce(async () => {
+      f.setRealm(realm === 'global' ? 'cn' : 'global');
+      f.owner.generation++;
+      return { authenticated: true };
+    });
+    await expect(f.reader()).rejects.toThrow('Codex authentication owner changed');
+    expect(f.readOneShotCreds).not.toHaveBeenCalled();
+    // The new realm remains rejected after its transition has settled.
+    await expect(f.reader()).rejects.toThrow('Codex authentication owner changed');
+    expect(f.getState).toHaveBeenCalledTimes(1);
   });
 
   // Explicit opt-in: real binary, fake credentials, temporary home, loopback only.
