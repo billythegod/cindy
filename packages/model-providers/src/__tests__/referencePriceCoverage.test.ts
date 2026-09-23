@@ -9,6 +9,20 @@ const registry = BUNDLED_CATALOG.modelRegistry;
 const at = "2026-09-23";
 
 describe("verified September reference-price coverage", () => {
+  it("resolves the existing Muse 1.2 route to its official tariff", () => {
+    expect(
+      resolveModelReferencePrice(registry, "xd", "meta/muse-spark-1.2", {
+        at,
+        officialOnly: true,
+      })?.price,
+    ).toMatchObject({
+      currency: "USD",
+      inputPerMtok: 1.25,
+      outputPerMtok: 4.25,
+      cacheReadPerMtok: 0.15,
+    });
+  });
+
   it.each([
     ["moonshot-kimi-cn", "kimi-k3", "CNY", 20],
     ["moonshot-kimi-global", "kimi-k3", "USD", 3],

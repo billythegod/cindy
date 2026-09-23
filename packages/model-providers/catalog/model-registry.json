@@ -1,6 +1,6 @@
 {
   "schemaVersion": 5,
-  "updatedAt": "2026-09-23T00:00:00.004Z",
+  "updatedAt": "2026-09-23T00:00:00.005Z",
   "models": [
     {
       "id": "openai/gpt-6-sol",
@@ -1990,7 +1990,8 @@
         {
           "providerId": "xd",
           "modelId": "meta/muse-spark-1.2",
-          "agents": ["claude-code", "codex"]
+          "agents": ["claude-code", "codex"],
+          "referencePriceGroup": "global"
         }
       ],
       "modelRef": "meta/muse-spark-1.2"
