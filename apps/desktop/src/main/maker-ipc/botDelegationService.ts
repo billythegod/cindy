@@ -889,8 +889,9 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
             result: {
               workingDir: child?.workingDir ?? '',
               runSequence: params.runSequence,
-              status: params.status,
+              status: sessionTaskViewStatus({ status: params.status, lastError: params.lastError ?? null }),
               text: notificationPlainText(params.resultSummary ?? ''),
+              ...(params.lastError ? { error: params.lastError.slice(0, 4_000) } : {}),
               artifacts: artifacts.filter((file) => file.status !== 'deleted')
                 .map((file) => ({ absolutePath: file.absolutePath })),
             },

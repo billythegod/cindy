@@ -22,5 +22,11 @@ export function notificationPlainText(markdown: string): string {
 }
 
 export function notificationPreview(markdown: string, limit = 240): string {
-  return Array.from(notificationPlainText(markdown)).slice(0, limit).join('');
+  // The notify protocol measures JS string length (UTF-16), not code points.
+  let preview = '';
+  for (const character of notificationPlainText(markdown)) {
+    if (preview.length + character.length > limit) break;
+    preview += character;
+  }
+  return preview;
 }

@@ -6101,9 +6101,13 @@ describe('Bot Session task end-to-end runtime', () => {
       const resultCard = h.sqlite!.prepare('SELECT agent_meta FROM messages WHERE client_id = ?')
         .get(`bot-delegation-result:${delegated.delegationId}:1`) as { agent_meta: string };
       expect(JSON.parse(resultCard.agent_meta).botCollaboration.result).toMatchObject({
-        status: 'failed', text: '已确认前两个版本兼容，第三个版本',
+        status: 'failed', text: '已确认前两个版本兼容，第三个版本', error: 'Pi reached the model output limit.',
       });
-      expect(resultCard.agent_meta).not.toContain('Pi reached');
+      await expect(runtime.delegation.messageSessionTask('session-1', delegated.delegationId, { kind: 'message', text: 'Continue' }))
+        .resolves.toMatchObject({ ok: true, resumed: true });
+      await runtime.settleChild(delegated.childSessionId, 'Recovered result');
+      expect(h.sqlite!.prepare('SELECT agent_meta FROM messages WHERE client_id = ?').pluck()
+        .get(`bot-delegation-result:${delegated.delegationId}:1`)).toBe(resultCard.agent_meta);
       expect(receipt).toContain('已确认前两个版本兼容，第三个版本');
       expect(receipt).toContain('Pi reached the model output limit.');
     } finally {
@@ -6462,6 +6466,11 @@ describe('Bot Session task end-to-end runtime', () => {
           status: 'timed-out',
           error: '到了约定时间后台任务还没有交回结果',
         },
+      });
+      const resultCard = h.sqlite!.prepare('SELECT agent_meta FROM messages WHERE client_id = ?').pluck()
+        .get(`bot-delegation-result:${started.delegationId}:1`) as string;
+      expect(JSON.parse(resultCard).botCollaboration.result).toMatchObject({
+        status: 'timed-out', error: 'TIMEOUT: 到了约定时间后台任务还没有交回结果',
       });
     } finally {
       runtime.dispose();

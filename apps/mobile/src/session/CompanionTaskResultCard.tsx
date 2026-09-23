@@ -9,6 +9,7 @@ import { radius, spacing, typeScale } from '@/theme/tokens';
 
 export function CompanionTaskResultCard({ meta, deviceId }: { meta: BotCollaborationMeta; deviceId: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [showError, setShowError] = useState(false);
   const { t } = useTranslation();
   const router = useRouter();
   const styles = useThemedStyles(makeStyles);
@@ -21,6 +22,12 @@ export function CompanionTaskResultCard({ meta, deviceId }: { meta: BotCollabora
     </Pressable>
     {expanded && <View style={styles.content}>
       <Text selectable style={styles.body}>{result.text || t('devices.companions.noWrittenResult')}</Text>
+      {result.error && <View>
+        <Pressable accessibilityRole="button" accessibilityState={{ expanded: showError }} onPress={() => setShowError(!showError)} style={styles.action}>
+          <Text style={styles.secondary}>{t('interaction.companion.details')}</Text>
+        </Pressable>
+        {showError && <Text selectable style={styles.secondary}>{result.error}</Text>}
+      </View>}
       {result.artifacts.map((artifact) => <Pressable key={artifact.absolutePath} accessibilityRole="button" style={styles.action}
         onPress={() => router.push({ pathname: '/files/preview/[sessionId]', params: { sessionId: meta.childSessionId ?? '', deviceId, absPath: artifact.absolutePath } })}>
         <Text style={styles.title}>{artifact.absolutePath.split(/[\\/]/).pop()}</Text>

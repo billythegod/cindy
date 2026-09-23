@@ -22,6 +22,10 @@ export function BotSessionTaskResultCard({ data }: { data?: Record<string, unkno
       </summary>
       <div className="space-y-2 border-t border-[var(--border-default)] px-3 py-3">
         <p className="whitespace-pre-wrap break-words">{result.text || t('bots.collab.noWrittenResult')}</p>
+        {result.error && <details>
+          <summary className="flex min-h-11 cursor-pointer items-center rounded-xl text-[var(--text-secondary)] focus-visible:outline focus-visible:outline-2">{t('appError.details')}</summary>
+          <p className="whitespace-pre-wrap break-words text-12 text-[var(--text-secondary)]">{result.error}</p>
+        </details>}
         <ChatSessionFileProvider value={{ ...fileContext, workingDir, sessionId: card.childSessionId ?? undefined }}>
           {result.artifacts.map((artifact) => (
             <MarkdownRenderer key={artifact.absolutePath} workingDir={workingDir} currentSessionId={card.childSessionId ?? undefined}

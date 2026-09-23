@@ -48,6 +48,8 @@ export interface BotCollaborationMeta {
     runSequence: number;
     status: 'completed' | 'failed' | 'cancelled' | 'timed-out';
     text: string;
+    /** Frozen failure detail, only revealed on demand; never the primary label. */
+    error?: string;
     artifacts: Array<{ absolutePath: string }>;
   };
 }
@@ -88,6 +90,7 @@ export function readBotCollaborationMeta(value: unknown): BotCollaborationMeta |
   if (receipt.role === 'delegation-result' && (!receipt.result || !Number.isSafeInteger(receipt.result.runSequence)
     || receipt.result.runSequence < 1 || !['completed', 'failed', 'cancelled', 'timed-out'].includes(receipt.result.status)
     || (receipt.result.workingDir !== undefined && typeof receipt.result.workingDir !== 'string')
+    || (receipt.result.error !== undefined && typeof receipt.result.error !== 'string')
     || typeof receipt.result.text !== 'string' || !Array.isArray(receipt.result.artifacts)
     || receipt.result.artifacts.some((file) => !file || typeof file.absolutePath !== 'string'))) return null;
   return {

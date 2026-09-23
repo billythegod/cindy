@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { NOTIFY_TITLE_MAX_LENGTH } from '@cindy/device-link';
+import { NOTIFY_TITLE_MAX_LENGTH, NOTIFY_BODY_MAX_LENGTH } from '@cindy/device-link';
 import { MobileNotifyDeduper, buildSessionNotifyPayload } from '../mobileNotify';
 
 describe('buildSessionNotifyPayload', () => {
@@ -40,6 +40,14 @@ describe('buildSessionNotifyPayload', () => {
     expect(
       buildSessionNotifyPayload({ ...base, fallbackBody: '需要你回覆', detail: '   ' }).body,
     ).toBe('需要你回覆');
+  });
+
+  it.each(['😀'.repeat(240), 'a'.repeat(239) + '😀', '**中文😀** '.repeat(100)])('keeps emoji and mixed Markdown within the wire limit (case %#)', (detail) => {
+    const { body } = buildSessionNotifyPayload({ ...base, detail });
+    expect(body).toBeDefined();
+    expect(body!.length).toBeLessThanOrEqual(NOTIFY_BODY_MAX_LENGTH);
+    expect(body).not.toMatch(/[\uD800-\uDBFF]$/u);
+    expect(body).not.toContain('**');
   });
 
   it('collapseId 哈希压缩:长 deviceId 也稳定在 32 hex(APNs 64B 上限内),不同会话不同键', () => {

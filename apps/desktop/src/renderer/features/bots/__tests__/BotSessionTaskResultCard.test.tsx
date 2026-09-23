@@ -23,3 +23,12 @@ it('uses human fallback for a stopped task with no result and rejects malformed 
   rerender(<BotSessionTaskResultCard data={{ botCollaboration: { ...card, result: {} } }} />);
   expect(screen.queryByText('Report')).toBeNull();
 });
+
+it('keeps frozen failure details behind their own disclosure', () => {
+  const { container } = render(<BotSessionTaskResultCard data={{ botCollaboration: { ...card, result: { ...card.result, status: 'timed-out', error: 'TIMEOUT: upstream did not finish' } } }} />);
+  expect(container.querySelector('summary')?.textContent).toContain('bots.collab.status.timed-out');
+  expect(container.querySelector('summary')?.textContent).not.toContain('TIMEOUT:');
+  const details = screen.getByText('TIMEOUT: upstream did not finish').closest('details');
+  expect(details?.open).toBe(false);
+  expect(details?.querySelector('summary')?.textContent).toBe('appError.details');
+});

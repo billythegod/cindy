@@ -532,3 +532,16 @@ it('opens a stable completed result inline and routes its artifact to the child 
   expect(h.push).toHaveBeenCalledWith({ pathname: '/files/preview/[sessionId]', params: { sessionId: 'child', deviceId: 'home', absPath: '/reports/result.pdf' } });
   expect(h.invoke).not.toHaveBeenCalledWith('home', 'maker:bot-delegations-list', expect.anything());
 });
+
+it('reveals frozen failure details only after opening the result and its details', async () => {
+  const { CompanionTaskResultCard } = await import('@/session/CompanionTaskResultCard');
+  const meta = { result: { status: 'timed-out', text: '', error: 'TIMEOUT: upstream did not finish', artifacts: [] }, objective: 'Report' } as any;
+  await act(async () => root.render(createElement(CompanionTaskResultCard, { meta, deviceId: 'home' })));
+  expect(node.textContent).toContain('devices.companions.status.timed-out');
+  expect(node.textContent).not.toContain('TIMEOUT:');
+  await act(async () => node.querySelector('button')!.click());
+  expect(node.textContent).not.toContain('TIMEOUT:');
+  const details = Array.from(node.querySelectorAll('button')).find(button => button.textContent === 'interaction.companion.details');
+  await act(async () => details!.click());
+  expect(node.textContent).toContain('TIMEOUT: upstream did not finish');
+});

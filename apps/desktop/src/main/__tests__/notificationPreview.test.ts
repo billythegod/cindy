@@ -12,7 +12,10 @@ describe('notification plain text', () => {
     ['**日本語** / _한국어_ / [繁體中文](url)', '日本語 / 한국어 / 繁體中文'],
   ])('converts %s', (markdown, expected) => expect(notificationPreview(markdown)).toBe(expected));
   it('shortens after parsing, without splitting Unicode characters', () => {
-    expect(notificationPreview('**😀中文abc**', 4)).toBe('😀中文a');
+    expect(notificationPreview('**😀中文abc**', 4)).toBe('😀中文');
+    expect(notificationPreview('abc😀', 4)).toBe('abc');
+    expect(notificationPreview('😀', 1)).toBe('');
+    expect(notificationPreview('😀'.repeat(240))).toBe('😀'.repeat(120));
   });
 });
 
