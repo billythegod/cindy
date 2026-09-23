@@ -209,6 +209,96 @@ async function renderNewImageGenerationReloadConfirmation(onSaved = vi.fn(), onC
 
 describe('ProviderConnectionDialog accessibility', () => {
   it.each(['claude-code', 'codex', 'pi'] as const)(
+    'preserves existing %s configuration when saving unchanged or renaming', async agent => {
+      const initial: CustomProviderConfig = {
+        id: 'existing-connection', name: 'Existing connection',
+        runtimes: { [agent]: {
+          baseUrl: 'https://existing.example.test/v1', wireProtocol: 'openai-chat',
+          modelsUrl: 'https://existing.example.test/catalog',
+          headers: { 'x-custom-option': 'existing-option' },
+          ...(agent === 'pi' ? { piCatalogProviderId: 'openai' } : {}),
+          ...(agent === 'codex' ? { supportsImageGeneration: true } : {}),
+          models: [{ id: 'custom-chat', name: 'User chosen name', contextWindow: 64000,
+            api: 'openai-responses', mode: 'chat',
+            modalities: { input: ['text', 'image'], output: ['text'] },
+            officialDocs: 'https://existing.example.test/docs',
+            discoveredMetadata: { contextWindow: 128000, supportsImageInput: true },
+            discoveredCost: { input: 2, output: 8, cacheRead: 0.2 },
+            defaultEnabled: false, supportsImageInput: false, reasoning: true,
+            reasoningEfforts: ['low', 'high'], reasoningDefaultEffort: 'high', nameExplicit: true,
+            ...(agent === 'pi' ? { piApi: 'openai-responses' } : {}),
+            route: { baseUrl: 'https://existing.example.test/independent?version=1',
+              wireProtocol: 'openai-responses', requestPath: '/responses' } },
+          { id: 'inherited-model', name: 'Inherited model' }],
+        } },
+      };
+      const before = structuredClone(initial);
+      customProviderMocks.readCustomProviderKey.mockResolvedValue('qa-invalid-saved-key');
+      // Keep the draft open after the first attempt so the same fixture can exercise renaming.
+      customProviderMocks.updateCustomProvider.mockRejectedValueOnce(new Error('Save failed'));
+      const user = userEvent.setup();
+      render(<ProviderConnectionDialog initial={initial} onSaved={vi.fn()} onClose={vi.fn()} />);
+      await waitForInitialDialogFocus();
+      await screen.findByText('settings.providers.custom.fields.apiKeySaved');
+      await user.click(screen.getByRole('button', { name: 'settings.providers.custom.test.button' }));
+      await waitFor(() => expect(window.electronAPI.maker.testProviderConnection).toHaveBeenCalledWith({
+        kind: 'saved', providerId: initial.id, agent,
+      }));
+      await user.click(screen.getByRole('button', { name: 'settings.providers.custom.save' }));
+      await waitFor(() => expect(customProviderMocks.updateCustomProvider).toHaveBeenCalledOnce());
+      const nameInput = screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Renamed connection');
+      await user.click(screen.getByRole('button', { name: 'settings.providers.custom.save' }));
+      await waitFor(() => expect(customProviderMocks.updateCustomProvider).toHaveBeenCalledTimes(2));
+      for (const [config, keys] of customProviderMocks.updateCustomProvider.mock.calls) {
+        expect(config.runtimes).toEqual(initial.runtimes);
+        expect(keys).toEqual({});
+        expect(JSON.stringify(config)).not.toContain('modelRouteBaseUrl');
+      }
+      expect(customProviderMocks.updateCustomProvider.mock.calls[1][0].name).toBe('Renamed connection');
+      expect(initial).toEqual(before);
+    },
+  );
+
+  it.each(['claude', 'codex'] as const)('preserves existing native %s configuration when renaming', async native => {
+    const initial: CustomProviderConfig = {
+      id: 'existing-native', name: 'Existing native', auth: { method: 'oauth', native },
+      runtimes: native === 'claude'
+        ? { 'claude-code': { baseUrl: 'https://api.anthropic.com', models: [] } }
+        : { codex: { baseUrl: 'https://chatgpt.com/backend-api/codex', models: [] } },
+    };
+    const user = userEvent.setup();
+    render(<ProviderConnectionDialog initial={initial} onSaved={vi.fn()} onClose={vi.fn()} />);
+    await waitForInitialDialogFocus();
+    const nameInput = screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Renamed native');
+    await user.click(screen.getByRole('button', { name: 'settings.providers.custom.save' }));
+    await waitFor(() => expect(customProviderMocks.updateCustomProvider).toHaveBeenCalledWith(
+      { ...initial, name: 'Renamed native' }, {},
+    ));
+  });
+
+  it('leaves existing configuration untouched when an endpoint edit is cancelled', async () => {
+    const initial = modelRoutedCodexProvider();
+    const before = structuredClone(initial);
+    const onClose = vi.fn();
+    customProviderMocks.readCustomProviderKey.mockResolvedValue('qa-invalid-saved-key');
+    const user = userEvent.setup();
+    render(<ProviderConnectionDialog initial={initial} onSaved={vi.fn()} onClose={onClose} />);
+    await waitForInitialDialogFocus();
+    expect(customProviderMocks.updateCustomProvider).not.toHaveBeenCalled();
+    await user.clear(screen.getByLabelText('settings.providers.custom.fields.baseUrl'));
+    await user.type(screen.getByLabelText('settings.providers.custom.fields.baseUrl'), 'http://127.0.0.1:8000/v2');
+    await user.click(screen.getByRole('button', { name: 'settings.providers.custom.cancel' }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(customProviderMocks.updateCustomProvider).not.toHaveBeenCalled();
+    expect(customProviderMocks.createCustomProvider).not.toHaveBeenCalled();
+    expect(initial).toEqual(before);
+  });
+
+  it.each(['claude-code', 'codex', 'pi'] as const)(
     'rebases saved %s model routes for both testing and saving an edited HTTP endpoint', async agent => {
       const initial: CustomProviderConfig = {
         id: 'edited-endpoint', name: 'Edited endpoint', auth: { method: 'apiKey' },
