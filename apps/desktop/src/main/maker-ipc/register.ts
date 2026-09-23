@@ -33,6 +33,7 @@ import { projectRemoteBotDelegations } from './remoteBotDelegations.js';
  */
 
 import { readCodexContextWindowInfo } from '../maker-host/codex-context-window.js';
+import { readSshCodexModelList, assertSshCodexModel, isVerifiedSshCodexResume } from '../remote-ssh/codex-model-list.js';
 import { prepareCodexCustomContextCatalog } from '../maker-host/codex-custom-context-catalog.js';
 import { inferProviderIdForModel } from '../maker-host/provider-route.js';
 import { resolveConfiguredContextWindow, resolveDesktopModelContextProviderId } from '../maker-host/model-context-settings.js';
@@ -446,6 +447,7 @@ import {
 } from './botDirectMessageService.js';
 import { restartBotRuntime } from './botRuntimeRestart.js';
 import { registerBotLifecycleHandlers } from './botLifecycleService.js';
+import { isSessionPermissionMode, persistPermissionModeWithoutRuntime } from './sessionPermissionPersistence.js';
 import { updateBotRoutineLifecycle } from '../routines/service.js';
 import {
   createBotCompactRuntimeRefreshCoordinator,
@@ -465,6 +467,8 @@ import {
   ensureCodexMcpBridgeStartedForRemote,
   finalizeCodexAfterAuthModeChange,
   getMaker,
+  listSshCodexProviders,
+  disposeRemoteCodexHostAfterRestart,
   getMakerIfReady,
   getPluginRegistry,
   isBotToolsetAvailable,
@@ -856,7 +860,7 @@ import {
   refreshActiveCatalogFromSource,
   refreshCustomProvidersIntoCatalog,
 } from '../maker-host/createDesktopProviderService.js';
-import { readOrcaWorkerProviderRoutingContext } from './orcaProviderRoutingContext.js';
+import { readOrcaWorkerProviderRoutingContext, sshCodexWorkerRoutingContext } from './orcaProviderRoutingContext.js';
 import {
   clearSessionProvider,
   getSessionProvider,
@@ -5411,6 +5415,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // 已设间隔算出 now+null 立即触发,mobile 必须据此回退旧 wire 形态(省略
       // key,由旧引擎的隐式清空承担等价语义)。
       supportsScheduleIntervalNullClear: true,
+      // New mobile editors only expose/save pre-run commands when the host can persist them.
+      supportsSchedulePreRunHook: true,
       // Full scheduled model selection, including bound Harness changes and template overrides.
       supportsScheduleModelSelection: true,
     };
@@ -5767,9 +5773,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     // 通用 OAuth（目录 auth.oauth 描述符驱动）：login 成功后 best-effort 拉动态模型发现
     // (additions-only merge 进 active-catalog) 并广播 PROVIDER_CHANGED 让 UI 刷新连接态。
-    oauthLogin: async (providerId, isCurrent, onBrowserUrl) => {
+    oauthLogin: async (providerId, isCurrent, onBrowserUrl, method, onDeviceCode) => {
       if (subscriptionAccountKind(providerId)) {
-        const result = await loginSubscriptionAccount(providerId, isCurrent);
+        const result = await loginSubscriptionAccount(providerId, isCurrent, {
+          method,
+          onDeviceCode,
+        });
         if (result.ok && isCurrent()) {
           if (subscriptionAccountKind(providerId) === 'xai') clearXaiRateLimitSnapshot(providerId);
           try { await refreshSubscriptionAccountModels(providerId); } catch { /* Static catalog remains usable. */ }
@@ -5784,6 +5793,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         }
         return result;
       }
+      if (method === 'device') throw new Error('Device login is only available for Grok');
       if (isCodexAccountProvider(providerId)) {
         const owner = getActiveAppSession();
         const current = () => isCurrent() && getActiveAppSession().generation === owner.generation;
@@ -6698,7 +6708,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     agent: AgentKind,
     model: string,
     providerId: string | null,
+    remoteHostId?: string | null,
   ): Promise<string | undefined> {
+    if (agent === 'codex' && remoteHostId) {
+      assertSshCodexModel(await readSshCodexModelList({ id: remoteHostId }, listSshCodexProviders), model, providerId);
+      return undefined;
+    }
     const verdict = await verdictForModelRoute(agent, model, providerId);
     if (verdict.kind === 'reject') {
       throwIpcError(
@@ -6784,22 +6799,26 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (o.resumeSessionId && typeof o.id === 'string' && o.id) {
         try {
           const [row] = await getDbClient()
-            .drizzle.select({ model: sessions.model, providerId: sessions.providerId })
+            .drizzle.select({ model: sessions.model, providerId: sessions.providerId,
+              remoteHostId: sessions.remoteHostId, sdkSessionId: sessions.sdkSessionId, agentKind: sessions.agentKind })
             .from(sessions)
             .where(eq(sessions.id, o.id))
             .limit(1);
           verifiedResume =
             !!row && row.model === o.model && (row.providerId ?? null) === (o.providerId ?? null);
+          if (o.agentKind === 'codex' && o.remoteHostId) {
+            verifiedResume = isVerifiedSshCodexResume(o, row ? { ...row, agentKind: dbToMakerAgentKind(row.agentKind) } : undefined);
+          }
         } catch {
           verifiedResume = false;
         }
       }
       if (!verifiedResume) {
-        const reroute = await assertModelRouteUsable(o.agentKind, o.model, o.providerId ?? null);
+        const reroute = await assertModelRouteUsable(o.agentKind, o.model, o.providerId ?? null, o.remoteHostId);
         if (reroute && shouldApplyExclusiveProviderRerouteLive(o.providerId)) {
           o.providerId = reroute;
         }
-      } else if (shouldApplyExclusiveProviderRerouteLive(o.providerId)) {
+      } else if (!(o.agentKind === 'codex' && o.remoteHostId) && shouldApplyExclusiveProviderRerouteLive(o.providerId)) {
         const pin = await pinExclusiveSessionProvider(o.agentKind, o.model, o.providerId ?? null);
         if (pin) o.providerId = pin;
       }
@@ -7287,6 +7306,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     session?: { agentKind: AgentKind; remoteHostId: string | null } | null;
     createOpts?: unknown;
   }): Promise<{ remoteCodexDaemonRebootstrapped: true } | void> {
+    const ownerGeneration = getActiveAppSession().generation;
     const { session, createOpts } = params;
     // Remote SSH auto-reconnect 前置: 拿 host 是否要联网在 maker-core 之前确定,
     // 避免 remote transport hook 同步抛 "not found in pool"。ensureRemoteHostReady
@@ -7438,6 +7458,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           await detachIdleRemoteCodexSessionsOnHost(
             remoteHostIdToEnsure,
             'codex-mcp-daemon-rebootstrap',
+            ownerGeneration,
           );
           return { remoteCodexDaemonRebootstrapped: true };
         }
@@ -7493,7 +7514,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   async function detachIdleRemoteCodexSessionsOnHost(
     hostId: string,
     reason: string,
+    ownerGeneration: number,
   ): Promise<void> {
+    if (isAppSessionBoundaryPending() || getActiveAppSession().generation !== ownerGeneration) return;
     const detachTasks: Array<Promise<void>> = [];
     for (const s of maker.listActiveSessions()) {
       if (s.remoteHostId !== hostId || s.agentKind !== 'codex') continue;
@@ -7510,6 +7533,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       );
     }
     await Promise.all(detachTasks);
+    // Model discovery can own a connection before any Session exists. Daemon
+    // bootstrap invalidates that connection too; wait for its retirement before
+    // lazy creation reads the catalog, rather than racing the SSH close event.
+    await disposeRemoteCodexHostAfterRestart(hostId, ownerGeneration);
   }
 
   // turn 结束后补一次远端 MCP ensure (best-effort):live turn 期间被推迟的
@@ -7522,6 +7549,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // Shutdown closes sessions while the dynamic Maker facade rejects access.
     // No remote reconfiguration belongs to the departing owner's boundary.
     if (isAppSessionBoundaryPending()) return;
+    const ownerGeneration = getActiveAppSession().generation;
     const session = maker.getSession(sessionId);
     const remoteHostId = session?.remoteHostId;
     if (!remoteHostId) return;
@@ -7558,8 +7586,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             await detachIdleRemoteCodexSessionsOnHost(
               remoteHostId,
               'codex-mcp-turn-settled-rebootstrap',
+              ownerGeneration,
             );
           }
+        }).catch((err) => {
+          log.warn('remote Codex refresh on turn settled failed', {
+            hostId: remoteHostId,
+            errorName: err instanceof Error ? err.name : 'UnknownError',
+          });
         });
       return;
     }
@@ -10946,7 +10980,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       return resolved;
     },
     getAvailableModels: (agent) => maker.getCapabilities(agent).availableModels,
-    getProviderRoutingContext,
+    getProviderRoutingContext: async (agent, remoteHostId) => agent === 'codex' && remoteHostId
+      ? sshCodexWorkerRoutingContext(await readSshCodexModelList({ id: remoteHostId }, listSshCodexProviders))
+      : getProviderRoutingContext(),
     readClaudeApiKey,
     reserveWorkerCreation,
     renewWorkerCreationReservation,
@@ -15865,14 +15901,32 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     );
   });
 
-  ipcMain.handle(MAKER_INVOKE.LIST_ACTIVE, () => {
-    return maker.listActiveSessions().map((s) => ({
-      sessionId: s.id,
-      agentKind: s.agentKind,
-      workDir: s.workDir,
-      capabilities: s.capabilities,
-      isTurnRunning: s.isTurnRunning(),
-    }));
+  ipcMain.handle(MAKER_INVOKE.LIST_ACTIVE, (_event, options?: unknown) => {
+    const activityService = getAgentIslandService();
+    const activityById = new Map(activityService?.getSessionActivitySnapshots()
+      .map((activity) => [activity.sessionId, activity] as const) ?? []);
+    const sessions = maker.listActiveSessions().map((s) => {
+      const activity = activityById.get(s.id);
+      return {
+        sessionId: s.id,
+        agentKind: s.agentKind,
+        workDir: s.workDir,
+        capabilities: s.capabilities,
+        isTurnRunning: s.isTurnRunning(),
+        ...(activityService ? {
+          activityPhase: activity?.phase ?? 'idle',
+          activityAttention: activity?.attention ?? false,
+        } : {}),
+      };
+    });
+    // Only an opted-in controller may treat an absent runtime as idle. Legacy
+    // callers keep the array response and its original absence semantics.
+    if (options && typeof options === 'object' && !Array.isArray(options)
+      && (options as Record<string, unknown>).summary === true
+      && (options as Record<string, unknown>).snapshotVersion === 2) {
+      return { format: 'active-sessions-v2', sessions };
+    }
+    return sessions;
   });
 
   ipcMain.handle(
@@ -16145,7 +16199,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         currentProviderId,
       );
       let effectiveProviderId = requestedProviderId;
-      if (routeExplicit) {
+      const sshCodexProviders = runtimeStatus.remoteHostId && runtimeStatus.agentKind === 'codex'
+        ? await readSshCodexModelList({ id: runtimeStatus.remoteHostId }, listSshCodexProviders)
+        : null;
+      if (sshCodexProviders) {
+        assertSshCodexModel(sshCodexProviders, model, guardProviderId);
+      } else if (routeExplicit) {
         const dbAgentKind = getSessionDbAgentKind(sessionId);
         if (dbAgentKind) {
           // 停用轴准入只依赖目标路由(guard = 显式目标 ?? 恢复出的源),与源 provider
@@ -16166,7 +16225,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
       if (runtimeStatus.remoteHostId) {
         const targetId = effectiveProviderId === undefined ? currentProviderId : effectiveProviderId;
-        const target = getActiveCatalog().providers.find((provider) => provider.id === targetId);
+        const target = (sshCodexProviders ?? getActiveCatalog().providers).find((provider) => provider.id === targetId);
         if (target && isLocalOnlyProviderForAgent(target, dbToMakerAgentKind(runtimeStatus.agentKind))) {
           throwIpcError('INVALID_PARAMS', 'This provider requires local execution');
         }
@@ -16185,7 +16244,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           effectiveProviderId === null
             ? null
             : (normalizeSessionProviderId(effectiveProviderId) ?? currentProviderId);
-        const runtimeProviders = await getDesktopProviderService().listProviders({
+        const runtimeProviders = sshCodexProviders ?? await getDesktopProviderService().listProviders({
           allowSideEffects: false,
           catalog: getActiveCatalog(),
         });
@@ -16477,7 +16536,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       let modelWindowRebuilt = false;
       if (runtimeAgentKind && (runtimeRouteChanged || confirmedContextWindow !== undefined)) {
         const resolveRouteWindow = (_agentKind: string, modelId: string, pid: string | null) =>
-          resolveConfiguredContextWindow(getActiveCatalog(), runtimeAgentKind, pid, modelId);
+          sshCodexProviders
+            ? resolveVerifiedContextWindow({ providers: sshCodexProviders }, runtimeAgentKind, pid ?? 'openai', modelId)
+            : resolveConfiguredContextWindow(getActiveCatalog(), runtimeAgentKind, pid, modelId);
         const verifiedTargetWindow = lookupVerifiedContextWindow(
           resolveRouteWindow,
           model,
@@ -17442,14 +17503,20 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         throwIpcError('INVALID_PARAMS', 'sessionId + mode required');
       }
       await assertReviewSettingsUnlocked(sessionId);
+      if (!isSessionPermissionMode(mode)) {
+        throwIpcError('INVALID_PARAMS', 'invalid permission mode');
+      }
       const sess = maker.getSession(sessionId);
       if (!sess) {
-        log.debug('set-permission-mode: session not found, no-op', { sessionId });
-        return;
+        const persisted = await persistPermissionModeWithoutRuntime(sessionId, mode);
+        if (!persisted) throwIpcError('NOT_FOUND', 'session not found');
+        broadcastSessionPatched(sessionId, { permissionMode: mode });
+        return true;
       }
       await sess.setPermissionMode(
         mode as 'ask' | 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions',
       );
+      return true;
     },
   );
 
