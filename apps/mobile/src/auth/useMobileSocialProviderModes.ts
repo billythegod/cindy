@@ -7,6 +7,7 @@ import {
   isNativeSocialProviderSupported,
 } from '@/auth/nativeSocial';
 import {
+  MOBILE_WECHAT_LOGIN_ENABLED,
   resolveMobileSocialLoginMode,
   type MobileSocialLoginMode,
 } from '@/auth/mobileSocialLoginMode';
@@ -22,7 +23,7 @@ export function useMobileSocialProviderModes({
   const [iosWechatAvailable, setIosWechatAvailable] = useState(false);
 
   useEffect(() => {
-    if (Platform.OS !== 'ios') return;
+    if (!MOBILE_WECHAT_LOGIN_ENABLED || Platform.OS !== 'ios') return;
     let cancelled = false;
     const refresh = async () => {
       const available = await isNativeSocialProviderAvailable('wechat');

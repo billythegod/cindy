@@ -78,38 +78,18 @@ describe('mobile social provider visibility', () => {
     expect(native.listeners.size).toBe(0);
   });
 
-  it('shows WeChat on iOS only after the installation probe succeeds', async () => {
+  it('hides WeChat on iOS without probing the SDK', async () => {
     native.available.mockResolvedValue(true);
     await renderProbe();
-    expect(wechatButton()).not.toBeNull();
-    expect(native.available).toHaveBeenCalledWith('wechat');
-  });
-
-  it('hides WeChat on iOS when the installation probe returns false', async () => {
-    await renderProbe();
     expect(wechatButton()).toBeNull();
+    expect(native.available).not.toHaveBeenCalled();
+    expect(native.listeners.size).toBe(0);
   });
 
-  it('refreshes iOS visibility when the app returns to the foreground', async () => {
-    native.available
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
-    await renderProbe();
-    expect(wechatButton()).toBeNull();
-
-    await act(async () => {
-      for (const listener of native.listeners) listener('active');
-      await Promise.resolve();
-    });
-
-    expect(wechatButton()).not.toBeNull();
-    expect(native.available).toHaveBeenCalledTimes(2);
-  });
-
-  it('keeps configured WeChat visible on Android without probing installation', async () => {
+  it('hides WeChat on Android without probing installation', async () => {
     native.platform = 'android';
     await renderProbe();
-    expect(wechatButton()).not.toBeNull();
+    expect(wechatButton()).toBeNull();
     expect(native.available).not.toHaveBeenCalled();
   });
 });

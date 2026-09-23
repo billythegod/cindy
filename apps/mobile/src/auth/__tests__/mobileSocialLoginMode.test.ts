@@ -3,17 +3,23 @@ import { describe, expect, it } from 'vitest';
 import { resolveMobileSocialLoginMode } from '@/auth/mobileSocialLoginMode';
 
 describe('resolveMobileSocialLoginMode', () => {
-  it.each(['ios', 'android'])('uses native WeChat on configured CN %s', (platform) => {
-    expect(resolveMobileSocialLoginMode({
-      provider: 'wechat', region: 'cn', platform, nativeSupported: true,
-    })).toBe('native');
-    expect(resolveMobileSocialLoginMode({
-      provider: 'wechat', region: 'cn', platform, nativeSupported: false,
-    })).toBeNull();
-    expect(resolveMobileSocialLoginMode({
-      provider: 'wechat', region: 'global', platform, nativeSupported: true,
-    })).toBeNull();
-  });
+  it.each(['ios', 'android'])(
+    'temporarily hides WeChat on %s even when configured',
+    (platform) => {
+      for (const region of ['cn', 'global'] as const) {
+        for (const nativeSupported of [true, false]) {
+          expect(
+            resolveMobileSocialLoginMode({
+              provider: 'wechat',
+              region,
+              platform,
+              nativeSupported,
+            }),
+          ).toBeNull();
+        }
+      }
+    },
+  );
   it('uses browser PKCE for Apple on Global Android', () => {
     expect(
       resolveMobileSocialLoginMode({
