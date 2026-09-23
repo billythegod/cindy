@@ -375,6 +375,30 @@ describe('v1 帧扩展行为', () => {
     );
   });
 
+  it('dispatch 显式 undefined 的定位字段回退默认值, 不再被序列化丢键拒收', () => {
+    // 回归:默认值曾放在 spread 之前, 调用方写 `sessionId: maybeSessionId`
+    // (undefined) 会把默认覆盖成 undefined, JSON.stringify 丢键后收帧端按
+    // "必须为 string 或 null"拒收整帧 —— 与 makeTurnReopen 注释里同一坑。
+    roundTrip(
+      makeTaskDispatch({
+        requestId: 'r1',
+        externalKey: 'C1:1.1',
+        workspace: 'cindy',
+        prompt: 'p',
+        sessionId: undefined,
+      }),
+    );
+    roundTrip(
+      makeTaskDispatch({
+        requestId: 'r2',
+        externalKey: 'C1:1.2',
+        sessionId: 's1',
+        prompt: 'p',
+        workspace: undefined,
+      }),
+    );
+  });
+
   it('turn.end cancelled: errorMessage 必须为 null', () => {
     const cancelled: TurnEndPayload = {
       requestId: 'r1',
