@@ -3,6 +3,7 @@ import {
   applyMobileTemplateParams,
   applyScheduleWireCompat,
   ScheduleModelSelectionUnsupportedError,
+  SchedulePreRunHookUnsupportedError,
   applyTemplateToMobileScheduleDraft,
   buildMobileScheduleInput,
   createMobileScheduleDraft,
@@ -621,4 +622,16 @@ it('round trips advanced check configuration without changing legacy quiet choic
   const draft = createMobileScheduleDraft(schedule({ silentWhenIdle: false, preRunHook: hook }));
   expect(buildMobileScheduleInput(draft)).toMatchObject({ silentWhenIdle: false, preRunHook: hook });
   expect(buildMobileScheduleInput({ ...draft, preRunHook: null })).toHaveProperty('preRunHook', null);
+});
+
+it('rejects pre-run install and removal when an older host cannot persist either', () => {
+  const draft = createMobileScheduleDraft(schedule());
+  const base = buildMobileScheduleInput(draft);
+  const options = { supportsIntervalNullClear: true, supportsModelSelection: true };
+  expect(applyScheduleWireCompat(base, options)).toBe(base);
+  for (const preRunHook of [{ command: 'node check.mjs' }, null]) {
+    const input = { ...base, preRunHook };
+    expect(() => applyScheduleWireCompat(input, options)).toThrow(SchedulePreRunHookUnsupportedError);
+    expect(applyScheduleWireCompat(input, { ...options, supportsPreRunHook: true })).toBe(input);
+  }
 });

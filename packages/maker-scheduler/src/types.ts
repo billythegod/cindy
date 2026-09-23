@@ -370,7 +370,7 @@ export interface CreateScheduleInput {
   targetSessionId?: string;
   /** 默认 false。详见 Schedule.persistentSession。 */
   persistentSession?: boolean;
-  /** 新建 agent 任务默认 true；script 默认 false。存量与显式选择保持不变。 */
+  /** 仅明确判定为检查型的创建入口显式设 true；未分类 agent 与 script 缺省 false。存量与显式选择保持不变。 */
   silentWhenIdle?: boolean;
   /** Execution mode; defaults to agent for legacy schedules. */
   executionMode?: ScheduleExecutionMode;

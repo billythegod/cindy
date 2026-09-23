@@ -135,7 +135,8 @@ Pi 将 routine_list、routine_save、routine_sources、routine_history、routine
 
 ### 检查前置与静默输出
 
-新建 agent 自动化默认启用“检查没事不说话”；仅执行脚本的任务保持原通知行为。
+明确判定为检查型的新建 agent 自动化由创建入口显式启用“检查没事不说话”；
+未分类的通用创建入口和仅执行脚本的任务保持原通知行为，避免吞掉提醒或定时发送。
 伙伴例行任务沿用原本的静默通知默认值，并把选择和可选 `preRunHook` 暴露到
 同一份 routine 定义、桌面及手机高级设置。显式提醒/定时发送应设置
 `silentWhenIdle=false`。没有批量迁移旧规则：普通旧调度保留已存选择，旧伙伴

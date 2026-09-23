@@ -468,9 +468,10 @@ export function buildMobileScheduleInput(draft: MobileScheduleDraft): RemoteSche
 }
 
 export class ScheduleModelSelectionUnsupportedError extends Error {}
+export class SchedulePreRunHookUnsupportedError extends Error {}
 
 /**
- * 按被控端能力决定 intervalMs 清空与显式模型选择的 wire 形态(device-link 两端版本会错位):
+ * 按被控端能力决定 intervalMs 清空、显式模型选择与前置检查的 wire 形态(device-link 两端版本会错位):
  *
  * - 新 desktop(capabilities.supportsScheduleIntervalNullClear)认识 null,
  *   IPC 入口把它归一化成引擎的「带 key 的 undefined」显式清空;
@@ -483,8 +484,13 @@ export class ScheduleModelSelectionUnsupportedError extends Error {}
  */
 export function applyScheduleWireCompat(
   input: RemoteScheduleWriteInput,
-  opts: { supportsIntervalNullClear: boolean; supportsModelSelection?: boolean },
+  opts: { supportsIntervalNullClear: boolean; supportsModelSelection?: boolean; supportsPreRunHook?: boolean },
 ): RemoteScheduleWriteInput {
+  if (!opts.supportsPreRunHook && input.preRunHook !== undefined) {
+    // An old host can acknowledge the save while silently dropping this field.
+    // Reject both installation and removal instead of claiming either succeeded.
+    throw new SchedulePreRunHookUnsupportedError('Scheduled pre-run checks require a newer desktop');
+  }
   let compatible = input;
   if (!opts.supportsModelSelection && input.modelAgentKind) {
     // Old hosts cannot apply an explicit bound selection. Do not report a successful
