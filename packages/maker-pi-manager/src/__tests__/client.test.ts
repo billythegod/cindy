@@ -279,6 +279,24 @@ describe("RpcClient", () => {
     expect(stream.destroyed).toBe(true);
   });
 
+  it("fires close subscribers exactly once on the graceful half-close path", async () => {
+    // 'end' 先 reject + destroy, destroy 再触发 'close' —— 两条路径共用
+    // rejectAllPending。修复前 close handler 在这条链上被调用两次; 姊妹实现
+    // cc-manager fireClose 有 closedFired 守卫, 这里对齐。
+    const { stream } = makeTestStream();
+    const client = new RpcClient(stream);
+    let closeCount = 0;
+    client.subscribeClose(() => {
+      closeCount += 1;
+    });
+
+    stream.push(null); // 对端 FIN → end → destroy → close
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(closeCount).toBe(1);
+    expect(stream.destroyed).toBe(true);
+  });
+
   /* ---------------------------------------------------------------------- */
   /*  5. dispose 幂等：调两次不抛                                            */
   /* ---------------------------------------------------------------------- */

@@ -51,6 +51,7 @@ export class RpcClient {
   });
   private readonly options: RpcClientOptions & { logger?: Pick<Console, 'warn' | 'debug'> };
   private helloDone = false;
+  private closeFired = false;
 
   constructor(
     private readonly stream: Duplex,
@@ -165,6 +166,11 @@ export class RpcClient {
 
   /** Reject every in-flight request with a typed error (close/end 共用)。 */
   private rejectAllPending(error: Error): void {
+    // 'end' 先 reject + destroy, destroy 再触发 'close' —— close handler 只能
+    // 触发一次(cc-manager 侧同名 fireClose 的 closedFired 守卫; 消费者的
+    // 重连/清理回调跑两次会重复建连)。
+    if (this.closeFired) return;
+    this.closeFired = true;
     const err = error as Error & { code?: string };
     err.code = err.code ?? 'STREAM_CLOSED';
     for (const [, entry] of this.pending) {
