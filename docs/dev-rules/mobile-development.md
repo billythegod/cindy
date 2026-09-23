@@ -100,6 +100,9 @@ pnpm --filter mobile test:smoke
   未绑手机号须短信验证，已绑用户免短信；用同一微信在 PC 和两种手机上确认账号一致。
 
 - 微信 OpenSDK 的 `oauth` / `refreshToken` 回调会同时到达原生 delegate 与 Expo Router；
+  Universal Link 校验还会回跳配置路径下的 `<AppID>/?_wechat_sdk_biz_data=…`，Router 可能
+  将 HTTPS 链接转成 Cindy scheme 或路径形式，这些形式也必须识别；仅按路径与参数名分类，
+  不解析 SDK 的不透明 payload。
   `app/+native-intent.ts` 只负责将这些非页面链接送回首页，避免 404 展示授权参数。
   微信 code/state 仍只由原生 SDK 校验，不得复用 auth-server `/auth` 的 PKCE 交换。
   真机回归需分别覆盖微信已在后台与微信冷启动，确认回跳后继续完成登录而非进入错误页。

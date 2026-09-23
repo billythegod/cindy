@@ -17,6 +17,11 @@ describe('mobile native deep-link redirects', () => {
       'https://login.example.com/app/wx-test-mobile/oauth?code=test-wechat-code',
       'https://login.example.com/app/wx-test-mobile/refreshToken/',
       'https://login.example.com/app/oauth?code=test-wechat-code',
+      'cindycn://app/wx-test-mobile/oauth?code=test-wechat-code',
+      '/app/wx-test-mobile/refreshToken/',
+      'https://login.example.com/app/wx-test-mobile/?_wechat_sdk_biz_data=test-payload&_wechat_sdk_biz_data_len=12',
+      'cindycn://app/wx-test-mobile/?_wechat_sdk_biz_data=test-payload&_wechat_sdk_biz_data_len=12',
+      '/app/wx-test-mobile/?_wechat_sdk_biz_data=test-payload',
     ]) {
       expect(redirectSystemPath({ path, initial })).toBe('/');
     }
@@ -30,6 +35,13 @@ describe('mobile native deep-link redirects', () => {
       'https://login.example.com/app/wx-other/oauth',
       'https://login.example.com/app/article',
       'https://user@login.example.com/app/oauth',
+      'https://other.example.com/app/wx-test-mobile/?_wechat_sdk_biz_data=test-payload',
+      'cindycn://app/wx-other/?_wechat_sdk_biz_data=test-payload',
+      'cindycn://elsewhere/wx-test-mobile/?_wechat_sdk_biz_data=test-payload',
+      'cindycn://app/wx-test-mobile/article?_wechat_sdk_biz_data=test-payload',
+      'cindycn://app/wx-test-mobile/',
+      'cindycn://app/wx-test-mobile/?other=test-payload#_wechat_sdk_biz_data=test-payload',
+      'cindycn://app/wx-test-mobile/?_wechat_sdk_biz_data_extra=test-payload',
     ]) {
       expect(redirectSystemPath({ path, initial: false })).toBe(path);
     }
