@@ -109,6 +109,26 @@ describe('Main-owned Cindy Make task lifecycle', () => {
     releaseBuild();
     expect(manager.hasActiveWork()).toBe(false);
   });
+  it('keeps build claims blocked until a retained source conflict is settled', () => {
+    const manager = new CindyMakeManager();
+    manager.setUpstreamMerge({
+      id: 'merge',
+      status: 'conflict',
+      ref: 'main',
+      upstreamCommit: 'a'.repeat(40),
+      hasWorkspace: true,
+    });
+    expect(() => manager.claimPersonalBuild()).toThrow('upstream merge is pending');
+    manager.setUpstreamMerge({
+      id: 'merge',
+      status: 'cancelled',
+      ref: 'main',
+      upstreamCommit: 'a'.repeat(40),
+      hasWorkspace: false,
+    });
+    const release = manager.claimPersonalBuild();
+    release();
+  });
   it('publishes only the current build owners and clears them when the lease settles', () => {
     const manager = new CindyMakeManager();
     const changed = vi.fn();
