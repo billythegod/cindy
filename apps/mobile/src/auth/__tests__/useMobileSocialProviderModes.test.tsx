@@ -37,8 +37,12 @@ import { useMobileSocialProviderModes } from '../useMobileSocialProviderModes';
 
 const providers: SocialProvider[] = ['wechat'];
 
-function Probe() {
-  const modes = useMobileSocialProviderModes({ providers, region: 'cn' });
+function Probe({ wechatLoginEnabled }: { wechatLoginEnabled?: boolean }) {
+  const modes = useMobileSocialProviderModes({
+    providers,
+    region: 'cn',
+    wechatLoginEnabled,
+  });
   return (
     <div>
       {[...modes.keys()].map((provider) => (
@@ -51,9 +55,9 @@ function Probe() {
 let host: HTMLDivElement;
 let root: Root;
 
-async function renderProbe() {
+async function renderProbe(wechatLoginEnabled?: boolean) {
   await act(async () => {
-    root.render(<Probe />);
+    root.render(<Probe wechatLoginEnabled={wechatLoginEnabled} />);
     await Promise.resolve();
   });
 }
@@ -90,6 +94,39 @@ describe('mobile social provider visibility', () => {
     native.platform = 'android';
     await renderProbe();
     expect(wechatButton()).toBeNull();
+    expect(native.available).not.toHaveBeenCalled();
+  });
+
+  it('shows WeChat on iOS after the first successful installation probe when re-enabled', async () => {
+    native.available.mockResolvedValue(true);
+    await renderProbe(true);
+    expect(wechatButton()).not.toBeNull();
+    expect(native.available).toHaveBeenCalledWith('wechat');
+  });
+
+  it('keeps WeChat hidden on iOS when the installation probe fails after re-enabling', async () => {
+    await renderProbe(true);
+    expect(wechatButton()).toBeNull();
+  });
+
+  it('refreshes iOS WeChat visibility on foreground when re-enabled', async () => {
+    native.available.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await renderProbe(true);
+    expect(wechatButton()).toBeNull();
+
+    await act(async () => {
+      for (const listener of native.listeners) listener('active');
+      await Promise.resolve();
+    });
+
+    expect(wechatButton()).not.toBeNull();
+    expect(native.available).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows configured WeChat on Android without probing installation when re-enabled', async () => {
+    native.platform = 'android';
+    await renderProbe(true);
+    expect(wechatButton()).not.toBeNull();
     expect(native.available).not.toHaveBeenCalled();
   });
 });

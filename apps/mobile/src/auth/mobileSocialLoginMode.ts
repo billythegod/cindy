@@ -16,10 +16,12 @@ export function resolveMobileSocialLoginMode(input: {
   region: AuthRegion;
   platform: string;
   nativeSupported: boolean;
+  wechatLoginEnabled?: boolean;
 }): MobileSocialLoginMode | null {
   if (
     input.provider === 'wechat' &&
-    (!MOBILE_WECHAT_LOGIN_ENABLED || input.region !== 'cn')
+    (!(input.wechatLoginEnabled ?? MOBILE_WECHAT_LOGIN_ENABLED) ||
+      input.region !== 'cn')
   ) {
     return null;
   }

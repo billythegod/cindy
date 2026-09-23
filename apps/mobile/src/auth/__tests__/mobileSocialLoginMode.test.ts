@@ -20,6 +20,40 @@ describe('resolveMobileSocialLoginMode', () => {
       }
     },
   );
+
+  it.each(['ios', 'android'])(
+    'restores the configured CN WeChat path on %s when re-enabled',
+    (platform) => {
+      expect(
+        resolveMobileSocialLoginMode({
+          provider: 'wechat',
+          region: 'cn',
+          platform,
+          nativeSupported: true,
+          wechatLoginEnabled: true,
+        }),
+      ).toBe('native');
+      expect(
+        resolveMobileSocialLoginMode({
+          provider: 'wechat',
+          region: 'cn',
+          platform,
+          nativeSupported: false,
+          wechatLoginEnabled: true,
+        }),
+      ).toBeNull();
+      expect(
+        resolveMobileSocialLoginMode({
+          provider: 'wechat',
+          region: 'global',
+          platform,
+          nativeSupported: true,
+          wechatLoginEnabled: true,
+        }),
+      ).toBeNull();
+    },
+  );
+
   it('uses browser PKCE for Apple on Global Android', () => {
     expect(
       resolveMobileSocialLoginMode({
