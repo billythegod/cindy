@@ -1,3 +1,4 @@
+import { HISTORY_GAP_SPLIT_MS } from '@cindy/maker-shared/history-gap';
 import { expect, it } from 'vitest';
 import { buildMobileMessageRenderItems } from '../session/messageRenderModel';
 import { companionConversationItems } from '../session/companionConversationPresentation';
@@ -42,4 +43,22 @@ it('retains required questions and plan decisions in the actual message projecti
     .toEqual(['user', 'assistant', 'ask_user', 'plan_review']);
   expect(JSON.stringify(items)).toContain('Which document?');
   expect(JSON.stringify(items)).toContain('Review the brief');
+});
+
+it.each([false, true])('does not seal old commentary across an unloaded history gap (streaming=%s)', (running) => {
+  const at = (message: RemoteMessage, time: number) => ({ ...message, createdAt: new Date(time).toISOString() });
+  const currentStart = 1000 + HISTORY_GAP_SPLIT_MS + 1;
+  const messages = [
+    at(row('a1', 'assistant', 'Old commentary'), 1000),
+    // The intervening user message has not been loaded yet.
+    at(row('a2', 'assistant', 'Current answer, first part'), currentStart),
+    at(row('a3', 'assistant', 'Current answer, last part', { turnCompleted: true }), currentStart + 1),
+  ];
+  const texts = (source: RemoteMessage[]) => bodies(source, running)
+    .filter(item => item.type === 'message').map(item => item.message.body);
+  expect(texts(messages)).toEqual(['Current answer, first part', 'Current answer, last part']);
+  // Once the actual user boundary is loaded, retain the older no-final reply
+  // through the existing per-turn fallback, independently of the newer seal.
+  expect(texts([messages[0], at(row('u2', 'user', 'New question'), currentStart - 1), ...messages.slice(1)]))
+    .toEqual(['Old commentary', 'New question', 'Current answer, first part', 'Current answer, last part']);
 });

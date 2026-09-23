@@ -1,11 +1,16 @@
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { afterAll } from 'vitest';
 import { expect, it, vi } from 'vitest';
 import type { BotRemoteResourceSource } from '../bots.js';
 
-const activity = vi.hoisted(() => ({ snapshot: vi.fn(), subscribe: vi.fn(), invalidate: vi.fn() }));
-vi.mock('../../../agent-island/service.js', () => ({ getAgentIslandService: () => ({ getSessionActivitySnapshot: activity.snapshot, subscribeSessionActivity: activity.subscribe }) }));
+const activity = vi.hoisted(() => ({ snapshot: vi.fn(), snapshots: vi.fn(), copy: vi.fn(async () => ({ text: 'Checking…' })), subscribe: vi.fn(), invalidate: vi.fn() }));
+vi.mock('../../../agent-island/service.js', () => ({ getAgentIslandService: () => ({ getSessionActivitySnapshot: activity.snapshot, getSessionActivitySnapshots: activity.snapshots, subscribeSessionActivity: activity.subscribe }) }));
 vi.mock('../../../maker-ipc/botRemoteResourceInvalidation.js', () => ({ scheduleBotRemoteResourceChangedForSession: activity.invalidate }));
 
-const db = vi.hoisted(() => ({ get: vi.fn(), list: vi.fn(), current: true }));
+const db = vi.hoisted(() => ({ get: vi.fn(), list: vi.fn(), current: true, client: null as any }));
+vi.mock('../../client/current.js', () => ({ getDbClient: () => db.client }));
+vi.mock('../../../maker-ipc/workingStatus.js', () => ({ getWorkingStatusCopy: activity.copy }));
 vi.mock('../../../device-link/broadcast-tap.js', () => ({ captureDataOwnerBroadcastScope: () => ({}), isDataOwnerBroadcastScopeCurrent: () => db.current }));
 vi.mock('../bots.js', () => ({
   getBotRemoteResourceSource: db.get,
@@ -15,6 +20,12 @@ vi.mock('../bots.js', () => ({
 import { remoteResourceRegistry } from '../../../device-link/remoteResourceRegistry.js';
 import { setBotRemoteMessageService } from '../../../maker-ipc/botRemoteMessageReceiver.js';
 import { registerBotRemoteResourceProvider } from '../botRemoteResourceProvider.js';
+
+const sqlite = new Database(':memory:');
+sqlite.exec('CREATE TABLE bot_session_links (id TEXT PRIMARY KEY, bot_id TEXT, session_id TEXT, role TEXT, archived_at INTEGER, created_at INTEGER)');
+db.client = { drizzle: drizzle(sqlite) };
+afterAll(() => sqlite.close());
+activity.snapshots.mockImplementation(() => [{ sessionId: 'session-1', ...activity.snapshot() }]);
 
 it('rejects a previously discovered hidden companion and allows it again after restoration', async () => {
   const source: BotRemoteResourceSource = {
@@ -114,4 +125,31 @@ it('rejects a previously discovered hidden companion and allows it again after r
   source.status = 'active';
   expect((await list()).items).toHaveLength(1);
   await expect(get()).resolves.toMatchObject({ display: { title: 'Sora' } });
+});
+
+
+it('projects and polishes a running delegation, with canonical priority and terminal cleanup', async () => {
+  registerBotRemoteResourceProvider();
+  sqlite.exec("INSERT INTO bot_session_links VALUES ('d', 'bot-1', 'delegated', 'delegation', NULL, 2), ('a', 'bot-1', 'archived', 'delegation', 3, 3), ('other', 'bot-2', 'foreign', 'delegation', NULL, 4)");
+  const source = { id: 'bot-1', name: 'Sora', description: '', avatar: '', avatarColor: 'teal', status: 'active',
+    canonicalSessionId: 'session-1', hiddenAt: null, pinnedAt: null, currentVersion: 1, updatedAt: 1, activityAt: 1 };
+  db.get.mockResolvedValue(source); db.list.mockResolvedValue([source]);
+  const running = (sessionId: string) => ({ sessionId, phase: 'running', workingPhase: 'testing', startedAtMs: 123 });
+  activity.snapshots.mockReturnValue([running('delegated'), running('archived'), running('foreign')]);
+  const context = { controllerDeviceId: 'remote-mac' };
+  const client = { protocolVersion: 1, primitives: ['markdown'], locale: 'en' };
+  const list = () => remoteResourceRegistry.list(context, { client, collectionId: 'teammates' });
+  expect((await list()).items[0].display.generation).toEqual({ phase: 'testing', startedAt: 123 });
+  const getCopy = () => remoteResourceRegistry.get(context, { client,
+    ref: { collectionId: 'teammates', kind: 'bot', id: 'working:bot-1/testing' } });
+  await getCopy();
+  expect(activity.copy).toHaveBeenLastCalledWith({ sessionId: 'delegated', phase: 'testing', locale: 'en' });
+  activity.snapshots.mockReturnValue([running('delegated'), { ...running('session-1'), workingPhase: 'compacting', startedAtMs: 124 }]);
+  expect((await list()).items[0].display.generation).toEqual({ phase: 'compacting', startedAt: 124 });
+  await getCopy();
+  expect(activity.copy).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 'session-1' }));
+  // No archival or other-Bot link can keep this companion busy after its task stops.
+  activity.snapshots.mockReturnValue([running('archived'), running('foreign')]);
+  expect((await list()).items[0].display.generation).toBeUndefined();
+  await expect(getCopy()).rejects.toMatchObject({ code: 'NOT_FOUND' });
 });

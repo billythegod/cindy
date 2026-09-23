@@ -22,7 +22,7 @@ type CopyEntry = { generation: number; scope: string; copy: WorkingStatusCopy; d
 // Different controller languages share their own turn cache without cancelling one another.
 const copies = new WeakMap<Session, Map<string, CopyEntry>>();
 
-/** Shared read path. Remote callers must first bind the request to a visible teammate's canonical session. */
+/** Shared read path. Remote callers must first bind the request to a visible teammate's active Session. */
 export async function getWorkingStatusCopy(raw: unknown): Promise<{ text: string | null }> {
     const { sessionId, phase, locale } = requestSchema.parse(raw);
     if (!hasPublicWorkingSubject(phase)) return { text: null };
@@ -89,7 +89,7 @@ export async function getWorkingStatusCopy(raw: unknown): Promise<{ text: string
         } else if (e.type === 'tool_result') {
           const toolPhase = typeof data.toolUseId === 'string' ? toolPhases.get(data.toolUseId) : lastToolPhase;
           if (typeof data.toolUseId === 'string') toolPhases.delete(data.toolUseId);
-          feedbackPhase = publicToolResultPhase(toolPhase ?? lastToolPhase);
+          feedbackPhase = [...toolPhases.values()].at(-1) ?? publicToolResultPhase(toolPhase ?? lastToolPhase);
           copy.observe(feedbackPhase);
         }
       });

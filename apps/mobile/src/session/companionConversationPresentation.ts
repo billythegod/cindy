@@ -1,3 +1,4 @@
+import { HISTORY_GAP_SPLIT_MS } from '@cindy/maker-shared/history-gap';
 import { collectMobileMarkdownImages } from './messageMarkdown';
 import type { MobileMessageRenderItem } from './messageRenderModel';
 
@@ -9,10 +10,19 @@ const isDelivery = (item: MobileMessageRenderItem) => item.type === 'tool_media'
 export function companionConversationItems(items: readonly MobileMessageRenderItem[]): MobileMessageRenderItem[] {
   const sealed = new Set<string>();
   let sealedRun = false;
+  let nextAssistantAt: number | null = null;
   for (const item of [...items].reverse()) {
     if (item.type !== 'message' || item.message.kind !== 'assistant' || !item.message.body.trim() || item.message.systemCardType) {
       sealedRun = false;
+      nextAssistantAt = null;
     } else {
+      const createdAt = Date.parse(item.message.createdAt);
+      if (Number.isFinite(createdAt)) {
+        // Missing history may hide the user boundary between these messages.
+        // A newer final marker can only seal prose in the same loaded window.
+        if (nextAssistantAt !== null && nextAssistantAt - createdAt > HISTORY_GAP_SPLIT_MS) sealedRun = false;
+        nextAssistantAt = createdAt;
+      }
       sealedRun ||= item.message.turnCompleted === true;
       if (sealedRun) sealed.add(item.key);
     }

@@ -2669,3 +2669,18 @@ describe('teammate conversation compaction status', () => {
     expect(phase()).toBe('thinking');
   });
 });
+
+
+it.each([['read', 'test'], ['test', 'read']])('keeps the remaining parallel tool active when %s finishes before %s', (first, last) => {
+  const state = createAgentIslandState();
+  const meta = { sessionId: 'parallel-tools' };
+  const phase = () => buildAllSessionActivitySnapshots(state)[0]?.workingPhase;
+  applyAgentIslandUserPrompt(state, meta, 'Check', 100);
+  applyAgentIslandEvent(state, meta, { type: 'tool_use', data: { toolName: 'Read', toolUseId: 'read', input: { file_path: 'sample.txt' } } }, 101);
+  applyAgentIslandEvent(state, meta, { type: 'tool_use', data: { toolName: 'Bash', toolUseId: 'test', input: { command: 'pnpm test' } } }, 102);
+  expect(phase()).toBe('testing');
+  applyAgentIslandEvent(state, meta, { type: 'tool_result', data: { toolUseId: first } }, 103);
+  expect(phase()).toBe(last === 'test' ? 'testing' : 'reading-file');
+  applyAgentIslandEvent(state, meta, { type: 'tool_result', data: { toolUseId: last } }, 104);
+  expect(phase()).toBe(last === 'test' ? 'reviewing-checks' : 'reviewing-files');
+});

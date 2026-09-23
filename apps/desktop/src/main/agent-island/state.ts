@@ -695,8 +695,11 @@ export function applyAgentIslandEvent(
   if (event.type === 'tool_result') {
     const toolUseIds = toolUseIdsFromEvent(event);
     const phase = toolUseIds.map(id => session.workingTools.get(id)).find(Boolean);
-    if (foreground && session.workingPhase !== 'compacting') session.workingPhase = publicToolResultPhase(phase ?? session.workingPhase ?? 'processing');
-    for (const id of toolUseIds) session.workingTools.delete(id);
+    if (foreground) for (const id of toolUseIds) session.workingTools.delete(id);
+    if (foreground && session.workingPhase !== 'compacting') {
+      session.workingPhase = [...session.workingTools.values()].at(-1)
+        ?? publicToolResultPhase(phase ?? session.workingPhase ?? 'processing');
+    }
     if (
       session.currentToolUseId
       && (toolUseIds.length === 0 || toolUseIds.includes(session.currentToolUseId))

@@ -164,3 +164,21 @@ it('cancels pre-compaction copy without generating a second caption, then resume
   emit('done');
   expect(listeners.size).toBe(0);
 });
+
+
+it('keeps pending copy for a running parallel tool when another result arrives', async () => {
+  await invoke();
+  emit('tool_use', { toolUseId: 'memory', toolName: 'bot_memory', input: { action: 'read' } });
+  emit('tool_use', { toolUseId: 'file', toolName: 'Read', input: { file_path: 'sample.txt' } });
+  let finish!: (value: unknown) => void;
+  h.request.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  const pending = invoke('reading-file');
+  await Promise.resolve();
+  const options = h.request.mock.calls.at(-1)![2];
+  emit('tool_result', { toolUseId: 'memory' });
+  expect(options.signal.aborted).toBe(false);
+  emit('tool_result', { toolUseId: 'file' });
+  expect(options.signal.aborted).toBe(true);
+  finish({ ok: true, text: '读读这份文件…' });
+  expect(await pending).toEqual({ text: null });
+});

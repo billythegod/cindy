@@ -32,6 +32,7 @@ import {
   normalizeRemoteCollectionItems,
   parseRemoteResourceTargets,
 } from '@/device-link/remoteResources';
+import { useRemoteSyncCoordinator } from '@/device-link/remoteSyncTask';
 import { formatRemoteError } from '@/device-link/remoteStatus';
 import { startFocusedTopicSubscription } from '@/device-link/focusedTopicSubscription';
 import { goBackGuarded } from '@/utils/backGuard';
@@ -90,12 +91,13 @@ export default function RemoteCollectionScreen() {
   const [itemsAccount, setItemsAccount] = useState(accountGeneration);
   const [items, setItems] = useState<HostedResourceItem[]>(() => readRemoteCollectionCache(cacheOwner, collectionId));
   const loadGenerationRef = useRef(0);
+  const active = useRef(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (visible: boolean) => {
-    if (hydratedOwner !== cacheOwner) return;
+  const read = useCallback(async (visible: boolean, isStale: () => boolean) => {
+    if (!active.current || hydratedOwner !== cacheOwner) return;
     const generation = ++loadGenerationRef.current;
     const expectedAccount = accountGeneration;
     if (!collectionId || targets.length === 0) {
@@ -110,7 +112,7 @@ export default function RemoteCollectionScreen() {
       if (relayStatus !== 'online' || getPresenceAvailability(host.deviceId) === false) throw new Error(t('devices.resources.hostOffline'));
       return { host, response: await listRemoteCollection(invoke, host, collectionId, i18n.language) };
     }));
-    if (loadGenerationRef.current !== generation || accountRef.current !== expectedAccount) return;
+    if (isStale() || !active.current || loadGenerationRef.current !== generation || accountRef.current !== expectedAccount) return;
     const next: HostedResourceItem[] = [];
     const failures: string[] = [];
     const successfulDeviceIds = new Set<string>();
@@ -143,6 +145,11 @@ export default function RemoteCollectionScreen() {
     setRefreshing(false);
   }, [accountGeneration, cacheOwner, collectionId, connectionEpoch, getPresenceAvailability, hydratedOwner, i18n.language, invoke, relayStatus, t, targets, presenceKey, user?.id]);
 
+  const requestRefresh = useRemoteSyncCoordinator(
+    (run) => read(run.reasons.includes('visible'), run.isStale), JSON.stringify([cacheOwner, collectionId]),
+  );
+  const load = useCallback((visible: boolean) => requestRefresh({ reason: visible ? 'visible' : 'changed' }), [read, requestRefresh]);
+
   useEffect(() => {
     loadGenerationRef.current += 1;
     setItems(readRemoteCollectionCache(cacheOwner, collectionId));
@@ -158,8 +165,9 @@ export default function RemoteCollectionScreen() {
   }, [accountGeneration, cacheOwner, collectionId, user?.id]);
 
   useFocusEffect(useCallback(() => {
+    active.current = true;
     void load(false);
-    return () => { loadGenerationRef.current += 1; };
+    return () => { active.current = false; loadGenerationRef.current += 1; };
   }, [connectionEpoch, load]));
   useFocusEffect(useCallback(() => {
     const subscription = AppState.addEventListener('change', (state) => {

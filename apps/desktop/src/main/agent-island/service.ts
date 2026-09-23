@@ -1485,6 +1485,11 @@ export class AgentIslandService {
     }));
   }
 
+  /** Current public activity only; avoids scanning historical Bot Session links. */
+  getSessionActivitySnapshots(): SessionActivitySnapshot[] {
+    return this.buildSessionActivityPayload().map(canonicalSessionActivity);
+  }
+
   /** Read the same canonical snapshot used by sidebar and device-list relays. */
   getSessionActivitySnapshot(sessionId: string): SessionActivitySnapshot | null {
     const activity = this.buildSessionActivityPayload()
