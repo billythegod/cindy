@@ -258,7 +258,8 @@ export interface Schedule {
   /**
    * 静默运行:true → 成功 run 默认不发通知、不产生未读小红点;任务 prompt 可自行说明
    * 哪些业务条件值得提醒,agent 在满足时调用 schedule_notify_current_run 主动上报。
-   * 失败/异常仍然通知。新建 agent 任务默认 true；存量已存选择保持不变。
+   * 失败/异常仍然通知。未明确分类的新任务默认 false；检查入口显式设 true。
+   * 存量已存选择保持不变。
    */
   silentWhenIdle?: boolean;
   /** Execution mode; omitted/legacy schedules run an agent. */

@@ -161,7 +161,7 @@ export function createMobileScheduleDraft(
       notifyFeishu: false,
       targetSessionId: '',
       persistentSession: false,
-      silentWhenIdle: true,
+      silentWhenIdle: false,
     };
   }
 

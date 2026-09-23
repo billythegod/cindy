@@ -87,7 +87,7 @@ export function parseRoutineDetail(raw: unknown): RoutineDetail {
     }) };
 }
 export function emptyRoutineDefinition(): RoutineDefinition {
-  return { name: '', prompt: '', enabled: true, silentWhenIdle: true, triggers: [{ id: 'daily', kind: 'cron', expression: '0 9 * * *', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }] };
+  return { name: '', prompt: '', enabled: true, silentWhenIdle: false, triggers: [{ id: 'daily', kind: 'cron', expression: '0 9 * * *', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }] };
 }
 export function routineDraftValid(draft: RoutineDefinition): boolean {
   return Boolean(draft.name.trim() && draft.prompt.trim() && draft.triggers.length && parseRoutineDefinition(draft)

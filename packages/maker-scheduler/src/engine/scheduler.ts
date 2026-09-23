@@ -1321,7 +1321,9 @@ export class Scheduler extends EventEmitter {
       scriptConfig: normalizeScriptConfig(input.scriptConfig),
       manual,
       persistentSession: input.persistentSession ?? false,
-      silentWhenIdle: input.silentWhenIdle ?? (input.executionMode !== 'script'),
+      // A missing choice may be a reminder, even when a pre-run hook gates delivery.
+      // Only a caller that knows this is a check may opt into quiet reporting.
+      silentWhenIdle: input.silentWhenIdle ?? false,
       status: 'active',
       createdAt: now,
       updatedAt: now,

@@ -229,6 +229,23 @@ describe('MakerScheduleRunner silent-run notification skip', () => {
     expect(notifier.notify).not.toHaveBeenCalled();
   });
 
+  it('reports final-message persistence failure as a failed run before returning the error', async () => {
+    const h = createSessionHarness(acceptingSend());
+    const { runner, notifier } = createRunnerHarness(h.session, { silenced: false });
+    mocks.createMessage.mockImplementation(async (_id, body) => {
+      if (body.role === 'assistant') throw new Error('database unavailable');
+    });
+    const ctx = { ...createFireContext(), onRunnerNotified: vi.fn() };
+    const promise = runner.fire(baseSchedule({ silentWhenIdle: true }), ctx);
+    await vi.waitFor(() => expect(mocks.createMessage).toHaveBeenCalledTimes(1));
+    h.emit({ type: 'done', data: { result: 'Actionable result' } });
+    await expect(promise).rejects.toThrow('Scheduled result could not be saved');
+    expect(ctx.onRunnerNotified).toHaveBeenLastCalledWith('failure');
+    expect(notifier.notify).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      status: 'failed', errorMsg: 'Scheduled result could not be saved', resultText: undefined,
+    }));
+  });
+
   it('success + silenced → 跳过完成通知', async () => {
     const h = createSessionHarness(acceptingSend());
     const { runner, notifier, isRunSilenced } = createRunnerHarness(h.session, { silenced: true });

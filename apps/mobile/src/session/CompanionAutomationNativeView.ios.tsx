@@ -108,7 +108,7 @@ export function CompanionAutomationNativeView(p: CompanionAutomationNativeViewPr
         </Section>
         <Section title={tr('instructions')}><Field label={tr('instructions')} value={draft.prompt} onChange={prompt => p.onChange(d => d && ({ ...d, prompt }))} busy={p.busy} multiline /></Section>
         {p.detail?.supportsPreRunCheck ? <Section><DisclosureGroup label={tr('advanced')} isExpanded={advancedOpen} onIsExpandedChange={setAdvancedOpen}>
-          <Toggle label={tr('quiet')} isOn={draft.silentWhenIdle ?? true} onIsOnChange={silentWhenIdle => p.onChange(d => d && ({ ...d, silentWhenIdle }))} modifiers={[disabled(p.busy)]} />
+          <Toggle label={tr('quiet')} isOn={draft.silentWhenIdle ?? false} onIsOnChange={silentWhenIdle => p.onChange(d => d && ({ ...d, silentWhenIdle }))} modifiers={[disabled(p.busy)]} />
           <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle(colors.textSecondary)]}>{tr('quietHint')}</Text>
           <FieldRow label={tr('checkCommand')} value={draft.preRunHook?.command ?? ''} onChange={command => p.onChange(d => d && ({ ...d, preRunHook: command ? { ...d.preRunHook, command } : null }))} busy={p.busy} multiline literal />
           <Text modifiers={[font({ textStyle: 'footnote' }), foregroundStyle(colors.textSecondary)]}>{tr('checkHint')}</Text>

@@ -2781,6 +2781,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     // 用户主动 pause/delete 的那条路径本来也不该弹成功 —— 引擎记 aborted 且不通知,
     // 语义一致。
     const successAfterAbort = finalRun.status === 'success' && ctx.signal.aborted;
+    let reportPersistFailed = false;
     if (abandoned) {
       this.deps.logger.info?.(
         '[runner] run was force-released by the stall guard; skipping duplicate notification',
@@ -2807,9 +2808,20 @@ export class MakerScheduleRunner implements ScheduleRunner {
       ctx.onRunnerNotified?.(finalRun.status === 'success' ? 'success' : 'failure');
       const ownerScope = captureDataOwnerBroadcastScope();
       if (schedule.silentWhenIdle && finalRun.status === 'success' && assistantText.trim()) {
-        await createMessage(sessionId, { clientId: `schedule-result:${ctx.runId}`, role: 'assistant', content: assistantText,
-          agentMeta: { origin: { kind: 'scheduler', scheduleId: schedule.id, scheduleName: schedule.name, runId: ctx.runId } } },
-        { broadcastOwnerScope: ownerScope, shouldBroadcast: () => !ctx.signal.aborted && isDataOwnerBroadcastScopeCurrent(ownerScope) });
+        try {
+          await createMessage(sessionId, { clientId: `schedule-result:${ctx.runId}`, role: 'assistant', content: assistantText,
+            agentMeta: { origin: { kind: 'scheduler', scheduleId: schedule.id, scheduleName: schedule.name, runId: ctx.runId } } },
+          { broadcastOwnerScope: ownerScope, shouldBroadcast: () => !ctx.signal.aborted && isDataOwnerBroadcastScopeCurrent(ownerScope) });
+        } catch (err) {
+          this.deps.logger.error?.('scheduler final report persistence failed', err);
+          reportPersistFailed = true;
+          finalRun.status = 'failed';
+          finalRun.resultText = undefined;
+          finalRun.errorMsg = 'Scheduled result could not be saved';
+          // The model succeeded, but delivery did not. Claim and send the failure
+          // before throwing so the engine cannot mark this run failed in silence.
+          ctx.onRunnerNotified?.('failure');
+        }
       }
       try {
         if (isDataOwnerBroadcastScopeCurrent(ownerScope) && !(finalRun.status === 'success' && ctx.signal.aborted)) {
@@ -2821,6 +2833,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       }
     }
     if (runError) throw new Error(runError);
+    if (reportPersistFailed) throw new Error('Scheduled result could not be saved');
     return { sessionId, resultText: assistantText || undefined };
   }
 

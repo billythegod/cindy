@@ -52,7 +52,7 @@ const DEFAULT_FORM: ScheduleFormState = {
   useWorktree: false,
   targetSessionId: '',
   persistentSession: false,
-  silentWhenIdle: true,
+  silentWhenIdle: false,
   preRunHookEnabled: false,
   preRunHookCommand: '',
   preRunHookTimeoutSec: '',

@@ -82,6 +82,7 @@ it('dispatches into the current canonical task through the existing silent runne
     name: 'Review',
     prompt: 'Check the PR',
     enabled: true,
+    silentWhenIdle: true,
     triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
   });
   await routineTools.runNow('bot', routine.id);
@@ -98,6 +99,16 @@ it('dispatches into the current canonical task through the existing silent runne
     }),
   );
   expect((await routineTools.history('bot', routine.id))[0].resultText).toBe('Reviewed PR');
+});
+it('keeps an unclassified teammate reminder audible when quiet is omitted', async () => {
+  const reminder = await routineTools.save('bot', {
+    name: 'Reminder', prompt: 'Remind me to rest', enabled: true,
+    triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
+  });
+  await routineTools.runNow('bot', reminder.id);
+  await vi.waitFor(() => expect(mock.storage.insert).toHaveBeenCalledWith(
+    expect.objectContaining({ silentWhenIdle: false }),
+  ));
 });
 it('invalidates an in-progress startup before reset completes', async () => {
   let release!: () => void;

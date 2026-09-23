@@ -1834,10 +1834,14 @@ describe('Scheduler', () => {
     expect(h.scheduler.isRunSilenced(runId)).toBe(false);
   });
 
-  it('defaults new agent checks to quiet and preserves explicit reminders and script mode', async () => {
-    const check = await h.scheduler.create({ ...baseInput });
+  it('keeps unclassified reminders audible and preserves explicit quiet checks and script mode', async () => {
+    const reminder = await h.scheduler.create({ ...baseInput });
+    expect(reminder.silentWhenIdle).toBe(false);
+    const { runId } = await h.scheduler.runNow(reminder.id);
+    expect((await h.scheduler.listRuns(reminder.id)).find((run) => run.id === runId)?.readAt).toBeUndefined();
+    expect((await h.scheduler.create({ ...baseInput, preRunHook: { command: 'node check.mjs' } })).silentWhenIdle).toBe(false);
+    const check = await h.scheduler.create({ ...baseInput, silentWhenIdle: true });
     expect(check.silentWhenIdle).toBe(true);
-    expect((await h.scheduler.create({ ...baseInput, silentWhenIdle: false })).silentWhenIdle).toBe(false);
     expect((await h.scheduler.create({ ...baseInput, executionMode: 'script', workspaceKind: 'project', workingDir: '/repo', scriptConfig: { command: 'node check.mjs', capabilities: [] } })).silentWhenIdle).toBe(false);
     const scriptPatch = { executionMode: 'script' as const, workspaceKind: 'project' as const, workingDir: '/repo', scriptConfig: { command: 'node check.mjs', capabilities: [] } };
     await expect(h.scheduler.update(check.id, { ...scriptPatch, silentWhenIdle: true })).rejects.toThrow('does not support silentWhenIdle');

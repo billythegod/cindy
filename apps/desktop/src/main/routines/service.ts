@@ -111,7 +111,7 @@ async function execute(scope: string, routine: Routine, run: RoutineRun, signal:
     workspaceKind: 'dialogue',
     useWorktree: false,
     targetSessionId: bot.canonicalSessionId,
-    silentWhenIdle: routine.silentWhenIdle ?? true,
+    silentWhenIdle: routine.silentWhenIdle ?? false,
     preRunHook: routine.preRunHook ?? undefined,
     notify: { desktop: true, feishu: false },
     status: 'active',

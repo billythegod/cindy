@@ -171,11 +171,11 @@ it('saves advanced quiet and pre-run settings without executing a check on open'
   expect(api.save).not.toHaveBeenCalled();
   expect(api.runNow).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText('routines.advancedSettings'));
-  expect(screen.getByRole('switch', { name: 'routines.quiet' }).getAttribute('aria-checked')).toBe('true');
+  expect(screen.getByRole('switch', { name: 'routines.quiet' }).getAttribute('aria-checked')).toBe('false');
   fireEvent.click(screen.getByRole('switch', { name: 'routines.quiet' }));
   fireEvent.change(screen.getByLabelText('routines.checkCommand'), { target: { value: 'node check.mjs' } });
   fireEvent.change(screen.getByLabelText('routines.timeoutMs'), { target: { value: '3000' } });
   fireEvent.click(screen.getByRole('button', { name: 'routines.save' }));
-  await waitFor(() => expect(api.save).toHaveBeenCalledWith('bot', expect.objectContaining({ silentWhenIdle: false, preRunHook: { command: 'node check.mjs', timeoutMs: 3000 } }), 'daily'));
+  await waitFor(() => expect(api.save).toHaveBeenCalledWith('bot', expect.objectContaining({ silentWhenIdle: true, preRunHook: { command: 'node check.mjs', timeoutMs: 3000 } }), 'daily'));
   expect(api.runNow).not.toHaveBeenCalled();
 });

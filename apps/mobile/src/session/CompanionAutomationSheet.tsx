@@ -199,7 +199,7 @@ export function CompanionAutomationSheet({ visible, onClose, collectionId, botId
           {field(tr('instructions'), draft.prompt, (prompt) => setDraft({ ...draft, prompt }), true)}
           {detail?.supportsPreRunCheck ? <Pressable accessibilityRole="button" accessibilityState={{ expanded: advancedOpen }} onPress={() => setAdvancedOpen(!advancedOpen)} style={styles.row}><Text style={styles.label}>{tr('advanced')}</Text></Pressable> : null}
           {detail?.supportsPreRunCheck && advancedOpen ? <View style={styles.group}>
-            <View style={styles.row}><Text style={[styles.label, styles.flex]}>{tr('quiet')}</Text><Switch accessibilityLabel={tr('quiet')} disabled={busy} value={draft.silentWhenIdle ?? true} onValueChange={(silentWhenIdle) => setDraft({ ...draft, silentWhenIdle })} trackColor={{ true: colors.textSecondary }} /></View>
+            <View style={styles.row}><Text style={[styles.label, styles.flex]}>{tr('quiet')}</Text><Switch accessibilityLabel={tr('quiet')} disabled={busy} value={draft.silentWhenIdle ?? false} onValueChange={(silentWhenIdle) => setDraft({ ...draft, silentWhenIdle })} trackColor={{ true: colors.textSecondary }} /></View>
             <Text style={styles.secondary}>{tr('quietHint')}</Text>
             {field(tr('checkCommand'), draft.preRunHook?.command ?? '', (command) => setDraft({ ...draft, preRunHook: command ? { ...draft.preRunHook, command } : null }), true)}
             <Text style={styles.secondary}>{tr('checkHint')}</Text>

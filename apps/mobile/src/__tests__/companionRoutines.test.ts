@@ -4,6 +4,7 @@ import { emptyRoutineDefinition, getRoutineActionId, parseRoutineDefinition, par
 describe('companion automation data boundary', () => {
   it('does not treat an empty new draft as a saved rule', () => {
     const draft = emptyRoutineDefinition();
+    expect(draft.silentWhenIdle).toBe(false);
     expect(routineDraftValid(draft)).toBe(false);
     expect(routineDraftValid({ ...draft, name: 'Daily brief', prompt: 'Summarize my inbox' })).toBe(true);
   });

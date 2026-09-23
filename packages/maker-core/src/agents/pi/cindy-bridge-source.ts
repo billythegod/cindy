@@ -3359,7 +3359,7 @@ class CindyMcpGateway {
           name: { type: 'string', minLength: 1 },
           prompt: { type: 'string', minLength: 1, description: 'Instructions to execute at each trigger.' },
           enabled: { type: 'boolean' },
-          silentWhenIdle: { type: 'boolean', description: 'Default true for new checks. Set false for explicit reminders/scheduled delivery. Preserve user choices.' },
+          silentWhenIdle: { type: 'boolean', description: 'Set true for checks with no-change reporting suppressed. Set false for reminders/scheduled delivery. Omitted defaults to false; preserve user choices.' },
           preRunHook: { anyOf: [{ type: 'null' }, { type: 'object', properties: {
             command: { type: 'string', minLength: 1, maxLength: 32000 },
             timeoutMs: { type: 'integer', minimum: 1 },
