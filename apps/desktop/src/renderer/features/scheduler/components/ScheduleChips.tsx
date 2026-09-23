@@ -527,7 +527,7 @@ function ScheduleConfigPanel({
             <div className="flex min-h-[34px] w-full items-center gap-1.5">
               <IntervalMinutesInput
                 value={panelConfig.intervalMinutes}
-                label={t('scheduler.chips.scheduleField.scheduleMinuteAria')}
+                label={t('scheduler.chips.scheduleField.intervalMinutesAria')}
                 onFocus={commit}
                 onChange={(intervalMinutes) => onUpdate({ mode: 'intervalMinutes', intervalMinutes })}
               />

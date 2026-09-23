@@ -25,6 +25,22 @@ function renderChip(cronExpr: string, intervalMs?: number) {
   return onChange;
 }
 
+it.each([5, 28])('labels the %i-minute interval dropdown as an interval, not a clock minute', (minutes) => {
+  renderChip(`*/${minutes} * * * *`);
+  expect(screen.getByRole('combobox', {
+    name: 'scheduler.chips.scheduleField.intervalMinutesAria',
+  })).toBeTruthy();
+  expect(screen.queryByLabelText('scheduler.chips.scheduleField.scheduleMinuteAria')).toBeNull();
+});
+
+it('keeps the clock-minute label for a daily schedule', () => {
+  renderChip('30 9 * * *');
+  expect(screen.getByRole('textbox', {
+    name: 'scheduler.chips.scheduleField.scheduleMinuteAria',
+  })).toBeTruthy();
+  expect(screen.queryByLabelText('scheduler.chips.scheduleField.intervalMinutesAria')).toBeNull();
+});
+
 it.each([7, 28, 59])('keeps legacy */%i when the selected minute menu is clicked again', (minutes) => {
   const onChange = renderChip(`*/${minutes} * * * *`);
   const menu = screen.getByRole('button', { name: 'scheduler.chips.scheduleMenu.intervalMinutes' });
