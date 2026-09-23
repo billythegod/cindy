@@ -7824,6 +7824,7 @@
     },
     "permissionRequest": "{{name}} 想請你確認一下",
     "remote": {
+      "unknown": "連線狀態未知",
       "online": "上線",
       "offline": "離線",
       "thisDevice": "這台電腦",
@@ -9731,6 +9732,7 @@
       "reviewingChecks": "正在核對檢查結果…",
       "replying": "正在回覆…",
       "processing": "正在處理…",
+      "organizingConversation": "正在整理對話…",
       "thinking": "正在思考…",
       "generating": "正在生成…",
       "editingFiles": "正在編輯檔案…",
@@ -10941,7 +10943,7 @@
         "intervalChip": "完成後計時 · {{schedule}}"
       },
       "scheduleMenu": {
-        "intervalMinutes": "Minutes（每 N 分鐘）",
+        "intervalMinutes": "分鐘（每 N 分鐘）",
         "interval": "Hourly（每 N 小時）",
         "daily": "Daily（每天）",
         "weekdays": "Weekdays（工作日）",
@@ -10962,7 +10964,10 @@
         "minuteLabel": "分鐘",
         "scheduleHourAria": "計劃小時",
         "scheduleMinuteAria": "計劃分鐘",
-        "openTimePickerAria": "開啟時間選擇器"
+        "intervalMinutesAria": "重複間隔（分鐘）",
+        "openTimePickerAria": "開啟時間選擇器",
+        "minuteIntervalHint": "僅支援可整除 60 的分鐘間隔：1、2、3、4、5、6、10、12、15、20、30 分鐘；60 分鐘請選擇「每 1 小時」。",
+        "unsupportedMinuteInterval": "目前任務使用了 {{count}} 分鐘的舊 Cron 設定；請選擇可用的間隔來修正。"
       },
       "model": {
         "loading": "載入模型中…",
