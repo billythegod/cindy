@@ -12,7 +12,7 @@ export function isBotCandidateUnavailable(signals: InterruptedTurnErrorSignals):
   ].includes(reason)) return false;
   if (reason && reason !== 'turn-failed') return true;
   const tag = signals.sdkError ?? '';
-  if (['authentication_failed', 'authentication_error', 'rate_limit', 'billing_error',
+  if (['authentication_failed', 'authentication_error', 'rate_limit', 'server_error', 'billing_error',
     'model_not_found', 'user_model_access_denied', 'agent_start_failed'].includes(tag)) return true;
   const message = signals.message ?? '';
   if (/user (?:denied|rejected)|approval (?:denied|required)|context.{0,20}(?:overflow|too long)|prompt too long/i.test(message)) return false;

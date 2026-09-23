@@ -44,6 +44,32 @@ function harness(bot = true) {
 }
 
 describe('Bot candidate recovery', () => {
+  // Claude assistant envelopes may carry only a stable SDK tag, without an HTTP status.
+  it.each([
+    ['authentication_failed', true], ['rate_limit', true], ['server_error', true],
+    ['billing_error', true], ['invalid_request', false], ['max_output_tokens', false],
+    ['unknown', false],
+  ] as const)('classifies statusless Claude %s envelopes and preserves control reasons', (sdkError, unavailable) => {
+    for (const reason of [undefined, 'turn-failed']) {
+      expect(isBotCandidateUnavailable({ sdkError, reason, message: `SDK error: ${sdkError}` })).toBe(unavailable);
+    }
+    for (const reason of ['context_overflow', 'user_denied', 'tool_use_loop_detected']) {
+      expect(isBotCandidateUnavailable({ sdkError, reason, errorStatus: 503 })).toBe(false);
+    }
+  });
+
+  it.each(['switched', 'exhausted'])('routes a statusless server error through Bot fallback (%s)', async (outcome) => {
+    const h = harness();
+    const signals = { sdkError: 'server_error', message: 'Internal server error' };
+    h.fallback.mockResolvedValue({ session: null, outcome });
+    expect(h.isResumableTurnErrorCandidate(signals, h.item)).toBe(true);
+    expect(h.onResumableTurnError('s', signals, h.item)).not.toBeNull();
+    await h.run();
+    expect(h.fallback).toHaveBeenCalledWith('s', 1, 1, true, expect.any(Function));
+    expect(h.resume).toHaveBeenCalledTimes(outcome === 'switched' ? 1 : 0);
+    if (outcome === 'exhausted') expect(h.finalize).toHaveBeenCalledWith('s', 1, { surfaceBanner: true });
+  });
+
   it.each([
     { reason: 'pi-gateway-drop', message: 'Connection error.' },
     { reason: 'user_model_access_denied', sdkError: 'user_model_access_denied', errorStatus: 403 },
