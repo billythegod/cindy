@@ -75,15 +75,21 @@ export class MobileNotifyDeduper {
   shouldSend(sessionId: string, kind: MobileSessionEventKind, now = Date.now(), eventId?: string): boolean {
     const key = `${sessionId}:${kind}`;
     if (eventId) {
-      if (this.lastEvent.get(key) === eventId) return false;
-      this.lastEvent.set(key, eventId);
-      return true;
+      return this.lastEvent.get(key) !== eventId;
     }
     const last = this.lastSentAt.get(key);
-    if (last !== undefined && now - last < this.windowMs) return false;
+    return last === undefined || now - last >= this.windowMs;
+  }
+
+  /** Record only a frame accepted by the local relay client. */
+  recordSent(sessionId: string, kind: MobileSessionEventKind, now = Date.now(), eventId?: string): void {
+    const key = `${sessionId}:${kind}`;
+    if (eventId) {
+      this.lastEvent.set(key, eventId);
+      return;
+    }
     this.lastSentAt.set(key, now);
     this.sweep(now);
-    return true;
   }
 
   /** 顺路清理过期条目(记录量 = 活跃会话数,轻量,无需独立定时器)。 */

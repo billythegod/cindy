@@ -132,11 +132,11 @@ function focusWindow(getWindow: () => BrowserWindow | null, sessionId: string): 
 export function showDesktopSessionEvent(
   getWindow: () => BrowserWindow | null,
   payload: Pick<ShowSessionEventPayload, 'sessionId' | 'title' | 'kind'> & { body?: string; teammate?: boolean },
-): void {
+): boolean {
   const { sessionId, title, kind } = payload;
   if (sessionId) markSessionNeedsAttention(sessionId);
   const safeTitle = title?.trim() || sessionId.slice(0, 8) || getSessionNotificationUntitled();
-  showDesktopToast(safeTitle, kind, () => focusWindow(getWindow, sessionId), payload.body, payload.teammate);
+  return showDesktopToast(safeTitle, kind, () => focusWindow(getWindow, sessionId), payload.body, payload.teammate);
 }
 
 export interface NotificationServiceDeps {
@@ -220,16 +220,31 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
         const eventId = preview?.eventId;
         const eventKey = `${generation}:${sessionId}`;
         if (eventId && notifiedReplies.get(eventKey) === eventId) return;
-        if (eventId) notifiedReplies.set(eventKey, eventId);
         const fallbackBody = teammate ? getTeammateNotificationFallback() : undefined;
-        if (wantDesktop && kind === 'done') showDesktopSessionEvent(getWindow, {
-          sessionId, title: notificationTitle, kind, teammate,
-          body: teammate ? notificationPreview(detail ?? '') || fallbackBody : undefined,
-        });
-        if (channels?.mobile === true) sendMobileSessionNotify({
-          sessionId, title: notificationTitle, kind, generation, ...(detail ? { detail } : {}),
-          ...(fallbackBody ? { fallbackBody } : {}), ...(eventId ? { eventId } : {}),
-        });
+        let accepted = false;
+        if (wantDesktop && kind === 'done') {
+          try {
+            accepted = showDesktopSessionEvent(getWindow, {
+              sessionId, title: notificationTitle, kind, teammate,
+              body: teammate ? notificationPreview(detail ?? '') || fallbackBody : undefined,
+            });
+          } catch (err) {
+            log.warn('[notification] desktop reply notification failed (non-fatal)', err);
+          }
+        }
+        if (channels?.mobile === true) {
+          try {
+            accepted = sendMobileSessionNotify({
+              sessionId, title: notificationTitle, kind, generation, ...(detail ? { detail } : {}),
+              ...(fallbackBody ? { fallbackBody } : {}), ...(eventId ? { eventId } : {}),
+            }) || accepted;
+          } catch (err) {
+            log.warn('[notification] mobile reply notification failed (non-fatal)', err);
+          }
+        }
+        // A disconnected or incapable relay has not accepted the event. A later
+        // idle signal may retry the same semantic turn once a channel recovers.
+        if (eventId && accepted) notifiedReplies.set(eventKey, eventId);
       })().catch((err) => log.warn('[notification] reply notification failed (non-fatal)', err));
 
       if (wantFeishu) {
@@ -265,13 +280,13 @@ function assertValidSessionEventPayload(
 }
 
 /** 桌面 toast 分支 — 原实现保持不变,只是拆出来便于 channels 选择性执行。 */
-function showDesktopToast(safeTitle: string, kind: SessionEventKind, onClick: () => void, previewBody?: string, teammate = false): void {
+function showDesktopToast(safeTitle: string, kind: SessionEventKind, onClick: () => void, previewBody?: string, teammate = false): boolean {
   const body = previewBody ?? getSessionNotificationBody(kind);
 
   // Electron Notification 在某些 Linux 桌面环境下可能不可用——静默兜底。
   if (!Notification.isSupported()) {
     log.warn('[notification] Notification.isSupported() === false, skip');
-    return;
+    return false;
   }
 
   const notif = new Notification({
@@ -296,6 +311,7 @@ function showDesktopToast(safeTitle: string, kind: SessionEventKind, onClick: ()
     release();
   });
   notif.show();
+  return true;
 }
 
 /**

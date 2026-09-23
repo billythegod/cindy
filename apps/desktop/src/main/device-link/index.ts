@@ -1898,7 +1898,8 @@ export function sendMobileSessionNotify(payload: {
     );
     return false;
   }
-  if (!mobileNotifyDeduper.shouldSend(payload.sessionId, payload.kind, Date.now(), payload.eventId)) return false;
+  const now = Date.now();
+  if (!mobileNotifyDeduper.shouldSend(payload.sessionId, payload.kind, now, payload.eventId)) return false;
   const sent = client.sendNotify(
     buildSessionNotifyPayload({
       sessionId: payload.sessionId,
@@ -1910,6 +1911,7 @@ export function sendMobileSessionNotify(payload: {
     }),
   );
   if (sent) {
+    mobileNotifyDeduper.recordSent(payload.sessionId, payload.kind, now, payload.eventId);
     log.debug(`mobile notify sent: session=${payload.sessionId.slice(0, 8)} kind=${payload.kind}`);
   }
   return sent;

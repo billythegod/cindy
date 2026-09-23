@@ -77,6 +77,7 @@ describe('MobileNotifyDeduper', () => {
   it('同 session + kind 窗口内只放行一次,窗口滚动后恢复', () => {
     const deduper = new MobileNotifyDeduper(5_000);
     expect(deduper.shouldSend('s1', 'done', 0)).toBe(true);
+    deduper.recordSent('s1', 'done', 0);
     expect(deduper.shouldSend('s1', 'done', 4_999)).toBe(false);
     expect(deduper.shouldSend('s1', 'done', 5_000)).toBe(true);
   });
@@ -92,7 +93,12 @@ describe('MobileNotifyDeduper', () => {
 it('uses final-message identity for completed replies, allowing distinct replies within five seconds', () => {
   const dedupe = new MobileNotifyDeduper();
   expect(dedupe.shouldSend('bot', 'done', 100, 'answer-1')).toBe(true);
+  // A relay rejection leaves the first answer eligible for a later attempt.
+  expect(dedupe.shouldSend('bot', 'done', 101, 'answer-1')).toBe(true);
+  dedupe.recordSent('bot', 'done', 101, 'answer-1');
+  expect(dedupe.shouldSend('bot', 'done', 102, 'answer-1')).toBe(false);
   expect(dedupe.shouldSend('bot', 'done', 101, 'answer-2')).toBe(true);
+  dedupe.recordSent('bot', 'done', 101, 'answer-2');
   expect(dedupe.shouldSend('bot', 'done', 100_000, 'answer-2')).toBe(false);
 });
 it('sends plain text to APNs, not Markdown or image paths', () => {

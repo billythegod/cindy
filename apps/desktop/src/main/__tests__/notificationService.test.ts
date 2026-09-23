@@ -143,7 +143,7 @@ async function freshService() {
   notificationSupported = true;
   ownerScopeCurrent = true;
   markSessionNeedsAttention.mockClear();
-  sendMobileSessionNotify.mockClear();
+  sendMobileSessionNotify.mockReset().mockReturnValue(true);
   getMobileNotifyGeneration.mockClear();
   latestMessageText.mockClear();
   readSessionNotificationPreview.mockReset().mockImplementation(async (sessionId, includeReply = true) => {
@@ -592,6 +592,52 @@ describe('notificationService — channels 分发', () => {
 
 
 describe('teammate reply previews', () => {
+  it('retries the same final reply after a mobile-only send was rejected, then dedupes the accepted send', async () => {
+    const { initNotificationService } = await freshService();
+    readSessionNotificationPreview.mockResolvedValue({
+      teammateName: 'Cindy', eventId: 'turn:100:200',
+      reply: { clientId: 'final-2', text: '**Ready**' },
+    });
+    sendMobileSessionNotify.mockReturnValueOnce(false);
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    const payload = { sessionId: 'bot-main', title: 'Cindy', kind: 'done', channels: { desktop: false, mobile: true } };
+
+    await invokeHandler(payload);
+    expect(sendMobileSessionNotify).toHaveBeenCalledTimes(1);
+    await invokeHandler(payload);
+    expect(sendMobileSessionNotify).toHaveBeenCalledTimes(2);
+    await invokeHandler(payload);
+    expect(sendMobileSessionNotify).toHaveBeenCalledTimes(2);
+    expect(notificationCtor).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat an accepted desktop toast when the mobile channel rejects the same reply', async () => {
+    const { initNotificationService } = await freshService();
+    readSessionNotificationPreview.mockResolvedValue({ teammateName: 'Cindy', eventId: 'turn:100:200' });
+    sendMobileSessionNotify.mockReturnValueOnce(false);
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    const payload = { sessionId: 'bot-main', title: 'Cindy', kind: 'done', channels: { desktop: true, mobile: true } };
+
+    await invokeHandler(payload);
+    await invokeHandler(payload);
+    expect(notificationCtor).toHaveBeenCalledTimes(1);
+    expect(sendMobileSessionNotify).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mark an unsupported desktop toast as delivered when mobile is also offline', async () => {
+    const { initNotificationService } = await freshService();
+    readSessionNotificationPreview.mockResolvedValue({ teammateName: 'Cindy', eventId: 'turn:100:200' });
+    notificationSupported = false;
+    sendMobileSessionNotify.mockReturnValueOnce(false);
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    const payload = { sessionId: 'bot-main', title: 'Cindy', kind: 'done', channels: { desktop: true, mobile: true } };
+
+    await invokeHandler(payload);
+    expect(notificationCtor).not.toHaveBeenCalled();
+    await invokeHandler(payload);
+    expect(sendMobileSessionNotify).toHaveBeenCalledTimes(2);
+  });
+
   it('shows current final Markdown as plain text on desktop and keeps mobile routing/fallback', async () => {
     const { initNotificationService } = await freshService();
     readSessionNotificationPreview.mockResolvedValue({ teammateName: 'Cindy', eventId: 'turn:100:200', reply: { clientId: 'final-2', text: '**完成**：[报告](https://example.com) `a_b * 2`' } });
