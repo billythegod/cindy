@@ -371,6 +371,15 @@ export function validateMobileScheduleDraft(
       },
     );
   }
+  const checkTimeoutMs = draft.preRunHook?.timeoutMs;
+  if (checkTimeoutMs !== undefined && (!Number.isSafeInteger(checkTimeoutMs) || checkTimeoutMs <= 0)) {
+    return scheduleDraftValidation(
+      'preRunHook',
+      localizer,
+      'devices.automations.presentation.validation.preRunHookTimeout',
+      '检查超时必须是正整数毫秒',
+    );
+  }
   return null;
 }
 

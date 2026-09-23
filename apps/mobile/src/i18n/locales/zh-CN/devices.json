@@ -736,6 +736,7 @@
         "workingDir": "请输入项目目录",
         "effort": "推理强度只能是 {{values}}",
         "intervalPositiveInteger": "间隔分钟必须是正整数",
+        "preRunHookTimeout": "检查超时必须是正整数毫秒",
         "intervalUnsupported": "分钟间隔必须能整除 60：请选择 1、2、3、4、5、6、10、12、15、20 或 30 分钟，或 1–23 小时的整点间隔"
       },
       "schedule": {

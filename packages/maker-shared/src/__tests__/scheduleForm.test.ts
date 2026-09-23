@@ -624,6 +624,18 @@ it('round trips advanced check configuration without changing legacy quiet choic
   expect(buildMobileScheduleInput({ ...draft, preRunHook: null })).toHaveProperty('preRunHook', null);
 });
 
+it('requires a positive safe-integer timeout before saving a mobile pre-run check', () => {
+  const draft = createMobileScheduleDraft(schedule());
+  for (const timeoutMs of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(validateMobileScheduleDraft({ ...draft, preRunHook: { command: 'node check.mjs', timeoutMs } }))
+      .toMatchObject({ field: 'preRunHook', messageKey: 'devices.automations.presentation.validation.preRunHookTimeout' });
+  }
+  for (const timeoutMs of [undefined, 1, 7000]) {
+    expect(validateMobileScheduleDraft({ ...draft, preRunHook: { command: 'node check.mjs', timeoutMs } })).toBeNull();
+  }
+  expect(validateMobileScheduleDraft({ ...draft, preRunHook: null })).toBeNull();
+});
+
 it('rejects pre-run install and removal when an older host cannot persist either', () => {
   const draft = createMobileScheduleDraft(schedule());
   const base = buildMobileScheduleInput(draft);
