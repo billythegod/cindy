@@ -8,7 +8,7 @@ import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 export function BotSessionTaskResultCard({ data }: { data?: Record<string, unknown> }) {
   const { t } = useTranslation();
   const fileContext = useChatSessionFile();
-  const card = readBotCollaborationMeta(data?.botCollaboration);
+  const card = readBotCollaborationMeta(data);
   if (card?.role !== 'delegation-result' || !card.result) return null;
   const { result } = card;
   const workingDir = result.workingDir ?? fileContext.workingDir;
