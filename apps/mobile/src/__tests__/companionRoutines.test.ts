@@ -36,3 +36,14 @@ describe('companion automation data boundary', () => {
     expect(() => parseRoutineDetail({ id: 'a', revision: 1, editable: true, input: { bad: true }, sources: [], history: [] })).toThrow();
   });
 });
+
+
+it('round trips quiet settings and distinguishes model skips without guessing host support', () => {
+  const input = { ...emptyRoutineDefinition(), name: 'Check', prompt: 'Check', silentWhenIdle: false, preRunHook: { command: 'node check.mjs', timeoutMs: 2000 } };
+  expect(parseRoutineDefinition(input)).toEqual(input);
+  expect(parseRoutineDefinition({ ...input, preRunHook: null })?.preRunHook).toBeNull();
+  expect(parseRoutineDefinition({ ...input, preRunHook: { command: 'check', timeoutMs: -1 } })).toBeNull();
+  const detail = { id: 'check', revision: 1, editable: true, input, sources: [], history: [{ id: 'run', status: 'skipped', createdAt: 1 }] };
+  expect(parseRoutineDetail(detail).supportsPreRunCheck).toBe(false);
+  expect(parseRoutineDetail({ ...detail, supportsPreRunCheck: true })).toMatchObject({ supportsPreRunCheck: true, input, history: [{ status: 'skipped' }] });
+});

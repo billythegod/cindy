@@ -560,3 +560,13 @@ describe('Orca Worker directory authorization', () => {
     expect(policy('create_workers', { workers: [null] })).toBe('prompt-each-time');
   });
 });
+
+
+describe('teammate pre-run command approval', () => {
+  it.each(['schedule_set_pre_run_hook', 'routine_save'])('reviews %s through direct and progressive calls', (name) => {
+    const args = { preRunHook: { command: 'node check.mjs' } };
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_helper', toolName: name, toolParams: args })).toBe('prompt-each-time');
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_helper', toolName: 'call_tool', toolParams: { name, args } })).toBe('prompt-each-time');
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_helper', toolName: 'routine_list', toolParams: {} })).toBe('auto-approve');
+  });
+});

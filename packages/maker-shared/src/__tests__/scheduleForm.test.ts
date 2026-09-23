@@ -612,3 +612,13 @@ describe('mixed-version scheduled model selections', () => {
     expect(applyScheduleWireCompat(input, { supportsIntervalNullClear: true })).toBe(input);
   });
 });
+
+
+it('round trips advanced check configuration without changing legacy quiet choices', () => {
+  expect(createMobileScheduleDraft(null).silentWhenIdle).toBe(true);
+  expect(createMobileScheduleDraft(schedule()).silentWhenIdle).toBe(false);
+  const hook = { command: 'node check.mjs', timeoutMs: 7000 };
+  const draft = createMobileScheduleDraft(schedule({ silentWhenIdle: false, preRunHook: hook }));
+  expect(buildMobileScheduleInput(draft)).toMatchObject({ silentWhenIdle: false, preRunHook: hook });
+  expect(buildMobileScheduleInput({ ...draft, preRunHook: null })).toHaveProperty('preRunHook', null);
+});

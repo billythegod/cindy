@@ -72,6 +72,7 @@ export interface MobileScheduleDraft {
   targetSessionId: string;
   persistentSession: boolean;
   silentWhenIdle: boolean;
+  preRunHook?: { command: string; timeoutMs?: number } | null;
 }
 
 export interface ScheduleDraftValidation {
@@ -160,7 +161,7 @@ export function createMobileScheduleDraft(
       notifyFeishu: false,
       targetSessionId: '',
       persistentSession: false,
-      silentWhenIdle: false,
+      silentWhenIdle: true,
     };
   }
 
@@ -191,6 +192,7 @@ export function createMobileScheduleDraft(
     targetSessionId: schedule.targetSessionId ?? '',
     persistentSession: !!schedule.persistentSession,
     silentWhenIdle: !!schedule.silentWhenIdle,
+    ...(schedule.preRunHook === undefined ? {} : { preRunHook: schedule.preRunHook }),
   };
 }
 
@@ -410,6 +412,7 @@ export function buildMobileScheduleInput(draft: MobileScheduleDraft): RemoteSche
     persistentSession: draft.persistentSession,
     targetSessionId: targetSessionId || undefined,
     silentWhenIdle: draft.silentWhenIdle,
+    ...(draft.preRunHook === undefined ? {} : { preRunHook: draft.preRunHook }),
     notify: {
       desktop: draft.notifyDesktop,
       feishu: draft.notifyFeishu,

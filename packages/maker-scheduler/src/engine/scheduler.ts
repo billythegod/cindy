@@ -1321,7 +1321,7 @@ export class Scheduler extends EventEmitter {
       scriptConfig: normalizeScriptConfig(input.scriptConfig),
       manual,
       persistentSession: input.persistentSession ?? false,
-      silentWhenIdle: input.silentWhenIdle ?? false,
+      silentWhenIdle: input.silentWhenIdle ?? (input.executionMode !== 'script'),
       status: 'active',
       createdAt: now,
       updatedAt: now,
@@ -1382,6 +1382,12 @@ export class Scheduler extends EventEmitter {
     }
     const existing = await this.get(id);
     if (!existing) throw new Error(`Schedule not found: ${id}`);
+    // Agent-only quiet reporting does not apply when changing to script mode.
+    // Keep explicit invalid combinations subject to the existing validation.
+    if (patch.executionMode === 'script' && existing.executionMode !== 'script'
+      && patch.silentWhenIdle === undefined) {
+      updates.silentWhenIdle = false;
+    }
     // 换引擎(agentKind 变了)时,上一引擎的 model / providerId / effort 是另一套模型
     // 目录里的路由,对新引擎没有意义,patch 没显式给就丢弃(带 key 的 undefined →
     // storage 清列 NULL),让任务回到新引擎的默认路由。否则陈旧路由会被原样带过去:

@@ -452,3 +452,17 @@ it('reports real database failures instead of waiting indefinitely and allows a 
     .resolves.toMatchObject({ ok: false, message: 'Routine request failed; please retry later' });
   await expect(f.request({ action: 'status', status: 'listening' })).resolves.toEqual({ ok: true });
 });
+
+it('passes the saved reminder choice and check into the shared runner and returns skipped history', async () => {
+  mock.storage.listRuns.mockResolvedValueOnce([
+    { id: 'execution', scheduleId: 'backing', firedAt: 1, status: 'skipped', resultText: 'No changes' },
+  ]);
+  const preRunHook = { command: 'node check.mjs', timeoutMs: 3000 };
+  const routine = await routineTools.save('bot', {
+    name: 'Reminder', prompt: 'Send the reminder', enabled: true, silentWhenIdle: false, preRunHook,
+    triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
+  });
+  await routineTools.runNow('bot', routine.id);
+  await vi.waitFor(async () => expect((await routineTools.history('bot', routine.id))[0].status).toBe('skipped'));
+  expect(mock.storage.insert).toHaveBeenCalledWith(expect.objectContaining({ targetSessionId: 'canonical-task', silentWhenIdle: false, preRunHook }));
+});

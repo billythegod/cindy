@@ -1082,6 +1082,7 @@ function ScheduleFormCard({
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
   const { t, i18n } = useTranslation();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const setField = <K extends keyof MobileScheduleDraft>(key: K, value: MobileScheduleDraft[K]) => {
     onChange({ ...draft, [key]: value });
   };
@@ -1444,6 +1445,22 @@ function ScheduleFormCard({
           value={draft.timezone}
         />
       </View>
+
+      <MainWindowRowButton accessibilityLabel={t('devices.companions.automation.advanced')} expanded={advancedOpen} onPress={() => setAdvancedOpen(!advancedOpen)} testID="automations.form.advanced"><Text style={styles.fieldLabel}>{t('devices.companions.automation.advanced')}</Text></MainWindowRowButton>
+      {advancedOpen ? <View style={styles.fieldGroup}>
+        {draft.executionMode !== 'script' ? <ToggleRow active={draft.silentWhenIdle} disabled={busy}
+          label={t('devices.companions.automation.quiet')} onPress={() => setField('silentWhenIdle', !draft.silentWhenIdle)} testID="automations.form.quiet" /> : null}
+        {draft.executionMode !== 'script' ? <Text style={styles.fieldLabel}>{t('devices.companions.automation.quietHint')}</Text> : null}
+        <Text style={styles.fieldLabel}>{t('devices.companions.automation.checkCommand')}</Text>
+        <TextInput accessibilityLabel={t('devices.companions.automation.checkCommand')} autoCapitalize="none" editable={!busy} multiline style={styles.input}
+          value={draft.preRunHook?.command ?? ''} onChangeText={(command) => setField('preRunHook', command ? { ...draft.preRunHook, command } : null)} />
+        <Text style={styles.fieldLabel}>{t('devices.companions.automation.checkHint')}</Text>
+        {draft.preRunHook ? <>
+          <Text style={styles.fieldLabel}>{t('devices.companions.automation.timeoutMs')}</Text>
+          <TextInput accessibilityLabel={t('devices.companions.automation.timeoutMs')} keyboardType="numeric" editable={!busy} style={styles.input}
+            value={draft.preRunHook.timeoutMs === undefined ? '' : String(draft.preRunHook.timeoutMs)} onChangeText={(value) => setField('preRunHook', { ...draft.preRunHook!, timeoutMs: value ? Number(value) : undefined })} />
+        </> : null}
+      </View> : null}
 
       <ToggleRow
         active={draft.notifyDesktop}

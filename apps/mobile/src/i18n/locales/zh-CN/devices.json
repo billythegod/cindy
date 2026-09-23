@@ -927,7 +927,14 @@
       "timezone": "时区",
       "monthly": "每月",
       "monthDay": "每月几号",
-      "saveAndRun": "保存并运行"
+      "saveAndRun": "保存并运行",
+      "advanced": "高级设置",
+      "quiet": "检查没事不说话",
+      "quietHint": "仅报告变化或问题。提醒和定时发送可关闭此项。",
+      "checkCommand": "前置检查命令",
+      "checkHint": "可选。在电脑上先检查：退出码 2 跳过本轮，0 继续执行，异常仍会报告。清空可移除。",
+      "timeoutMs": "检查超时（毫秒，留空不限时）",
+      "skipped": "已检查 · 未唤醒模型"
     },
     "openNavigation": "打开导航",
     "openProfile": "查看 {{name}} 的资料",

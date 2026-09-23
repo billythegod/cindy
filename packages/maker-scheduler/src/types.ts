@@ -258,7 +258,7 @@ export interface Schedule {
   /**
    * 静默运行:true → 成功 run 默认不发通知、不产生未读小红点;任务 prompt 可自行说明
    * 哪些业务条件值得提醒,agent 在满足时调用 schedule_notify_current_run 主动上报。
-   * 失败/异常仍然通知。默认 false(每轮成功都按通知渠道提醒,旧行为)。
+   * 失败/异常仍然通知。新建 agent 任务默认 true；存量已存选择保持不变。
    */
   silentWhenIdle?: boolean;
   /** Execution mode; omitted/legacy schedules run an agent. */
@@ -369,7 +369,7 @@ export interface CreateScheduleInput {
   targetSessionId?: string;
   /** 默认 false。详见 Schedule.persistentSession。 */
   persistentSession?: boolean;
-  /** 默认 false。详见 Schedule.silentWhenIdle("静默运行")。 */
+  /** 新建 agent 任务默认 true；script 默认 false。存量与显式选择保持不变。 */
   silentWhenIdle?: boolean;
   /** Execution mode; defaults to agent for legacy schedules. */
   executionMode?: ScheduleExecutionMode;

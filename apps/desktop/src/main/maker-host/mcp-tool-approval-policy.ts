@@ -241,6 +241,13 @@ export function getDesktopMcpToolApprovalPolicy(
   // uploads local files under the signed-in account. Review each action instead
   // of reusing the trusted helper server shortcut/grant. Session modes still apply.
   if (serverName === 'cindy_helper') {
+    const params = readJsonObject(toolParams);
+    const action = toolName === 'call_tool' ? params?.name : toolName;
+    const args = toolName === 'call_tool' ? readJsonObject(params?.args) : params;
+    // Installing or saving a host command uses the session's existing approval flow.
+    if (action === 'schedule_set_pre_run_hook' || (action === 'routine_save' && args?.preRunHook != null)) {
+      return 'prompt-each-time';
+    }
     if (toolName === 'move_session' || toolName === 'publish_skill') return 'prompt-each-time';
     if (!toolName || toolName === 'call_tool') {
       const params = readJsonObject(toolParams);

@@ -1834,6 +1834,16 @@ describe('Scheduler', () => {
     expect(h.scheduler.isRunSilenced(runId)).toBe(false);
   });
 
+  it('defaults new agent checks to quiet and preserves explicit reminders and script mode', async () => {
+    const check = await h.scheduler.create({ ...baseInput });
+    expect(check.silentWhenIdle).toBe(true);
+    expect((await h.scheduler.create({ ...baseInput, silentWhenIdle: false })).silentWhenIdle).toBe(false);
+    expect((await h.scheduler.create({ ...baseInput, executionMode: 'script', workspaceKind: 'project', workingDir: '/repo', scriptConfig: { command: 'node check.mjs', capabilities: [] } })).silentWhenIdle).toBe(false);
+    const scriptPatch = { executionMode: 'script' as const, workspaceKind: 'project' as const, workingDir: '/repo', scriptConfig: { command: 'node check.mjs', capabilities: [] } };
+    await expect(h.scheduler.update(check.id, { ...scriptPatch, silentWhenIdle: true })).rejects.toThrow('does not support silentWhenIdle');
+    expect((await h.scheduler.update(check.id, scriptPatch)).silentWhenIdle).toBe(false);
+  });
+
   it('silentWhenIdle run is silent by default', async () => {
     h = makeHarness({
       runnerImpl: async (_s, ctx) => {
@@ -1918,7 +1928,7 @@ describe('Scheduler', () => {
           gates.push(() => resolve({ sessionId: `sess-${ctx.runId}` }));
         }),
     });
-    const sch = await h.scheduler.create({ ...baseInput });
+    const sch = await h.scheduler.create({ ...baseInput, silentWhenIdle: false });
     const p1 = h.scheduler.runNow(sch.id);
     const p2 = h.scheduler.runNow(sch.id);
     await vi.waitFor(() => expect(gates).toHaveLength(2));
@@ -1944,7 +1954,7 @@ describe('Scheduler', () => {
         return { sessionId: 'sess-no-active-turn' };
       },
     });
-    const sch = await h.scheduler.create({ ...baseInput });
+    const sch = await h.scheduler.create({ ...baseInput, silentWhenIdle: false });
     const events: unknown[] = [];
     h.scheduler.on('silenced', (e) => events.push(e));
     const result = await h.scheduler.runNow(sch.id);
