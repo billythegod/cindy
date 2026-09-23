@@ -4,6 +4,7 @@ import {
   releasePeerMedia,
 } from "./peerFileRegistry";
 import { withTransientRemoteRetry } from "./remoteRetry";
+import { fetchAgentCapabilities } from "@/session/agentCapabilitiesCache";
 import {
   getMobileAuthOwner,
   isMobileAuthOwnerCurrent,
@@ -427,6 +428,14 @@ export type MobileWorktreeCreateResult =
     };
 
 export interface MobileMakerTransport {
+  /** 在被控端生成当前任务完成后的输入框推荐提示词。 */
+  predictNextPrompt(request: {
+    sessionId: string;
+    agentKind: MobileAgentKind;
+    turnGen: number;
+    completionRevision: number;
+    cacheOnly?: boolean;
+  }): Promise<{ prompt: string | null }>;
   createSession(opts: CreateSessionOptions): Promise<CreateSessionResult>;
   getCapabilities(agentKind: MobileAgentKind): Promise<unknown>;
   /**
@@ -447,6 +456,7 @@ export interface MobileMakerTransport {
    */
   listProviders(): Promise<{
     providers: ProviderView[];
+    providerOrder?: string[];
     modelVisibilityOverrides?: Record<string, boolean>;
   }>;
   getSession(sessionId: string): Promise<RemoteSession>;
@@ -660,7 +670,11 @@ export interface MobileMakerTransport {
     sessionId: string,
     clientId: string,
   ): Promise<RewindPreviewPayload>;
-  rewindCommit(sessionId: string, clientId: string): Promise<RemoteSession>;
+  rewindCommit(
+    sessionId: string,
+    clientId: string,
+    opts?: { allowFileRestore?: boolean },
+  ): Promise<RemoteSession>;
   deleteMessage(
     sessionId: string,
     clientId: string,
@@ -902,7 +916,10 @@ export function createMobileMakerTransport({
 
   return {
     createSession: (opts) => call("maker:create-session", [opts]),
-    getCapabilities: (agentKind) => call("maker:get-capabilities", [agentKind]),
+    getCapabilities: (agentKind) => fetchAgentCapabilities(deviceId, agentKind, () => {
+      if (!isCurrent()) throw new Error("Capabilities read superseded");
+      return call("maker:get-capabilities", [agentKind]);
+    }),
     listAvailableAgents: () => call('maker:list-available-agents', []),
     // Pi 原生分支树通过 device-link 复用桌面端 runtime；移动会话页只在当前会话
     // 确认为 Pi 时展示入口，并在渲染前校验返回的树形状。
@@ -1042,6 +1059,7 @@ export function createMobileMakerTransport({
       call("maker:apply-new-maker-draft-pref", [pref]),
     getNewMakerDefaults: (agentKind) =>
       call("maker:get-new-maker-defaults", [agentKind]),
+    predictNextPrompt: (request) => call('maker:predict-prompt', [request]),
     applyNewMakerWorktreePref: (worktreeEnabled) =>
       call("maker:apply-new-maker-worktree-pref", [{ worktreeEnabled }]),
     getNewMakerWorktreeBranchPref: (baseRepo) =>
@@ -1087,8 +1105,11 @@ export function createMobileMakerTransport({
       call("maker:fork", [sourceSessionId, messageClientId]),
     rewindPreview: (sessionId, clientId) =>
       call("maker:rewind:preview", [sessionId, clientId]),
-    rewindCommit: (sessionId, clientId) =>
-      call("maker:rewind:commit", [sessionId, clientId]),
+    rewindCommit: (sessionId, clientId, opts) =>
+      call(
+        "maker:rewind:commit",
+        opts ? [sessionId, clientId, opts] : [sessionId, clientId],
+      ),
     deleteMessage: (sessionId, clientId) =>
       call("maker:message:delete", [sessionId, clientId]),
     closeSession: (sessionId) => call("maker:close-session", [sessionId]),

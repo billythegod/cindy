@@ -98,25 +98,119 @@ export class CindyMakeManager {
   private readonly sourceJobs = new Map<string, SharedSourceJob>();
   private readonly projectJobs = new Map<string, Promise<unknown>>();
   private readonly projectUsers = new Map<string, number>();
+  private personalBuild: { sessionIds: string[]; isCurrent: () => boolean } | undefined;
+  private manualSourceSync = false;
   private readonly reports = new Map<
     string,
     { report: MakeDoctorReport; isCurrent: () => boolean }
   >();
   private readonly tasks = new Map<string, ActiveTask>();
+  // Retained reports are history; only unsettled work owns the application lock.
+  private readonly preparingTasks = new Set<ActiveTask>();
   private readonly taskActions = new Map<string, TaskAction>();
+  private readonly runningTaskActions = new Set<TaskAction>();
   private readonly restoredTasks = new Map<
     string,
     { report: MakeDoctorReport; isCurrent: () => boolean }
   >();
   private sourceRevision = 0;
   private isProjectBusy: (root: string) => boolean = () => false;
+  private versionSwitching: () => boolean = () => false;
+  private mergeSessionCurrent: () => boolean = () => true;
 
   setProjectBusyProbe(probe: (root: string) => boolean): void {
     this.isProjectBusy = probe;
   }
 
+  setVersionSwitchingProbe(probe: () => boolean): void {
+    this.versionSwitching = probe;
+  }
+
+  isVersionSwitching(): boolean {
+    return this.versionSwitching();
+  }
+
+  private hasPendingUpstreamMerge(): boolean {
+    const merge = this.states.upstreamMerge;
+    return !!(
+      merge &&
+      merge.status !== 'merged' &&
+      merge.status !== 'cancelled' &&
+      (merge.hasWorkspace === true ||
+        merge.cancellationRequested === true ||
+        merge.status !== 'failed')
+    );
+  }
+
   private projectInUse(root: string): boolean {
-    return (this.projectUsers.get(root) ?? 0) > 0 || this.isProjectBusy(root);
+    return (
+      (this.projectUsers.get(root) ?? 0) > 0 ||
+      this.isProjectBusy(root) ||
+      this.hasPendingUpstreamMerge()
+    );
+  }
+  /** Active preparation/cleanup must finish before a local application version switch. */
+  hasActiveWork(): boolean {
+    return (
+      this.active.size > 0 ||
+      this.sourceJobs.size > 0 ||
+      this.preparingTasks.size > 0 ||
+      this.runningTaskActions.size > 0 ||
+      this.projectUsers.size > 0 ||
+      this.manualSourceSync ||
+      !!this.personalBuild ||
+      this.projectJobs.size > 0
+    );
+  }
+
+  isPersonalBuildRunning(): boolean {
+    return !!this.personalBuild;
+  }
+
+  /** Reserve a manual source update before its first asynchronous step. */
+  claimManualSourceSync(): () => void {
+    if (this.personalBuild || this.manualSourceSync)
+      throw Object.assign(new Error('personal build or source sync is running'), { code: 'busy' });
+    this.manualSourceSync = true;
+    this.notify();
+    return () => {
+      this.manualSourceSync = false;
+      this.notify();
+    };
+  }
+
+  /** Both entry points reserve synchronously, before any asynchronous build work. */
+  claimPersonalBuild(
+    sessionIds: readonly string[] = [],
+    isCurrent: () => boolean = () => true,
+  ): () => void {
+    if (this.versionSwitching())
+      throw Object.assign(new Error('version switch is running'), { code: 'busy' });
+    if (this.manualSourceSync)
+      throw Object.assign(new Error('manual source sync is running'), { code: 'busy' });
+    if (this.hasPendingUpstreamMerge())
+      throw Object.assign(new Error('upstream merge is pending'), { code: 'busy' });
+    if (this.projectUsers.size > 0)
+      throw Object.assign(new Error('source work is running'), { code: 'busy' });
+    if (this.personalBuild)
+      throw Object.assign(new Error('personal build is running'), { code: 'busy' });
+    const claim = { sessionIds: [...new Set(sessionIds)], isCurrent };
+    this.personalBuild = claim;
+    this.notify();
+    return () => {
+      if (this.personalBuild !== claim) return;
+      this.personalBuild = undefined;
+      this.notify();
+    };
+  }
+
+  setUpstreamMerge(
+    state: CindyMakeGlobalState['upstreamMerge'],
+    isCurrent: () => boolean = () => true,
+  ): void {
+    this.states.upstreamMerge = state;
+    this.mergeSessionCurrent = isCurrent;
+    this.notify();
   }
 
   async withProjectUse<T>(root: string, run: () => Promise<T>): Promise<T> {
@@ -167,12 +261,20 @@ export class CindyMakeManager {
     this.notify();
   }
 
-  async refreshSourceStatus(read: () => Promise<MakeSourceStatus>): Promise<MakeSourceStatus> {
-    const revision = this.sourceRevision;
-    const status = await read();
-    if (revision !== this.sourceRevision && this.states.source)
-      return structuredClone(this.states.source);
-    this.setSourceStatus(status);
+  async refreshSourceStatus(
+    read: (publish: (status: MakeSourceStatus) => boolean) => Promise<MakeSourceStatus>,
+  ): Promise<MakeSourceStatus> {
+    let revision = ++this.sourceRevision;
+    // One revision guard spans every stage, including our own intermediate writes.
+    // A preparation/clear or another refresh invalidates all remaining stages.
+    const publish = (status: MakeSourceStatus): boolean => {
+      if (revision !== this.sourceRevision) return false;
+      revision += 1;
+      this.setSourceStatus(status);
+      return revision === this.sourceRevision;
+    };
+    const status = await read(publish);
+    if (!publish(status) && this.states.source) return structuredClone(this.states.source);
     return status;
   }
 
@@ -209,6 +311,11 @@ export class CindyMakeManager {
       );
     }
     if (input.signal.aborted) return input.cancelled();
+    if (
+      this.states.upstreamMerge?.cancellationRequested ||
+      (this.states.upstreamMerge?.hasWorkspace && this.states.upstreamMerge.status !== 'merged')
+    )
+      throw Object.assign(new Error('upstream merge is pending'), { code: 'busy' });
     if (
       input.clearOnly &&
       (this.projectInUse(input.root) ||
@@ -298,6 +405,12 @@ export class CindyMakeManager {
     const existing = previous?.lifecycle.isCurrent() ? previous : undefined;
     if (previous && !existing) previous.controller.abort('owner-changed');
     if (existing) {
+      // History retry callers need only the run identity. Explicit conflicting origins
+      // still fail; an omitted origin comes from the Main-owned preparation.
+      input = {
+        ...input,
+        originSessionId: input.originSessionId ?? existing.input.originSessionId,
+      };
       if (
         existing.input.originSessionId !== input.originSessionId ||
         existing.input.request !== input.request
@@ -307,6 +420,7 @@ export class CindyMakeManager {
         );
       }
       if (
+        this.preparingTasks.has(existing) ||
         existing.report?.status === 'running' ||
         existing.report?.status === 'completed' ||
         !existing.report
@@ -316,6 +430,7 @@ export class CindyMakeManager {
     const controller = new AbortController();
     const task: ActiveTask = { input, controller, created: Promise.resolve(''), lifecycle };
     this.tasks.set(input.runId, task);
+    this.preparingTasks.add(task);
     task.created = (async () => {
       const report = await lifecycle.create(existing?.report);
       if (!report.task) throw new Error('task identity missing');
@@ -324,9 +439,13 @@ export class CindyMakeManager {
       await lifecycle.persist(report);
       lifecycle.onCreated?.();
       this.publishTask(task);
-      task.done = this.runTask(task);
+      task.done = this.runTask(task).finally(() => {
+        this.preparingTasks.delete(task);
+        this.notify();
+      });
       return report.task.sessionId;
     })().catch((error) => {
+      this.preparingTasks.delete(task);
       if (task.report) {
         task.report = { ...task.report, status: 'failed' };
         this.publishTask(task);
@@ -377,8 +496,7 @@ export class CindyMakeManager {
       // The canonical terminal-session hook runs inside the outer Settings action.
       // It must not await its own parent's promise or overwrite its progress.
       if (nestedRecycle) return run();
-      // A plain archive only checks already-merged work. A later explicit Finish
-      // still needs to perform its merge after that background recycle settles.
+      // A later explicit action waits for the existing background recycle to settle.
       if (existing.recycleOnly)
         return existing.promise
           .catch(() => undefined)
@@ -393,6 +511,7 @@ export class CindyMakeManager {
       recycleOnly: nestedRecycle,
     };
     this.taskActions.set(sessionId, entry);
+    this.runningTaskActions.add(entry);
     entry.promise = Promise.resolve()
       .then(() => {
         if (!isCurrent()) throw Object.assign(new Error('owner changed'), { code: 'unavailable' });
@@ -413,6 +532,7 @@ export class CindyMakeManager {
         },
       )
       .finally(() => {
+        this.runningTaskActions.delete(entry);
         if (isCurrent()) this.notify();
       });
     this.notify();
@@ -461,7 +581,11 @@ export class CindyMakeManager {
     const previous = this.restoredTasks.get(report.runId);
     if (previous?.isCurrent()) {
       // Runtime execution is projected separately from the persisted preparation.
-      restored.task = { ...restored.task!, executing: previous.report.task?.executing };
+      restored.task = {
+        ...restored.task!,
+        executing: previous.report.task?.executing,
+        integration: previous.report.task?.integration,
+      };
       if (JSON.stringify(previous.report) === JSON.stringify(restored)) return undefined;
     }
     this.restoredTasks.set(report.runId, { report: restored, isCurrent });
@@ -560,6 +684,18 @@ export class CindyMakeManager {
     };
     return structuredClone({
       ...this.states,
+      personalBuildSessionIds: this.personalBuild?.isCurrent()
+        ? this.personalBuild.sessionIds
+        : undefined,
+      ...(this.states.upstreamMerge && !this.mergeSessionCurrent()
+        ? {
+            upstreamMerge: {
+              ...this.states.upstreamMerge,
+              sessionId: undefined,
+              ownedByAnotherAccount: true,
+            },
+          }
+        : {}),
       reports: Object.fromEntries(
         [...this.reports].flatMap(([runId, entry]) =>
           entry.isCurrent() ? [[runId, entry.report]] : [],

@@ -9,6 +9,7 @@ import {
   loadCachedRateHistory,
   recordRunningTokenRate,
   saveCachedRateHistory,
+  RATE_SAMPLE_FRESH_MS,
   type RateHistory,
 } from './lib/runningTokenRateHistory';
 
@@ -26,9 +27,9 @@ export function useRunningTokenRateHistory(input: {
   const [history, setHistory] = useState<RateHistory>(() => {
     const cached = sessionKey ? loadCachedRateHistory(sessionKey) : null;
     if (!cached) return emptyRateHistory(null);
-    // 空闲态恢复时必须丢弃 baseline：此时看不到计数属于哪一轮，若会话在
-    // 后台跑完了新一轮，用旧轮 baseline 去减新轮累计计数会伪造区间速度。
-    return startedAt === null ? { ...cached, baseline: null } : cached;
+    // 空闲态恢复时丢弃两个计数起点：无法判断计数属于哪一轮，既不能
+    // 用旧 baseline 计算区间，也不能用旧 lastReport 判定当前轮计数回退。
+    return startedAt === null ? { ...cached, baseline: null, lastReport: null } : cached;
   });
   useEffect(() => {
     setHistory((previous) =>
@@ -43,8 +44,20 @@ export function useRunningTokenRateHistory(input: {
   useEffect(() => {
     if (sessionKey) saveCachedRateHistory(sessionKey, history);
   }, [sessionKey, history]);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timestamp = history.latestSampleAt;
+    if (timestamp === undefined || history.latestRate === null) return;
+    setNow(Date.now());
+    const timer = setTimeout(() => setNow(Date.now()),
+      Math.max(0, timestamp + RATE_SAMPLE_FRESH_MS - Date.now()));
+    return () => clearTimeout(timer);
+  }, [history.latestSampleAt, history.latestRate]);
+  const visibleHistory = history.latestSampleAt === undefined ||
+    Math.max(now, Date.now()) - history.latestSampleAt >= RATE_SAMPLE_FRESH_MS
+    ? { ...history, latestRate: null } : history;
   return startedAt === null || history.startedAt === startedAt
-    ? history
+    ? visibleHistory
     : { ...history, startedAt, baseline: null, latestRate: null };
 }
 
@@ -155,7 +168,7 @@ export function RunningTokenRatePopover({
     <Popover
       open={open}
       onOpenChange={(next) => {
-        if (next) setMode('pinned');
+        setMode(next ? 'pinned' : 'dismissed');
       }}
     >
       <Tooltip.Provider>
@@ -193,7 +206,12 @@ export function RunningTokenRatePopover({
               </button>
             </Tooltip.Trigger>
           </PopoverTrigger>
-          <Tooltip.Content side="top" className={`${surface} break-normal`}>
+          <Tooltip.Content
+            side="top"
+            align="end"
+            sideOffset={8}
+            className={`${surface} break-normal`}
+          >
             {card}
           </Tooltip.Content>
         </Tooltip.Root>

@@ -282,6 +282,7 @@ export const MAKER_INVOKE = {
   REGENERATE_TITLE: 'maker:regenerate-title',
   /** 输入框推荐提示词:turn 结束后预测用户下一步输入(走 titleModel 轻量 one-shot)。 */
   PREDICT_PROMPT: 'maker:predict-prompt',
+  WORKING_STATUS: 'maker:working-status',
   HELP_ASK: 'maker:help:ask',
   /**
    * Help-assistant 反馈草稿 (Phase 1):用户对某条回答不满时,点 👎 → 弹小表单 →
@@ -323,6 +324,8 @@ export const MAKER_INVOKE = {
   AGENT_STATUS: 'maker:agent:status',
   // Agent 二进制 --version 输出 (About 面板用) —— spawn binary, 进程内缓存
   AGENT_BINARY_VERSION: 'maker:agent:binary-version',
+  PI_KERNEL_STATE: 'maker:agent:pi-kernel-state',
+  PI_KERNEL_INSTALL: 'maker:agent:pi-kernel-install',
   // Agent 今日累计 (取代老 codex:usage:today) —— 走 host 的 readAgentTodayUsage
   USAGE_TODAY: 'maker:usage:today',
   USAGE_ACCOUNT: 'maker:usage:account',
@@ -418,8 +421,9 @@ export const MAKER_INVOKE = {
   CHAT_EMBEDDING_SET: 'maker:chat-embedding:set',
   CHAT_EMBEDDING_RESET: 'maker:chat-embedding:reset',
   /**
-   * Git safety workflow: automatic XDT snapshot commits and the dependent
-   * Codex file rewind entry. Default false; SET writes a user override.
+   * Git safety workflow: three-state automatic XDT savepoint policy. File
+   * rewind remains available as conversation-only rewind when no savepoint
+   * exists; SET writes a user override.
    */
   GIT_SAFETY_GET: 'maker:git-safety:get',
   GIT_SAFETY_SET: 'maker:git-safety:set',

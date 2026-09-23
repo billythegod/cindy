@@ -20,6 +20,31 @@ vi.mock('react-i18next', () => ({
 }));
 afterEach(cleanup);
 
+it('expires the displayed rate without losing history, including after remount', () => {
+  vi.useFakeTimers();
+  try {
+    clearRateHistoryCache();
+    function Probe({ tokens }: { tokens: number }) {
+      const history = useRunningTokenRateHistory({ sessionKey: 'freshness', startedAt: 1,
+        outputTokens: tokens, generationDurationMs: tokens * 10, generationReliable: true });
+      return <div data-testid="rate">{history.latestRate ?? 'waiting'}:{history.samples.length}</div>;
+    }
+    const view = render(<Probe tokens={0} />);
+    view.rerender(<Probe tokens={100} />);
+    expect(screen.getByTestId('rate').textContent).toBe('100:1');
+    act(() => vi.advanceTimersByTime(59_999));
+    expect(screen.getByTestId('rate').textContent).toBe('100:1');
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByTestId('rate').textContent).toBe('waiting:1');
+    view.unmount();
+    const again = render(<Probe tokens={100} />);
+    expect(screen.getByTestId('rate').textContent).toBe('waiting:1');
+    again.rerender(<Probe tokens={200} />);
+    expect(screen.getByTestId('rate').textContent).toBe('100:2');
+    again.unmount();
+  } finally { clearRateHistoryCache(); vi.useRealTimers(); }
+});
+
 it('distinguishes an unobserved peak from measured zero throughput', () => {
   const props = {
     elapsedText: '1s',
@@ -55,6 +80,7 @@ it('keeps pinned history while its trigger falls back to tokens or elapsed-only'
     history: {
       startedAt: 1,
       baseline: null,
+      lastReport: null,
       peak: 100,
       latestRate: 100,
       samples: [{ durationMs: 1000, outputTokens: 100, rate: 100 }],
@@ -96,6 +122,7 @@ it('pins the card on click and dismisses with Escape, returning focus to the spe
       history={{
         startedAt: 1,
         baseline: { durationMs: 10000, outputTokens: 1000 },
+        lastReport: { durationMs: 10000, outputTokens: 1000 },
         peak: 120,
         latestRate: 100,
         samples: [
@@ -128,7 +155,14 @@ it.each(['Escape', 'close'] as const)(
         rateText="100 tok/s"
         averageRate="110"
         outputTokens={1000}
-        history={{ startedAt: 1, baseline: null, peak: 100, latestRate: null, samples: [] }}
+        history={{
+          startedAt: 1,
+          baseline: null,
+          lastReport: null,
+          peak: 100,
+          latestRate: null,
+          samples: [],
+        }}
       />,
     );
     const trigger = screen.getByRole('button');
@@ -200,13 +234,16 @@ it('keeps the pinned card across turns while awaiting a fresh rate', async () =>
   expect(screen.getByRole('dialog').textContent).toContain('—');
   const previousLine = chart.querySelectorAll('path')[2].getAttribute('d');
   rerender(<Harness startedAt={2} outputTokens={20} generationDurationMs={500} />);
+  expect(chart.querySelectorAll('path')[2].getAttribute('d')).toBe(previousLine);
+  expect(screen.getByRole('dialog').textContent).toContain('—');
+  rerender(<Harness startedAt={2} outputTokens={40} generationDurationMs={1000} />);
   expect(screen.getByRole('dialog').textContent).toContain('40');
   const nextLine = screen.getByRole('img').querySelectorAll('path')[2].getAttribute('d');
   expect(nextLine).not.toBe(previousLine);
   expect(nextLine?.match(/[ML]/g)).toHaveLength(3);
 });
 
-it('keeps a clicked panel open through outside clicks, focus changes and repeated trigger clicks', async () => {
+it('keeps a clicked panel open through outside clicks and focus changes, and closes from the trigger', async () => {
   const onPinnedChange = vi.fn();
   render(
     <>
@@ -217,7 +254,14 @@ it('keeps a clicked panel open through outside clicks, focus changes and repeate
         rateText="100 tok/s"
         averageRate="110"
         outputTokens={1000}
-        history={{ startedAt: 1, baseline: null, peak: 0, latestRate: null, samples: [] }}
+        history={{
+          startedAt: 1,
+          baseline: null,
+          lastReport: null,
+          peak: 0,
+          latestRate: null,
+          samples: [],
+        }}
         onPinnedChange={onPinnedChange}
       />
     </>,
@@ -235,10 +279,8 @@ it('keeps a clicked panel open through outside clicks, focus changes and repeate
   expect(screen.getByRole('dialog')).toBe(dialog);
   fireEvent.click(trigger);
   fireEvent.pointerLeave(trigger);
-  expect(screen.getByRole('dialog')).toBe(dialog);
-  expect(screen.queryByRole('tooltip')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'titleBar.close' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(screen.queryByRole('tooltip')).toBeNull();
   expect(onPinnedChange).toHaveBeenLastCalledWith(false);
 });
 
@@ -294,61 +336,72 @@ it('restores speed history from the per-session cache after remounting', () => {
   second.unmount();
 
   // 另一个会话没有历史：从零等待，不串会话。
-  const third = render(
-    <Harness sessionKey="cache-b" startedAt={1} outputTokens={0} generationDurationMs={0} />,
-  );
+  render(<Harness sessionKey="cache-b" startedAt={1} outputTokens={0} generationDurationMs={0} />);
   fireEvent.click(screen.getByRole('button'));
   expect(screen.getByRole('img').querySelectorAll('path')).toHaveLength(1);
   expect(screen.getByRole('dialog').textContent).toContain('—');
 });
 
-it('does not fabricate a rate when restoring an idle session whose next turn finished while away', () => {
-  clearRateHistoryCache();
-  function Harness({
-    sessionKey,
-    startedAt,
-    outputTokens,
-    generationDurationMs,
-  }: {
-    sessionKey: string | null;
-    startedAt: number | null;
-    outputTokens: number;
-    generationDurationMs: number;
-  }) {
-    const history = useRunningTokenRateHistory({
+it.each([
+  [500, 10000],
+  [50, 500],
+  [50, 10000],
+  [500, 500],
+])(
+  'preserves the last measured rate on idle restore with %i tokens / %i ms',
+  (outputTokens, generationDurationMs) => {
+    clearRateHistoryCache();
+    function Harness({
       sessionKey,
       startedAt,
       outputTokens,
       generationDurationMs,
-      generationReliable: true,
-    });
-    return (
-      <RunningTokenRatePopover
-        elapsedText="10s"
-        rate={history.latestRate === null ? null : String(history.latestRate)}
-        rateText="speed"
-        averageRate={null}
-        outputTokens={outputTokens}
-        history={history}
-      />
+    }: {
+      sessionKey: string | null;
+      startedAt: number | null;
+      outputTokens: number;
+      generationDurationMs: number;
+    }) {
+      const history = useRunningTokenRateHistory({
+        sessionKey,
+        startedAt,
+        outputTokens,
+        generationDurationMs,
+        generationReliable: true,
+      });
+      return (
+        <RunningTokenRatePopover
+          elapsedText="10s"
+          rate={history.latestRate === null ? null : String(history.latestRate)}
+          rateText="speed"
+          averageRate={null}
+          outputTokens={outputTokens}
+          history={history}
+        />
+      );
+    }
+    const first = render(
+      <Harness sessionKey="idle-a" startedAt={1} outputTokens={0} generationDurationMs={0} />,
     );
-  }
-  const first = render(
-    <Harness sessionKey="idle-a" startedAt={1} outputTokens={0} generationDurationMs={0} />,
-  );
-  first.rerender(
-    <Harness sessionKey="idle-a" startedAt={1} outputTokens={100} generationDurationMs={1000} />,
-  );
-  first.unmount();
+    first.rerender(
+      <Harness sessionKey="idle-a" startedAt={1} outputTokens={100} generationDurationMs={1000} />,
+    );
+    first.unmount();
 
-  // 切离期间会话在后台跑完新一轮；切回时已空闲，store 里是新轮的累计计数。
-  const second = render(
-    <Harness sessionKey="idle-a" startedAt={null} outputTokens={500} generationDurationMs={10000} />,
-  );
-  fireEvent.click(screen.getByRole('button'));
-  // 新轮计数减旧轮 baseline 得出的 44.4 tok/s 是伪造区间，不得追加；
-  // 图表仍只有缓存里的 1 个采样点（仅轴线），最新速度保持最后的真实测量。
-  expect(screen.getByRole('img').querySelectorAll('path')).toHaveLength(1);
-  expect(screen.getByRole('dialog').textContent).not.toContain('44.4');
-  expect(screen.getByRole('dialog').textContent).toContain('100');
-});
+    // 切离期间会话在后台跑完新一轮；切回时已空闲，store 里是新轮的累计计数。
+    render(
+      <Harness
+        sessionKey="idle-a"
+        startedAt={null}
+        outputTokens={outputTokens}
+        generationDurationMs={generationDurationMs}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button'));
+    // 无论新轮计数增大还是减小，都不能与旧轮比较或追加伪造区间；
+    // 图表仍只有缓存里的 1 个采样点（仅轴线），最新速度保持最后的真实测量。
+    expect(screen.getByRole('img').querySelectorAll('path')).toHaveLength(1);
+    expect(screen.getByRole('dialog').textContent).not.toContain('44.4');
+    expect(screen.getByText('100', { selector: 'span' })).toBeTruthy();
+  },
+);

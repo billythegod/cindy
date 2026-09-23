@@ -14,6 +14,17 @@ pnpm mobile:sim:start
 pnpm mobile:sim:whoami
 ```
 
+macOS 外部模拟器窗口统一使用 `pnpm mobile:sim:open -- --udid <booted-udid>`。
+入口按当前 Xcode 工具链解析真实应用路径，兼容 Device Hub（Xcode 27）与旧版
+Simulator，不用 `open -a Simulator` 或 AppleScript 按名称查询应用。它只打开已启动
+设备的窗口，不切换 Metro、不重建或重置设备。Expo CLI 的对应探测与聚焦修复由根目录
+`pnpm.patchedDependencies` 管理，升级 CLI 时需保留或确认上游已修复。
+
+外部窗口验收使用 `pnpm mobile:sim:whoami -- --viewer --json`：在原有身份检查上要求
+所选 Xcode 的窗口程序正在运行。普通 `whoami` 只报告这一独立维度，不因此阻断内嵌或
+无窗口运行；`viewer.windowVerified` 与 `pageVerified` 仍为 false，设备窗口和新 bundle
+必须另外验证，进程存在不等于窗口已显示。
+
 Windows 下 `mobile:sim:start` 还会复用或启动 `cindy-api36` Android AVD，等待系统启动完成，
 并为 Metro 端口建立 `adb reverse`。中国大陆版的一键入口名称带有明确区域限定：
 
@@ -26,6 +37,18 @@ pnpm mobile:sim:start:cn
 不要求把 `adb`、`emulator` 加进 `PATH`。
 
 修改原生依赖、Expo 原生配置，或切换到尚未安装对应开发包的区域时，重新构建：
+
+`whoami` 还会比较已安装 `.app/EXUpdates.bundle/fingerprint` 与当前 worktree 的
+Expo Updates 开发指纹。`native-mismatch` 或 `native-unknown` 不能作为可测试状态，
+即使版本号、Metro 和页面都正常也要先普通重建。重建入口同样检查缓存、构建产物和安装后
+的真实指纹，避免跨 worktree 复用不兼容的原生包；不匹配的缓存会跳过。不要通过临时修改
+JS 参数协议来适配另一版本原生依赖。此检查不修改 App 配置或发布指纹。
+
+Xcode 27 构建的 App 在 iOS 27 上还必须采用 UIScene 生命周期。当前 SDK 57 使用
+Expo 官方回移支持（`expo >= 57.0.23`，`expo-build-properties` 的
+`ios.enableSceneSupport: true`），由 prebuild 生成主 App 的 Scene manifest 和工厂入口。
+不要只手改忽略目录里的 AppDelegate 或绕过原生指纹。启用该配置及升级原生依赖会改变
+runtime fingerprint，必须按下文冷更边界审核；链接唤起、前后台切换与页面显示须单独验证。
 
 ```bash
 pnpm mobile:sim:rebuild
@@ -57,6 +80,47 @@ pnpm --filter mobile test:smoke
 - 记录实际执行和结果；未执行的高相关检查必须说明原因。
 
 ## 专项入口
+
+### 消息缓存与首页偏好
+
+- iOS、Android 的最近消息窗口统一写入私有 `cache/session-messages-v1/` 文件，
+  不设总容量或按时间淘汰；分页、内存窗口、消息净化与显式删除语义不变。
+  该目录属于可再生缓存，系统低空间回收后会从主机重新获取，不作为消息权威副本。
+- 旧 AsyncStorage 消息按需迁移：仅在文件缺失时读取旧条目，成功原子写入后再删除旧值；
+  失败保留旧条目。回退到旧版不会读取新文件，会重新从主机获取消息。
+  迁移与同一任务的写入／删除共用队列，退出账号等待在途迁移后清理两种存储。
+- 删除逐项尝试旧条目和文件，不依赖新增文件写入；任一后端失败不阻止另一后端清理，
+  单个文件失败也不阻止后续文件删除，全部尝试结束后统一报告失败。清理报错时可能仍有
+  无法删除的残留，不能视为清理成功。新登录或切换账号必须在持久化
+  新身份前完成缓存清理；清理失败沿用登录错误与回滚路径，不能激活下一账号。
+  退出账号仍完成凭证清除；若缓存清理失败，下次登录会先重试。无有效账号期间禁止
+  读取或写入消息缓存，避免退出后的卸载回调重新落盘。
+- 首页分组等偏好继续使用 AsyncStorage。合并保存时读失败不得当成空配置；写失败
+  必须向用户提示，不能把未落盘的选择当成已保存。旧消息只按需迁移，升级首次启动
+  不会立即释放所有旧数据库占用。
+- 文件写入失败（含磁盘空间不足）会提示检查剩余空间，并说明离线内容可能不完整。
+  同一次启动最多提示一次，后台失败延后到前台提示；不把所有 I/O 错误都断言为磁盘已满。
+
+实现见 `src/session/messageCacheStorage.ts`、`mobileSessionMessageCache.ts`、
+`homeViewPreferenceStore.ts`，回归见 `src/__tests__/` 下对应测试。
+
+### 中国大陆版微信个人登录
+
+- 复用 `xdt-wechat-login`：iOS/Android 拉起微信取临时 code，再由 auth-server 交换。
+  PC 使用同一服务端的网站应用扫码入口。登录结果统一进入手机号补绑或身份选择流程。
+- 在 Mobile `.env`（本地）或打包机环境中成对填写
+  `EXPO_PUBLIC_CINDY_WECHAT_APP_ID` 与 `EXPO_PUBLIC_CINDY_WECHAT_UNIVERSAL_LINK`，
+  说明与空值占位见 `apps/mobile/.env.example`。AppID 必须匹配服务端
+  `WECHAT_MOBILE_APPID`；服务端两组 Secret 不进入客户端。自建构建继续继承这两个
+  公开环境变量，不从服务端环境文件读取密钥。
+- 仅 cn 和显式配置的 dev 构建消费微信配置；Global 忽略残留值。全空关闭入口，
+  半配置或非法 Universal Link 在原生配置生成前报错。首次启用需重新出原生包，
+  仅 OTA 无法添加回调配置；按下方冷更规则比对 fingerprint。
+- 真机验证 iOS Universal Link/AASA、Android 包名/签名与 WXEntryActivity，覆盖
+  同意授权、取消、未安装微信、回到前台超时后重试。iOS Simulator 不支持微信授权。
+  iOS 登录页仅在 OpenSDK 确认已安装微信后显示微信入口；Android 保持入口可见，点击时
+  再由原生桥确认微信是否可用。凭据获取前仍须二次检查安装状态，不能只依赖页面显隐。
+  未绑手机号须短信验证，已绑用户免短信；用同一微信在 PC 和两种手机上确认账号一致。
 
 - 模拟器与真机排错：
   [`simulator-debugging.md`](../../apps/mobile/docs/simulator-debugging.md)。

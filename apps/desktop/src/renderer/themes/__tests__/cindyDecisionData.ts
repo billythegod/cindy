@@ -9,6 +9,10 @@
 // 2026-07-20、switch-track-off 2026-08-05);没有带日期用户裁决的手编仍然禁止。
 
 export const CINDY_REQUIRED_COLOR_IDS = [
+  'segmented-option-fg',
+  'segmented-hover-bg',
+  'segmented-selected-bg',
+  'segmented-selected-border',
   'surface',
   'surface-hsl',
   'surface-elevated',
@@ -192,6 +196,11 @@ export const HSL_FORMAT_IDS = [
 ] as const;
 
 export const CINDY_EXPECTED_VALUES: Record<string, { light: string; dark: string }> = {
+  // 用户裁决 2026-09-18: Segmented v8 低对比选中药丸。
+  'segmented-option-fg': { light: '#6B6B67', dark: '#AAAAAA' },
+  'segmented-hover-bg': { light: '#E4E4DF', dark: '#292929' },
+  'segmented-selected-bg': { light: '#FDFDF8', dark: '#353535' },
+  'segmented-selected-border': { light: '#F0F0EB', dark: '#3B3B3B' },
   surface: { light: '#F2F2ED', dark: '#181818' },
   'surface-hsl': { light: '60.0 16.1% 93.9%', dark: '0 0% 9.4%' },
   'surface-elevated': { light: '#FDFDF8', dark: '#1F1F1F' },
@@ -222,6 +231,9 @@ export const CINDY_EXPECTED_VALUES: Record<string, { light: string; dark: string
   'text-tertiary-hsl': { light: '60.0 1.9% 41.2%', dark: '0.0 0.0% 75.7%' },
   'text-disabled': { light: '#6B6B67', dark: '#C1C1C1' },
   'text-disabled-tertiary': { light: '#6B6B67', dark: '#C1C1C1' },
+  'slider-track': { light: '#A3A39E', dark: '#626262' },
+  'slider-fill': { light: '#3C3F43', dark: '#EEEEEE' },
+  'slider-thumb': { light: '#FDFDF8', dark: '#FCFCFC' },
   'switch-track-off': { light: '#888888', dark: '#787878' }, // 用户调参 2026-08-05:两端都顶到 3:1 底线内的极值拉开开/关差距——light 最亮档 #888888(×surface 3.03),dark 最深档 #787878(×elevated 3.01,等效白 36% 透明)
   'switch-track-on': { light: '#417CDD', dark: '#417CDD' }, // 用户裁决 2026-09-15:两模式开启轨道改为蓝色,替代 2026-08-05 中性开启态;亮色滑块后续裁决见下
   'switch-thumb-on': { light: 'hsl(var(--background))', dark: '#FCFCFC' }, // 用户批准 2026-09-16:暗色亮滑块,浅色保留别名
@@ -286,7 +298,7 @@ export const CINDY_EXPECTED_VALUES: Record<string, { light: string; dark: string
   secondary: { light: '60.0 12.8% 92.4%', dark: '0 0% 11.4%' },
   'settings-btn-primary-text': { light: '#FCFCFC', dark: '#151515' }, // 2026-08 §9 更新;沿革: E1D
   'settings-btn-secondary-hover-bg': { light: '#F6F6F1', dark: '#1D1D1D' },
-  'text-placeholder': { light: '#C4C4C4', dark: '#525252' },
+  'text-placeholder': { light: '#6B6B67', dark: '#C1C1C1' },
   'settings-integration-avatar-bg': { light: '#FDFDF8', dark: '#1D1D1D' },
   'settings-logout-bg': { light: '#FDFDF8', dark: '#1F1F1F' },
   'settings-menu-bg-hover': { light: '#E8E8E3', dark: '#282828' }, // 2026-08 §9 更新;沿革: 用户改稿 2026-07-21:原值贴着页底(#EDEDED/#2A2828)不可见,light 压暗 / dark 提亮到 ~5-6% 亮度差

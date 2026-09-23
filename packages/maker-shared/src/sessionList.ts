@@ -11,6 +11,7 @@ import { getSessionListCollapseView } from './sessionListCollapse.js';
 import { collapseWorktreeDirForGrouping } from './worktreePaths.js';
 
 export interface RemoteSessionListSessionLike extends SessionInterruptionState {
+  tags?: import('./taskTags').TaskTag[];
   _count?: { messages?: number } | null;
   agentKind: 'cc' | 'codex' | string;
   createdAt: string;
@@ -53,6 +54,7 @@ export type RemoteSessionListMessage = RemoteSessionListMessageLike;
 export type RemoteSessionLiveActivityPhase = 'running' | 'needs-interaction' | 'completed' | 'error';
 
 export interface RemoteSessionLiveActivity {
+  workingPhase?: string;
   sessionId: string;
   phase: RemoteSessionLiveActivityPhase;
   compactDetail: string;

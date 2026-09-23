@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 /**
  * Plugin catalog and detail coordinator backed by the latest Ghost host APIs.
  *
@@ -65,6 +66,7 @@ import { resetDraftWorkspaceTargets } from '@/state/newMakerDraft';
 import { ghostInstallErrorKey } from '@/cindy-brain/installErrorKey';
 import { installGhostFromFile, pickAndUpdateGhost } from '@/cindy-brain/installFlow';
 import { Spinner } from '@/components/ui/spinner';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { cn } from '@/lib/utils';
 import { AttentionDot } from '@/components/sidebar/AttentionDot';
 import {
@@ -450,13 +452,16 @@ export function GhostPluginPage({
       <span>
         {t('newChat.pluginSuggestions.pending', { task: recommendation.suggestion.label })}
       </span>
-      <button
+      <Button
+        variant="secondary"
+        tone="quiet"
+        size="sm"
+        compact
         type="button"
-        className="shrink-0 rounded-full px-2 py-1 hover:bg-[var(--surface-hover)]"
         onClick={() => cancelPendingPluginSuggestion(recommendation.nonce)}
       >
         {t('newChat.pluginSuggestions.cancel')}
-      </button>
+      </Button>
     </div>
   ) : null;
   const showEnterprise = user?.membershipKind === 'org';
@@ -1660,13 +1665,15 @@ export function GhostPluginPage({
                     {t('settings.ghosts.projectBanner.desc')}
                   </span>
                 </div>
-                <button
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  compact
                   type="button"
                   onClick={() => handlePickScope(null)}
-                  className="shrink-0 rounded-full border border-[var(--border-default)] px-3 py-1 text-12 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover-soft)]"
                 >
                   {t('settings.ghosts.projectBanner.backToGlobal')}
-                </button>
+                </Button>
               </div>
             ) : null}
 
@@ -1705,22 +1712,29 @@ export function GhostPluginPage({
                         .join(' · ')}
                     </p>
                   </div>
-                  <button
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      tone="quiet"
+                      compact
                     type="button"
                     onClick={handleIgnoreRound}
-                    className="shrink-0 rounded-full px-3 py-1.5 text-12 text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--surface-hover-soft)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                      className="shrink-0"
                   >
                     {t('settings.ghosts.page.ignoreRound')}
-                  </button>
-                  {/* 单项更新在飞时禁用:与 handleUpdateAll 的守卫同因,按钮如实变灰。 */}
-                  <button
+                    </Button>
+                    {/* 单项更新在飞时禁用:与 handleUpdateAll 的守卫同因,按钮如实变灰。 */}
+                    <Button
+                      variant="cta"
+                      size="lg"
+                      loading={marketBusyId !== null}
                     type="button"
                     onClick={handleUpdateAll}
                     disabled={marketBusyId !== null}
-                    className="inline-flex h-9 shrink-0 items-center rounded-full bg-[var(--accent-cta-bg)] px-4 text-12 font-medium text-[var(--accent-pure-cta-fg)] transition-transform duration-150 hover:bg-[var(--accent-hover)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                      className="shrink-0"
                   >
                     {t('settings.ghosts.page.updateAll')}
-                  </button>
+                    </Button>
                 </div>
               ) : null}
 
@@ -1815,42 +1829,36 @@ export function GhostPluginPage({
                   <h2 className="shrink-0 whitespace-nowrap text-20 font-medium text-[var(--text-primary)]">
                     {t('settings.ghosts.page.recommendedSection')}
                   </h2>
-                  <div
-                    className="plugin-catalog-filters flex min-w-0 max-w-full items-center gap-1"
-                    role="group"
+                  <SegmentedControl
+                    className="plugin-catalog-filters"
+                    role="radiogroup"
                     aria-label={t('settings.ghosts.page.filtersAria')}
                     style={WINDOW_NO_DRAG_STYLE}
-                  >
-                    {recommendedFilters.map((filter) => {
-                      const selected = effectiveOriginFilter === filter;
+                    height={32}
+                    optionHeight={28}
+                    optionClassName="px-3.5 text-12"
+                    value={effectiveOriginFilter}
+                    onValueChange={setOriginFilter}
+                    options={recommendedFilters.map((filter) => {
                       const count =
                         filter === 'all'
                           ? searchedAvailableMarketItems.length
                           : recommendedCounts[filter];
-                      return (
-                        <button
-                          key={filter}
-                          type="button"
-                          aria-pressed={selected}
-                          onClick={() => setOriginFilter(filter)}
-                          className={cn(
-                            'shrink-0 select-none rounded-full border border-transparent px-3.5 py-2 text-12 transition-colors duration-150',
-                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
-                            selected
-                              ? 'plugin-motion-selected text-[var(--text-primary)]'
-                              : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover-soft)] hover:text-[var(--text-primary)]',
-                          )}
-                        >
-                          {filter === 'all'
-                            ? t('settings.ghosts.page.filterAll')
-                            : t(`settings.ghosts.page.origin.${filter}`)}
-                          <span className="ml-1.5 tabular-nums text-[var(--text-tertiary)]">
-                            {count}
-                          </span>
-                        </button>
-                      );
+                      return {
+                        value: filter,
+                        label: (
+                          <>
+                            {filter === 'all'
+                              ? t('settings.ghosts.page.filterAll')
+                              : t(`settings.ghosts.page.origin.${filter}`)}
+                            <span className="ml-1.5 tabular-nums text-[var(--text-tertiary)]">
+                              {count}
+                            </span>
+                          </>
+                        ),
+                      };
                     })}
-                  </div>
+                  />
                 </div>
 
                 {marketSnapshot?.unavailableReason ? (
@@ -1990,20 +1998,17 @@ export function LegacyGhostRecoveryNotice({
         {t(messageKey, { count: status.legacyPluginCount })}
       </p>
       {status.canRetry ? (
-        <button
+        <Button
+          variant="secondary"
+          size="lg"
+          loading={retrying}
           type="button"
           onClick={onRetry}
           disabled={retrying}
-          className={cn(
-            'mt-4 inline-flex h-9 items-center rounded-full border border-[var(--border-default)] px-4 text-12 font-medium text-[var(--text-primary)]',
-            'transition-[background-color,border-color,opacity,transform] duration-150 hover:bg-[var(--surface-hover-soft)] active:scale-[0.98]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-wait disabled:opacity-55 disabled:active:scale-100',
-          )}
+          className="mt-4"
         >
-          {retrying
-            ? t('settings.ghosts.legacyRecovery.retrying')
-            : t('settings.ghosts.legacyRecovery.retry')}
-        </button>
+          {t('settings.ghosts.legacyRecovery.retry')}
+        </Button>
       ) : null}
     </div>
   );
@@ -2116,7 +2121,11 @@ export function MarketPluginCard({
           </span>
         </button>
         {onInstall ? (
-          <button
+          <Button
+            variant="secondary"
+            size="md"
+            compact
+            loading={pending}
             type="button"
             onClick={(event) => {
               event.stopPropagation();
@@ -2130,22 +2139,15 @@ export function MarketPluginCard({
                 : t('settings.ghosts.page.installAria', { name: item.name })
             }
             aria-describedby={replacementDescription ? replacementDescriptionId : undefined}
-            className={cn(
-              'relative z-[1] inline-flex h-8 min-w-[72px] shrink-0 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3.5 text-12 font-medium text-[var(--text-primary)]',
-              'transition-[background-color,border-color,transform,opacity] duration-150 hover:bg-[var(--surface-hover-soft)] active:scale-[0.98]',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-40',
-            )}
+            className="relative z-[1] min-w-[72px] shrink-0"
           >
-            {pending ? (
-              <Spinner size={14} />
-            ) : (
+            {!pending &&
               t(
                 item.installState === 'conflict'
                   ? 'settings.ghosts.market.replace'
                   : 'settings.ghosts.market.install',
-              )
-            )}
-          </button>
+              )}
+          </Button>
         ) : null}
       </div>
     </article>
@@ -2167,17 +2169,12 @@ function GhostPluginActions({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
+          variant="primary"
+          size="lg"
           type="button"
-          className={cn(
-            'plugin-management-action-trigger group inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-[var(--border-default)]',
-            'bg-[var(--surface-elevated)] px-3.5 text-12 font-medium text-[var(--text-primary)] shadow-[var(--plugin-card-shadow)]',
-            'transition-[background-color,border-color,transform] duration-150 ease-out',
-            'hover:border-[var(--text-tertiary)] hover:bg-[var(--surface-hover-soft)] active:scale-[0.98]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
-            'data-[state=open]:border-[var(--text-tertiary)] data-[state=open]:bg-[var(--surface-chip)]',
-          )}
           aria-label={t('settings.ghosts.page.addPluginAria')}
+          className="plugin-management-action-trigger group shrink-0 shadow-[var(--plugin-card-shadow)] data-[state=open]:[--button-face-bg:var(--surface-chip)]"
         >
           <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
           <span className="plugin-management-action-label">
@@ -2189,7 +2186,7 @@ function GhostPluginActions({
             className="plugin-management-action-chevron transition-transform duration-150 group-data-[state=open]:rotate-180 motion-reduce:transition-none"
             aria-hidden="true"
           />
-        </button>
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
@@ -2377,7 +2374,10 @@ export function GhostPluginCard({
       <span className="flex shrink-0 flex-col items-end justify-between gap-2 self-stretch">
         <span className="flex items-center gap-1.5">
           {updateVersion && onUpdate ? (
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
+              compact
               type="button"
               onClick={stopAnd(onUpdate)}
               disabled={updateBusy}
@@ -2401,7 +2401,7 @@ export function GhostPluginCard({
                   {t('settings.ghosts.page.updateTo', { version: updateVersion })}
                 </>
               )}
-            </button>
+            </Button>
           ) : null}
           <button
             type="button"
@@ -2438,18 +2438,16 @@ function CardPillButton({
   ariaLabel?: string;
 }) {
   return (
-    <button
+    <Button
+      variant="primary"
+      size="md"
+      compact
       type="button"
       onClick={stopAnd(onClick)}
       aria-label={ariaLabel ?? label}
-      className={cn(
-        'inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full bg-[var(--surface-chip)] px-3.5 text-12 font-medium text-[var(--text-primary)]',
-        'transition-[background-color,transform] duration-150 hover:bg-[var(--surface-hover)] active:scale-[0.98]',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
-      )}
     >
       {icon}
       {label}
-    </button>
+    </Button>
   );
 }

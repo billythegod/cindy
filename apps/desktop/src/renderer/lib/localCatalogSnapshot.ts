@@ -7,6 +7,7 @@
  * device-link 的远端 capabilities 不经过这里，继续按 deviceId 独立缓存。
  */
 import { createLogger } from '@/lib/logger';
+import { createCoalescedRefresh } from '@/lib/coalescedRefresh';
 import {
   getModelVisibilityInitializationFailure,
   migrateModelVisibilityDefaults,
@@ -31,6 +32,7 @@ import {
 import {
   beginProvidersRefresh,
   commitProvidersSnapshot,
+  failProvidersRefresh,
   getCachedProvidersSnapshot,
   isProvidersRefreshCurrent,
   loadProvidersSnapshot,
@@ -38,6 +40,8 @@ import {
 
 const log = createLogger('localCatalogSnapshot');
 let refreshGeneration = 0;
+let refreshOwner = getDataOwnerGeneration();
+let scheduleRefresh = createCoalescedRefresh<boolean>();
 const RECOVERY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 30_000] as const;
 let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
 let recoveryAttempt = 0;
@@ -99,50 +103,75 @@ export async function refreshLocalCatalogSnapshot(): Promise<boolean> {
 async function refreshSnapshot(): Promise<boolean> {
   cancelRecovery();
   const owner = getDataOwnerGeneration();
+  if (owner !== refreshOwner) {
+    // A new owner must not wait for an old owner's outstanding IPC.
+    refreshOwner = owner;
+    scheduleRefresh = createCoalescedRefresh<boolean>();
+  }
   const generation = ++refreshGeneration;
   const providersGeneration = beginProvidersRefresh();
   const capabilitiesGeneration = beginLocalCapabilitiesRefresh();
 
-  try {
-    const [providers, capabilities] = await Promise.all([
-      loadProvidersSnapshot(),
-      loadLocalCapabilitiesSnapshot(),
-    ]);
-    const isCurrent = (): boolean => refreshGeneration === generation
-      && isProvidersRefreshCurrent(providersGeneration, providers)
-      && isLocalCapabilitiesRefreshCurrent(capabilitiesGeneration);
-    if (!isCurrent()) {
-      if (refreshGeneration === generation) failed(owner, 'owner-pending');
-      return false;
-    }
-    const initialized = await migrateModelVisibilityDefaults(providers.dataOwnerId, providers.ownerGeneration, providers.providers, isCurrent);
-    // Failed persistence/locking must reach preload's retry loop. Waiting for another
-    // renderer's preference write must not publish a stale catalog either.
-    if (!isCurrent()) {
-      if (refreshGeneration === generation) failed(owner, 'owner-pending');
-      return false;
-    }
-    if (!initialized) {
-      failed(owner, getModelVisibilityInitializationFailure(providers.dataOwnerId, providers.ownerGeneration)
-        ?? 'preferences-unavailable');
-      return false;
-    }
+  return scheduleRefresh(async () => {
+    if (generation !== refreshGeneration) return false;
+    try {
+      // A failed member must not release the scheduling slot while its siblings
+      // are still reading; otherwise the trailing round overlaps them again.
+      const results = await Promise.allSettled([
+        loadProvidersSnapshot(),
+        loadLocalCapabilitiesSnapshot(),
+      ]);
+      const [providerResult, capabilitiesResult] = results;
+      if (providerResult.status === 'rejected') throw providerResult.reason;
+      if (capabilitiesResult.status === 'rejected') throw capabilitiesResult.reason;
+      const providers = providerResult.value;
+      const capabilities = capabilitiesResult.value;
+      const isCurrent = (): boolean => refreshGeneration === generation
+        && isProvidersRefreshCurrent(providersGeneration, providers)
+        && isLocalCapabilitiesRefreshCurrent(capabilitiesGeneration);
+      if (!isCurrent()) {
+        if (refreshGeneration === generation) failed(owner, 'owner-pending');
+        return false;
+      }
+      const initialized = await migrateModelVisibilityDefaults(
+        providers.dataOwnerId,
+        providers.ownerGeneration,
+        providers.providers,
+        isCurrent,
+      );
+      // Failed persistence/locking must reach preload's retry loop. Waiting for another
+      // renderer's preference write must not publish a stale catalog either.
+      if (!isCurrent()) {
+        if (refreshGeneration === generation) failed(owner, 'owner-pending');
+        failProvidersRefresh(providersGeneration);
+        return false;
+      }
+      if (!initialized) {
+        failProvidersRefresh(providersGeneration);
+        failed(owner, getModelVisibilityInitializationFailure(providers.dataOwnerId, providers.ownerGeneration)
+          ?? 'preferences-unavailable');
+        return false;
+      }
 
-    // 两次提交均为同步通知；React 会把同一事件循环内的 hook 更新批处理到同一帧。
-    commitLocalCapabilitiesSnapshot(capabilitiesGeneration, capabilities);
-    commitProvidersSnapshot(providersGeneration, providers);
-    recoveryAttempt = 0;
-    setLocalCatalogFailure(owner, null);
-    return true;
-  } catch (error) {
-    if (refreshGeneration === generation && isDataOwnerGenerationCurrent(owner)) {
-      log.warn('local catalog snapshot refresh failed; keeping last valid snapshot', {
-        code: extractIpcError(error)?.code ?? 'UNKNOWN',
-      });
-      failed(owner, 'catalog-unavailable');
+      // 两次提交均为同步通知；React 会把同一事件循环内的 hook 更新批处理到同一帧。
+      commitLocalCapabilitiesSnapshot(capabilitiesGeneration, capabilities);
+      commitProvidersSnapshot(providersGeneration, providers);
+      recoveryAttempt = 0;
+      setLocalCatalogFailure(owner, null);
+      return true;
+    } catch (error) {
+      if (refreshGeneration === generation) {
+        failProvidersRefresh(providersGeneration);
+        if (isDataOwnerGenerationCurrent(owner)) {
+          log.warn('local catalog snapshot refresh failed; keeping last valid snapshot', {
+            code: extractIpcError(error)?.code ?? 'UNKNOWN',
+          });
+          failed(owner, 'catalog-unavailable');
+        }
+      }
+      return false;
     }
-    return false;
-  }
+  });
 }
 
 /** 启动预热保留原有三次瞬时 IPC 重试语义；每次仍按可用快照原子提交。 */

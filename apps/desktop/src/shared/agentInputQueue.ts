@@ -9,6 +9,7 @@
  */
 
 import { stripChatQuoteMarkerLines } from '@cindy/maker-shared/chat-quotes';
+import type { SharedTaskAuthor } from '@cindy/maker-shared';
 import { UI_ACTION_TRIGGER_PREFIX } from '@cindy/maker-shared/synthetic-trigger';
 import { MENTION_TOKEN_SPLIT, parseMentionToken } from '@cindy/maker-shared/mention-ref';
 import {
@@ -219,11 +220,15 @@ export interface RecoveryCheckpoint {
 }
 
 export interface AgentInputQueuedMessage {
+  /** Host-stamped attribution, retained in durable queue snapshots and messages. */
+  sharedTaskAuthor?: SharedTaskAuthor;
   /** Host-captured authored text before plugin/reference decoration; omitted from wire projections. */
   autoReviewUserText?: string;
   /** Host-owned text-only input; retained by queue persistence and retry. */
   toolsDisabled?: boolean;
   clientId: string;
+  /** Opt-in: a cancelled delivery ID must never become a fresh enqueue on reconnect. */
+  durableDelivery?: true;
   text: string;
   /**
    * Host-owned receipt for the first acceptance boundary.  The controlled
@@ -338,6 +343,8 @@ export interface AgentInputQueuedMessage {
    * 旧队列快照缺省该字段(undefined = 不软删),向后兼容。
    */
   supersedesUserClientId?: string;
+  /** Stable retry provenance; unlike supersedes, never hides a user message. */
+  retrySourceClientId?: string;
 }
 
 export type AgentInputDelivery = 'turn' | 'steer';

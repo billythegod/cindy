@@ -97,7 +97,7 @@ const GENERATED_OVERRIDES = {
   "secondary": "60.0 12.8% 92.4%", // hover -> HSL
   "settings-btn-primary-text": "#FCFCFC", // E1D 中性字
   "settings-btn-secondary-hover-bg": "#F6F6F1", // 卡片锚定: 设置卡上的次级按钮 hover(2026-08-14)
-  "text-placeholder": "#C4C4C4", // 独立占位文字色，与正文/三级信息区分（用户修正，2026-09-16）
+  "text-placeholder": "#6B6B67", // 三级: 等亮度暖化
   "settings-integration-avatar-bg": "#FDFDF8", // 直映: 卡片/输入框(留暖近白)
   "settings-logout-bg": "#FDFDF8", // 直映: 卡片/输入框(留暖近白)
   "settings-menu-bg-hover": "#E8E8E3", // 阶梯: 菜单 hover
@@ -180,6 +180,13 @@ const GENERATED_OVERRIDES = {
   "create-agent-control-bg-hover": "var(--surface-hover)",
   "create-agent-control-bg-pressed": "var(--surface-hover-soft)",
   "create-agent-send-icon": "#FCFCFC",
+  "slider-track": "#A3A39E", // Slider 用户定稿 2026-09-17;与 Switch 独立
+  "slider-fill": "#3C3F43", // Slider 用户定稿 2026-09-17;与 Switch 独立
+  "slider-thumb": "#FDFDF8", // Slider 用户定稿 2026-09-17;与 Switch 独立
+  "segmented-selected-bg": "#FDFDF8",
+  "segmented-selected-border": "#F0F0EB",
+  "segmented-option-fg": "#6B6B67",
+  "segmented-hover-bg": "#E4E4DF",
 } as const;
 // END GENERATED DS-8: theme
 
