@@ -514,3 +514,21 @@ it('shows only delivery status even when a legacy task trace contains full instr
   expect(node.textContent).toBe('devices.companions.messageSent');
   expect(h.invoke).not.toHaveBeenCalled();
 });
+
+it('opens a stable completed result inline and routes its artifact to the child task', async () => {
+  const resultMessage = {
+    ...message,
+    key: 'receipt-2',
+    companion: { kind: 'task', meta: { ...message.companion!.meta,
+      role: 'delegation-result', result: { runSequence: 2, status: 'completed', text: 'Second execution result', artifacts: [{ absolutePath: '/reports/result.pdf' }] },
+    } },
+  } as NormalizedRemoteMessage;
+  await act(async () => root.render(createElement(CompanionMessageCard, { message: resultMessage })));
+  expect(node.textContent).not.toContain('Second execution result');
+  await act(async () => node.querySelector('button')!.click());
+  expect(node.textContent).toContain('Second execution result');
+  const file = [...node.querySelectorAll('button')].find(button => button.textContent === 'result.pdf')!;
+  await act(async () => file.click());
+  expect(h.push).toHaveBeenCalledWith({ pathname: '/files/preview/[sessionId]', params: { sessionId: 'child', deviceId: 'home', absPath: '/reports/result.pdf' } });
+  expect(h.invoke).not.toHaveBeenCalledWith('home', 'maker:bot-delegations-list', expect.anything());
+});

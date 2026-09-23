@@ -29,12 +29,16 @@ import * as path from 'node:path';
 
 import { markSessionNeedsAttention } from './appBadgeService';
 import { getMobileNotifyGeneration, sendMobileSessionNotify } from './device-link';
+import { notificationPreview } from './notificationPreview';
+import { readSessionNotificationPreview } from './localDb/sessionNotificationPreview';
+import { captureDataOwnerBroadcastScope, isDataOwnerBroadcastScopeCurrent } from './device-link/broadcast-tap';
 import { latestMessageText } from './localDb/latestMessageText';
 import { drainPersistQueue } from './messagePersistBroadcaster';
 import { createLogger } from './logger';
 import {
   getSessionExternalNotificationText,
   getSessionNotificationBody,
+  getTeammateNotificationFallback,
   getSessionNotificationUntitled,
   type SessionEventKind,
 } from './sessionNotificationCopy';
@@ -93,6 +97,7 @@ interface ShowSessionEventPayload {
 // 时就回收掉，导致 click handler 丢失甚至触发异常事件。用 Set 持引用，等
 // close/click 后再 release。
 const liveNotifications = new Set<Notification>();
+const notifiedReplies = new Map<string, string>();
 
 /**
  * 把窗口拉到前台并广播 sessionId 给 renderer 路由跳转。
@@ -124,12 +129,12 @@ function focusWindow(getWindow: () => BrowserWindow | null, sessionId: string): 
  */
 export function showDesktopSessionEvent(
   getWindow: () => BrowserWindow | null,
-  payload: Pick<ShowSessionEventPayload, 'sessionId' | 'title' | 'kind'>,
+  payload: Pick<ShowSessionEventPayload, 'sessionId' | 'title' | 'kind'> & { body?: string; teammate?: boolean },
 ): void {
   const { sessionId, title, kind } = payload;
   if (sessionId) markSessionNeedsAttention(sessionId);
   const safeTitle = title?.trim() || sessionId.slice(0, 8) || getSessionNotificationUntitled();
-  showDesktopToast(safeTitle, kind, () => focusWindow(getWindow, sessionId));
+  showDesktopToast(safeTitle, kind, () => focusWindow(getWindow, sessionId), payload.body, payload.teammate);
 }
 
 export interface NotificationServiceDeps {
@@ -161,51 +166,40 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
       // 去重与「被远程观看则不推」收口。
       assertValidSessionEventPayload(payload);
       const { sessionId, title, kind, channels } = payload;
-      // 兜底：title 为空（极早期 session 还没生成标题）也别炸，用 sessionId 前 8 位顶上。
-      const safeTitle = title?.trim() || sessionId.slice(0, 8);
-
-      // channels 缺省/未传 → 默认仅桌面 (防御漏传,见 ShowSessionEventPayload 注释)。
+      const generation = getMobileNotifyGeneration();
+      const ownerScope = captureDataOwnerBroadcastScope();
+      const safeTitle = title.trim() || sessionId.slice(0, 8);
       const wantDesktop = channels?.desktop ?? true;
       const wantFeishu = channels?.feishu === true;
+      markSessionNeedsAttention(sessionId);
 
-      if (wantDesktop) {
-        showDesktopSessionEvent(getWindow, { sessionId, title: safeTitle, kind });
-      } else {
-        // Dock/taskbar 角标独立于外发通道；即便只开飞书或两个通知开关都关闭，
-        // session 进入终态后仍要在 Cindy 内标记为需要关注。
-        markSessionNeedsAttention(sessionId);
-      }
-
-      if (channels?.mobile === true) {
-        // fire-and-forget;离线 / 老 relay / 正被远程观看 / 短窗重复时静默跳过。
-        // 整段放进独立 async 块不 await:persist 队列是全会话共享且无超时的,
-        // 在这里同步等它会让别的会话的慢写入拖延本次飞书分支;半死 socket 的
-        // ws.send 同步 throw 也一并落到 catch,不 reject 整个 invoke。
-        // 代次在 await 之前捕获:等待期间发生登出/换号,发送侧按代次不一致丢弃,
-        // 旧账号的会话标题不会经新账号的链路推出去。
-        const generation = getMobileNotifyGeneration();
-        void (async () => {
-          // 体验优先(2026-07 产品决策):正文带该会话最近一条 assistant 内容,
-          // 用户不打开 App 也能看到结果/提问。error 终态没有可靠的错误正文来源,
-          // 回退终态短文案。先 drain 持久化队列:turn-done 时本轮 assistant 块
-          // 可能仍在 writeChain 里,立刻读库会拿到上一轮文本(与摘要生成同口径)。
-          const detail =
-            kind === 'error'
-              ? undefined
-              : await drainPersistQueue()
-                  .then(() => latestMessageText(sessionId, 'assistant'))
-                  .catch(() => '');
-          sendMobileSessionNotify({
-            sessionId,
-            title: safeTitle,
-            kind,
-            generation,
-            ...(detail ? { detail } : {}),
-          });
-        })().catch((err) => {
-          log.warn('[notification] mobile push failed (non-fatal)', err);
+      // Content is read from main's durable transcript, never supplied by renderer.
+      // Keep unrelated channels independent of the persistence barrier.
+      void (async () => {
+        await drainPersistQueue();
+        if (!isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
+        const preview = kind === 'done' ? await readSessionNotificationPreview(sessionId) : undefined;
+        if (!isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
+        if (preview?.suppress) return;
+        const teammate = preview?.teammateName !== undefined;
+        const notificationTitle = preview?.teammateName ?? safeTitle;
+        const eventId = preview?.eventId ?? preview?.reply?.clientId;
+        const eventKey = `${generation}:${sessionId}`;
+        if (eventId && notifiedReplies.get(eventKey) === eventId) return;
+        if (eventId) notifiedReplies.set(eventKey, eventId);
+        const fallbackBody = teammate ? getTeammateNotificationFallback() : undefined;
+        const detail = kind === 'done' ? preview?.reply?.text
+          : kind === 'needs-reply' ? await latestMessageText(sessionId, 'assistant') : undefined;
+        if (!isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
+        if (wantDesktop) showDesktopSessionEvent(getWindow, {
+          sessionId, title: notificationTitle, kind, teammate,
+          body: teammate ? notificationPreview(detail ?? '') || fallbackBody : undefined,
         });
-      }
+        if (channels?.mobile === true) sendMobileSessionNotify({
+          sessionId, title: notificationTitle, kind, generation, ...(detail ? { detail } : {}),
+          ...(fallbackBody ? { fallbackBody } : {}), ...(eventId ? { eventId } : {}),
+        });
+      })().catch((err) => log.warn('[notification] reply notification failed (non-fatal)', err));
 
       if (wantFeishu) {
         await sendFeishuMessage(feishuIm, safeTitle, kind);
@@ -240,8 +234,8 @@ function assertValidSessionEventPayload(
 }
 
 /** 桌面 toast 分支 — 原实现保持不变,只是拆出来便于 channels 选择性执行。 */
-function showDesktopToast(safeTitle: string, kind: SessionEventKind, onClick: () => void): void {
-  const body = getSessionNotificationBody(kind);
+function showDesktopToast(safeTitle: string, kind: SessionEventKind, onClick: () => void, previewBody?: string, teammate = false): void {
+  const body = previewBody ?? getSessionNotificationBody(kind);
 
   // Electron Notification 在某些 Linux 桌面环境下可能不可用——静默兜底。
   if (!Notification.isSupported()) {
@@ -250,7 +244,8 @@ function showDesktopToast(safeTitle: string, kind: SessionEventKind, onClick: ()
   }
 
   const notif = new Notification({
-    title: `${CLIENT_NOTIFICATION_NAME} · ${safeTitle}`,
+    title: teammate && safeTitle.trim().toLowerCase() === 'cindy'
+      ? CLIENT_NOTIFICATION_NAME : `${CLIENT_NOTIFICATION_NAME} · ${safeTitle}`,
     body,
     // silent 默认 false——发声音，与 Electron 默认一致。
     // icon 仅在 dev 下传值；packaged 时为 undefined，回到原行为(由 AUMID/.icns 兜底)。

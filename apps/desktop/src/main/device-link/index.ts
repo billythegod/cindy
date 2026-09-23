@@ -1874,6 +1874,8 @@ export function sendMobileSessionNotify(payload: {
   kind: MobileSessionEventKind;
   /** 内容摘要(最近一条 assistant 内容 / 定时任务结果),缺省回退终态短文案 */
   detail?: string;
+  fallbackBody?: string;
+  eventId?: string;
   /**
    * 发起时捕获的 getMobileNotifyGeneration()。调用路径里有 await(取正文/等
    * 其它通道)时必传:与当前代次不一致说明期间发生过登出/失去持有权,任务
@@ -1896,14 +1898,14 @@ export function sendMobileSessionNotify(payload: {
     );
     return false;
   }
-  if (!mobileNotifyDeduper.shouldSend(payload.sessionId, payload.kind)) return false;
+  if (!mobileNotifyDeduper.shouldSend(payload.sessionId, payload.kind, Date.now(), payload.eventId)) return false;
   const sent = client.sendNotify(
     buildSessionNotifyPayload({
       sessionId: payload.sessionId,
       title: payload.title,
       kind: payload.kind,
       selfDeviceId,
-      fallbackBody: getSessionNotificationBody(payload.kind),
+      fallbackBody: payload.fallbackBody ?? getSessionNotificationBody(payload.kind),
       detail: payload.detail,
     }),
   );

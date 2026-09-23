@@ -110,6 +110,12 @@ const latestMessageText = vi.fn<
 vi.mock('../localDb/latestMessageText', () => ({
   latestMessageText: (sessionId: string, role: string) => latestMessageText(sessionId, role),
 }));
+const readSessionNotificationPreview = vi.fn(async (_sessionId: string): Promise<{ teammateName?: string; reply?: { clientId: string; text: string } }> => ({}));
+vi.mock('../localDb/sessionNotificationPreview', () => ({ readSessionNotificationPreview }));
+vi.mock('../device-link/broadcast-tap', () => ({
+  captureDataOwnerBroadcastScope: () => ({}),
+  isDataOwnerBroadcastScopeCurrent: () => true,
+}));
 const drainPersistQueue = vi.fn((): Promise<void> => Promise.resolve());
 vi.mock('../messagePersistBroadcaster', () => ({
   drainPersistQueue: () => drainPersistQueue(),
@@ -138,6 +144,10 @@ async function freshService() {
   sendMobileSessionNotify.mockClear();
   getMobileNotifyGeneration.mockClear();
   latestMessageText.mockClear();
+  readSessionNotificationPreview.mockReset().mockImplementation(async (sessionId) => {
+    const text = await latestMessageText(sessionId, 'assistant');
+    return text ? { reply: { clientId: 'reply-id', text } } : {};
+  });
   drainPersistQueue.mockClear();
   const service = await import('../notificationService');
   const { setMainLocale } = await import('../i18n');
@@ -150,6 +160,7 @@ async function invokeHandler(payload: unknown): Promise<void> {
   const handler = registeredHandlers.get('notification:show-session-event');
   if (!handler) throw new Error('handler not registered');
   await handler({} as unknown, payload);
+  await flushAsync();
 }
 
 /** mobile 分支是 fire-and-forget 的独立 async 块;断言它之前先把微任务队列排空。 */
@@ -304,6 +315,7 @@ describe('notificationService — channels 分发', () => {
       kind: 'done',
       generation: 7,
       detail: '修好了,共改了 3 个文件。',
+      eventId: 'reply-id',
     });
 
     sendMobileSessionNotify.mockClear();
@@ -522,5 +534,30 @@ describe('notificationService — channels 分发', () => {
     expect(notificationCtor).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toContain('feishu sendMarkdownText failed');
+  });
+});
+
+
+describe('teammate reply previews', () => {
+  it('shows current final Markdown as plain text on desktop and keeps mobile routing/fallback', async () => {
+    const { initNotificationService } = await freshService();
+    readSessionNotificationPreview.mockResolvedValue({ teammateName: 'Cindy', reply: { clientId: 'final-2', text: '**完成**：[报告](https://example.com) `a_b * 2`' } });
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    const payload = { sessionId: 'bot-main', title: 'Cindy · Old title', kind: 'done', channels: { desktop: true, mobile: true } };
+    await invokeHandler(payload);
+    expect(notificationCtor).toHaveBeenCalledWith(expect.objectContaining({ title: 'Cindy', body: '完成：报告 a_b * 2' }));
+    expect(sendMobileSessionNotify).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'bot-main', title: 'Cindy', eventId: 'final-2', fallbackBody: '有新回复' }));
+    await invokeHandler(payload);
+    expect(notificationCtor).toHaveBeenCalledTimes(1);
+    expect(sendMobileSessionNotify).toHaveBeenCalledTimes(1);
+  });
+  it('uses localized reply fallback without inventing task completion when there is no body', async () => {
+    const { initNotificationService } = await freshService();
+    const { setMainLocale } = await import('../i18n');
+    setMainLocale('en');
+    readSessionNotificationPreview.mockResolvedValue({ teammateName: 'Mochi' });
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    await invokeHandler({ sessionId: 'bot-main', title: 'Mochi', kind: 'done' });
+    expect(notificationCtor).toHaveBeenCalledWith(expect.objectContaining({ title: 'Cindy · Mochi', body: 'New reply' }));
   });
 });

@@ -5879,6 +5879,28 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); }
   });
 
+  it('persists independent receipts before queued wakeups for simultaneous results and an interleaved input', async () => {
+    await seedPair();
+    const runtime = createDelegationRuntime({ collectArtifacts: async () => [{ path: 'report.pdf', absolutePath: '/reports/report.pdf', status: 'added' }] });
+    try {
+      const first = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'First report' });
+      const second = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Second report' });
+      if (!first.ok || !second.ok) throw new Error('Tasks did not start');
+      await runtime.dispatch({ targetSessionId: 'session-1', message: 'Another input', clientId: 'interleaved' });
+      await Promise.all([
+        runtime.settleChild(first.childSessionId, '**First** report'),
+        runtime.settleChild(second.childSessionId, 'Second report'),
+      ]);
+      const results = h.sqlite!.prepare('SELECT client_id, agent_meta FROM messages WHERE session_id = ? AND client_id LIKE ? ORDER BY created_at')
+        .all('session-1', 'bot-delegation-result:%') as { agent_meta: string }[];
+      expect(results).toHaveLength(2);
+      expect(results.map(row => JSON.parse(row.agent_meta).botCollaboration.result.text).sort()).toEqual(['First report', 'Second report']);
+      expect(results.every(row => JSON.parse(row.agent_meta).botCollaboration.result.artifacts[0].absolutePath === '/reports/report.pdf')).toBe(true);
+      expect(runtime.started.filter(turn => turn.sessionId === first.childSessionId)).toHaveLength(1);
+      expect(runtime.started.filter(turn => turn.sessionId === second.childSessionId)).toHaveLength(1);
+    } finally { runtime.dispose(); }
+  });
+
   it('delivers every continued run once without reusing the previous completion receipt', async () => {
     await seedPair();
     const runtime = createDelegationRuntime();
@@ -5926,6 +5948,15 @@ describe('Bot Session task end-to-end runtime', () => {
           content: expect.stringContaining('第二版结果，含风险清单。'),
         }),
       ]);
+      const resultCards = h.sqlite!.prepare(
+        'SELECT client_id, agent_meta FROM messages WHERE session_id = ? AND client_id LIKE ? ORDER BY created_at',
+      ).all('session-1', `bot-delegation-result:${started.delegationId}:%`) as Array<{ client_id: string; agent_meta: string }>;
+      expect(resultCards.map(row => JSON.parse(row.agent_meta).botCollaboration.result)).toEqual([
+        { runSequence: 1, status: 'completed', text: '第一版结果。', artifacts: [] },
+        { runSequence: 2, status: 'completed', text: '第二版结果，含风险清单。', artifacts: [] },
+      ]);
+      expect(h.sqlite!.prepare('SELECT COUNT(*) AS n FROM messages WHERE client_id = ?')
+        .get(`bot-delegation-request:${started.delegationId}`)).toEqual({ n: 1 });
       await expect(
         runtime.delegation.getSessionTask('session-1', started.delegationId),
       ).resolves.toMatchObject({
@@ -6061,6 +6092,12 @@ describe('Bot Session task end-to-end runtime', () => {
       const receipt = h.sqlite!.prepare(
         'SELECT content FROM messages WHERE session_id = ? AND client_id = ?',
       ).pluck().get('session-1', `bot-delegation-completion:${delegated.delegationId}`);
+      const resultCard = h.sqlite!.prepare('SELECT agent_meta FROM messages WHERE client_id = ?')
+        .get(`bot-delegation-result:${delegated.delegationId}:1`) as { agent_meta: string };
+      expect(JSON.parse(resultCard.agent_meta).botCollaboration.result).toMatchObject({
+        status: 'failed', text: '已确认前两个版本兼容，第三个版本',
+      });
+      expect(resultCard.agent_meta).not.toContain('Pi reached');
       expect(receipt).toContain('已确认前两个版本兼容，第三个版本');
       expect(receipt).toContain('Pi reached the model output limit.');
     } finally {
@@ -6525,6 +6562,8 @@ describe('Bot Session task end-to-end runtime', () => {
     const afterRestart = createDelegationRuntime();
     try {
       await afterRestart.delegation.restore();
+      expect(h.sqlite!.prepare('SELECT COUNT(*) AS n FROM messages WHERE client_id = ?')
+        .get(`bot-delegation-result:${started.delegationId}:1`)).toEqual({ n: 1 });
       expect(
         h.sqlite!.prepare('SELECT content FROM messages WHERE session_id = ? AND client_id = ?')
           .pluck().get('session-1', `bot-delegation-completion:${started.delegationId}`),

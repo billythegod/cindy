@@ -80,3 +80,15 @@ describe('MobileNotifyDeduper', () => {
     expect(deduper.shouldSend('s2', 'done', 2)).toBe(true);
   });
 });
+
+it('uses final-message identity for completed replies, allowing distinct replies within five seconds', () => {
+  const dedupe = new MobileNotifyDeduper();
+  expect(dedupe.shouldSend('bot', 'done', 100, 'answer-1')).toBe(true);
+  expect(dedupe.shouldSend('bot', 'done', 101, 'answer-2')).toBe(true);
+  expect(dedupe.shouldSend('bot', 'done', 100_000, 'answer-2')).toBe(false);
+});
+it('sends plain text to APNs, not Markdown or image paths', () => {
+  const payload = { sessionId: 'bot', title: 'Cindy', kind: 'done' as const, selfDeviceId: 'home', fallbackBody: 'New reply' };
+  expect(buildSessionNotifyPayload({ ...payload, detail: '**Report** [ready](https://example.com) `a_b`' }).body).toBe('Report ready a_b');
+  expect(buildSessionNotifyPayload({ ...payload, detail: '![private](/private/file.png)' }).body).toBe('New reply');
+});

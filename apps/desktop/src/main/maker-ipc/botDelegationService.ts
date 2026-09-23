@@ -1,3 +1,4 @@
+import { notificationPlainText } from '../notificationPreview.js';
 import { existsSync, statSync } from 'node:fs';
 import type { AgentInputCoordinator } from './agent-input-coordinator.js';
 import path from 'node:path';
@@ -871,6 +872,28 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         clearCompletionRetryTimer(params.id);
         return false;
       }
+      // Durable, per-execution receipt: retries reuse the same message identity.
+      // Publish before waking the teammate so queued/hidden model work cannot hide results.
+      await persistTimelineMessage({
+        sessionId: targetSessionId,
+        clientId: BOT_DELEGATION_CLIENT_ID.resultRun(params.id, params.runSequence),
+        role: 'assistant',
+        content: notificationPlainText(params.resultSummary || params.objective),
+        agentMeta: {
+          botCollaboration: {
+            ...await collaborationMeta(params, 'delegation-result'),
+            parentSessionId: targetSessionId,
+            result: {
+              runSequence: params.runSequence,
+              status: params.status,
+              text: notificationPlainText(params.resultSummary ?? ''),
+              artifacts: artifacts.filter((file) => file.status !== 'deleted')
+                .map((file) => ({ absolutePath: file.absolutePath })),
+            },
+          },
+        },
+      });
+      if (!(await completionStillPending())) return false;
       const dispatched = await deps.dispatch({
         targetSessionId,
         message: completionMessage,

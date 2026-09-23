@@ -177,3 +177,15 @@ describe('teammate public execution disclosure', () => {
     expect(allKeys(result)).toEqual(['msg-u', 'msg-public', 'tools-t', 'msg-final']);
   });
 });
+
+it('keeps appended result receipts visible while the teammate is busy, across hidden wakeups', () => {
+  const input = [message('old-card', 'assistant', '', { systemCardType: 'bot-session-task' }),
+    message('new-input', 'user'),
+    message('result-1', 'assistant', '', { systemCardType: 'bot-session-task-result' }),
+    message('wake', 'user', '', { isSyntheticTrigger: true }),
+    message('result-2', 'assistant', '', { systemCardType: 'bot-session-task-result' }),
+    message('working', 'assistant')];
+  const result = project(input, true);
+  expect(result.filter(item => item.type === 'message' && item.message.systemCardType === 'bot-session-task-result').map(item => item.key))
+    .toEqual(['msg-result-1', 'msg-result-2']);
+});

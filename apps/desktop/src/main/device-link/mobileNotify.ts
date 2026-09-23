@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { notificationPreview } from '../notificationPreview.js';
 import {
   NOTIFY_BODY_MAX_LENGTH,
   NOTIFY_TITLE_MAX_LENGTH,
@@ -41,7 +42,7 @@ export function buildSessionNotifyPayload(opts: {
     0,
     NOTIFY_TITLE_MAX_LENGTH,
   );
-  const detail = opts.detail?.replace(/\s+/g, ' ').trim().slice(0, NOTIFY_BODY_MAX_LENGTH);
+  const detail = opts.detail ? notificationPreview(opts.detail, NOTIFY_BODY_MAX_LENGTH) : '';
   return {
     category: CATEGORY_BY_KIND[opts.kind],
     title: safeTitle,
@@ -60,17 +61,24 @@ export function buildSessionNotifyPayload(opts: {
 }
 
 /**
- * 短窗去重:同 session + 同 kind 在窗口内只发一条。覆盖 renderer 事件源的重复触发
+ * 有回复标识时按同 session + 同 kind + 回复去重；不同回复不受时间窗口限制。
+ * 无标识的旧事件保留短窗兜底。覆盖 renderer 事件源的重复触发
  * (如 needs-reply 连续弹多个审批);不同 kind 不互压 —— done 紧跟 error 各有信息量,
  * 系统层还有 collapseId 合并兜底。
  */
 export class MobileNotifyDeduper {
+  private readonly lastEvent = new Map<string, string>();
   private readonly lastSentAt = new Map<string, number>();
 
   constructor(private readonly windowMs = 5_000) {}
 
-  shouldSend(sessionId: string, kind: MobileSessionEventKind, now = Date.now()): boolean {
+  shouldSend(sessionId: string, kind: MobileSessionEventKind, now = Date.now(), eventId?: string): boolean {
     const key = `${sessionId}:${kind}`;
+    if (eventId) {
+      if (this.lastEvent.get(key) === eventId) return false;
+      this.lastEvent.set(key, eventId);
+      return true;
+    }
     const last = this.lastSentAt.get(key);
     if (last !== undefined && now - last < this.windowMs) return false;
     this.lastSentAt.set(key, now);
