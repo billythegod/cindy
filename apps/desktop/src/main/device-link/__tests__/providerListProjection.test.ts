@@ -366,6 +366,18 @@ describe('active runtime summary projection', () => {
     expect(rows[0].capabilities.availableModels[0].description).toHaveLength(120_000);
   });
 
+  it('keeps only the canonical activity flags needed to clear stale mobile dots', () => {
+    const projected = __testing.projectInvokeResultForTunnel(
+      'maker:list-active', [{
+        ...rows[0], activityPhase: 'running', activityAttention: false,
+      }], false, [{ summary: true }],
+    );
+    expect(projected).toEqual([{
+      sessionId: 'session-0', isTurnRunning: true,
+      activityPhase: 'running', activityAttention: false,
+    }]);
+  });
+
   it.each([[], [null], [{ summary: false }], [{ summary: 'true' }]])(
     'preserves the complete response for legacy or non-opt-in callers (%j)', (...args) => {
       expect(__testing.projectInvokeResultForTunnel('maker:list-active', rows, false, args))

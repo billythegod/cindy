@@ -1483,11 +1483,14 @@ export class AgentIslandService {
     }));
   }
 
+  /** Read all canonical snapshots once for a list-level remote projection. */
+  listSessionActivitySnapshots(): SessionActivitySnapshot[] {
+    return this.buildSessionActivityPayload().map(canonicalSessionActivity);
+  }
+
   /** Read the same canonical snapshot used by sidebar and device-list relays. */
   getSessionActivitySnapshot(sessionId: string): SessionActivitySnapshot | null {
-    const activity = this.buildSessionActivityPayload()
-      .find((item) => item.sessionId === sessionId);
-    return activity ? canonicalSessionActivity(activity) : null;
+    return this.listSessionActivitySnapshots().find((item) => item.sessionId === sessionId) ?? null;
   }
 
   /**

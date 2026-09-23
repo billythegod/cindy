@@ -588,6 +588,7 @@ describe('AgentIslandService native publishing', () => {
     });
 
     const canonicalSnapshot = service.getSessionActivitySnapshot('canonical');
+    expect(service.listSessionActivitySnapshots()).toContainEqual(canonicalSnapshot);
     expect(canonicalSnapshot).toMatchObject({
       sessionId: 'canonical',
       phase: 'running',

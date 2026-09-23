@@ -573,7 +573,12 @@ function projectInvokeResultForTunnel(
     return result.map((item: unknown) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
       const row = item as Record<string, unknown>;
-      return { sessionId: row.sessionId, isTurnRunning: row.isTurnRunning };
+      return {
+        sessionId: row.sessionId,
+        isTurnRunning: row.isTurnRunning,
+        ...(typeof row.activityPhase === 'string' && typeof row.activityAttention === 'boolean'
+          ? { activityPhase: row.activityPhase, activityAttention: row.activityAttention } : {}),
+      };
     });
   }
   if (channel === 'maker:schedule:list-sidebar-index-runs') {

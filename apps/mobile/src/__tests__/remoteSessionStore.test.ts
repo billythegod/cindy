@@ -2747,6 +2747,38 @@ describe('remoteSessionStore', () => {
     expect(remoteSessionStore.isSessionRunning('s2')).toBe(true);
   });
 
+  it('reconciles a missed error-clear push from an authoritative active activity snapshot', () => {
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1')]);
+    remoteSessionStore.applySessionActivity('dev-1', {
+      sessionId: 's1', phase: 'error', attention: true,
+    });
+    expect(remoteSessionStore.getSessionLiveActivity('s1')).toMatchObject({ phase: 'error', attention: true });
+
+    // 旧主机没有活动字段，运行标记本身不足以判定旧错误已读。
+    remoteSessionStore.setActiveSessionSnapshots('dev-1', [{ sessionId: 's1', isTurnRunning: true }]);
+    expect(remoteSessionStore.getSessionLiveActivity('s1')).toMatchObject({ phase: 'error', attention: true });
+
+    remoteSessionStore.setActiveSessionSnapshots('dev-1', [{
+      sessionId: 's1', isTurnRunning: true,
+      activityPhase: 'running', activityAttention: false,
+    }]);
+    expect(remoteSessionStore.getSessionLiveActivity('s1')).toMatchObject({ phase: 'running', attention: false });
+    expect(remoteSessionStore.isSessionRunning('s1')).toBe(true);
+  });
+
+  it('does not let a delayed activity snapshot erase a newer error push', () => {
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1')]);
+    const epoch = remoteSessionStore.captureActiveSessionSnapshotEpoch();
+    remoteSessionStore.applySessionActivity('dev-1', {
+      sessionId: 's1', phase: 'error', attention: true,
+    });
+    remoteSessionStore.setActiveSessionSnapshots('dev-1', [{
+      sessionId: 's1', isTurnRunning: false,
+      activityPhase: 'completed', activityAttention: false,
+    }], epoch);
+    expect(remoteSessionStore.getSessionLiveActivity('s1')).toMatchObject({ phase: 'error', attention: true });
+  });
+
   it('does not treat an absent active-session row as an idle assertion', () => {
     vi.useFakeTimers();
     try {
