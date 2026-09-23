@@ -1419,7 +1419,7 @@ describe('usage through the production event pipeline', () => {
       pricing(true);
       effects.fn('getSessionProvider').mockReturnValue('mimo-account');
       effects.fn('getActiveCatalog').mockReturnValue({ providers: [{
-        id: 'mimo-account', auth: { method: 'api-key' },
+        id: 'mimo-account', auth: { method: 'apiKey' },
         access: { kind: mode === 'api' ? 'api' : 'subscription' },
       }] });
       if (mode === 'unpriced') {
