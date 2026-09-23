@@ -50,7 +50,11 @@ export type FetchProgressFn = (
 ) => void;
 
 /** 取回执行体:把远端文件完整写到 destPath(临时路径),完成返回。 */
-export type FetchExecutor = (destPath: string, onProgress: FetchProgressFn, signal?: AbortSignal) => Promise<void>;
+export type FetchExecutor = (
+  destPath: string,
+  onProgress: FetchProgressFn,
+  signal?: AbortSignal,
+) => Promise<void>;
 
 function cacheDir(): string {
   return path.join(app.getPath('userData'), CACHE_DIR_NAME);
@@ -165,10 +169,14 @@ function shortenKeepExt(name: string, maxLen: number): string {
 }
 
 function cachePathFor(id: RemoteFileIdentity): string {
-  // 两段式:<路径身份>-<size>-<mtime 取整>-<basename>。版本段变 = 新文件;
-  // 前缀段稳定 = 断线时可按它找"最近一次成功取回的副本"。
+  // Keep the path prefix for offline lookup, but hash the exact version. The v2
+  // marker prevents rounded legacy versions from being mistaken for exact hits.
   const base = shortenKeepExt(sanitizeBaseName(path.basename(id.relPath)) || 'file', 80);
-  return path.join(cacheDir(), `${prefixHashFor(id)}-${id.size}-${Math.round(id.mtimeMs)}-${base}`);
+  const version = createHash('sha256')
+    .update(JSON.stringify([id.size, id.mtimeMs]))
+    .digest('hex')
+    .slice(0, 20);
+  return path.join(cacheDir(), `${prefixHashFor(id)}-v2-${version}-${base}`);
 }
 
 function assertCacheOwner(scope: string): void {
@@ -259,6 +267,7 @@ export async function fetchRemoteFileToCache(
 ): Promise<string> {
   const scope = id.scope ?? activeOwnerScopeKey();
   assertCacheOwner(scope);
+  if (signal?.aborted) throw new Error('FILE_PEER_CANCELLED');
   id = { ...id, scope };
   const report: FetchProgressFn = (...args) => {
     assertCacheOwner(scope);
@@ -266,7 +275,7 @@ export async function fetchRemoteFileToCache(
   };
   const dest = cachePathFor(id);
   const existing = inflight.get(dest);
-  if (existing) {
+  if (existing && !existing.controller.signal.aborted) {
     const consumer = Symbol('remote-file-consumer');
     existing.consumers.add(consumer);
     try {
@@ -283,10 +292,15 @@ export async function fetchRemoteFileToCache(
   }
 
   const controller = new AbortController();
+  const assertActive = () => {
+    assertCacheOwner(scope);
+    if (controller.signal.aborted) throw new Error('FILE_PEER_CANCELLED');
+  };
   const firstConsumer = Symbol('remote-file-consumer');
   const run = (async () => {
     try {
       const st = await fs.stat(dest);
+      assertActive();
       if (st.size === id.size) {
         // 命中:touch 更新 LRU 位次,秒回。
         const now = new Date();
@@ -300,15 +314,16 @@ export async function fetchRemoteFileToCache(
     } catch {
       // miss
     }
-    assertCacheOwner(scope);
+    assertActive();
     await fs.mkdir(cacheDir(), { recursive: true });
-    const tmp = `${dest}.part`;
+    // An abandoned executor can still be unwinding when its replacement starts.
+    const tmp = path.join(cacheDir(), `${randomUUID()}.part`);
     try {
-      assertCacheOwner(scope);
+      assertActive();
       await executor(tmp, report, controller.signal);
-      assertCacheOwner(scope);
+      assertActive();
       const got = await fs.stat(tmp);
-      assertCacheOwner(scope);
+      assertActive();
       if (got.size !== id.size) {
         // 远端文件在取回途中变化(size 对不上)——废弃,让 caller 报错重试。
         throw new Error(`fetched size mismatch: got ${got.size}, expect ${id.size}`);
@@ -320,31 +335,22 @@ export async function fetchRemoteFileToCache(
       await fs.rm(tmp, { force: true }).catch(() => undefined);
     }
     assertCacheOwner(scope);
-    // 新版本落地即清同路径旧版本(前缀同、文件名不同):被更新文件的历史
-    // 副本不再占位等 LRU,断线兜底也只会捞到最新成功副本。
-    void (async () => {
-      const prefix = `${prefixHashFor(id)}-`;
-      const names = await fs.readdir(cacheDir()).catch(() => [] as string[]);
-      for (const n of names) {
-        // .part 是并发取回(同路径新版本)的活跃临时文件,删了会让那次
-        // rename 失败、更新中的文件回落旧内容——只清已完成的旧版本副本。
-        if (n.endsWith('.part')) continue;
-        if (n.startsWith(prefix) && path.join(cacheDir(), n) !== dest) {
-          await fs.rm(path.join(cacheDir(), n), { force: true }).catch(() => undefined);
-        }
-      }
-      await evictLru(dest);
-    })().catch((err) => log.warn('cache cleanup failed', { error: String(err) }));
+    // Other versions may already be in use by another preview. Retain them until
+    // the existing capacity-based LRU needs space, regardless of completion order.
+    void evictLru(dest).catch((err) => log.warn('cache cleanup failed', { error: String(err) }));
     return dest;
   })();
 
   const owner: InflightRead = { promise: run, controller, consumers: new Set([firstConsumer]) };
   inflight.set(dest, owner);
-  void run.then(() => {
-    if (inflight.get(dest) === owner) inflight.delete(dest);
-  }, () => {
-    if (inflight.get(dest) === owner) inflight.delete(dest);
-  });
+  void run.then(
+    () => {
+      if (inflight.get(dest) === owner) inflight.delete(dest);
+    },
+    () => {
+      if (inflight.get(dest) === owner) inflight.delete(dest);
+    },
+  );
   try {
     const result = await raceWithAbort(run, signal);
     assertCacheOwner(scope);
