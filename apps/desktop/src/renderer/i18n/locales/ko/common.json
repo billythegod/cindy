@@ -10904,7 +10904,7 @@
         "intervalChip": "완료 후 대기 · {{schedule}}"
       },
       "scheduleMenu": {
-        "intervalMinutes": "분 (매시간 고정 시각)",
+        "intervalMinutes": "분 (N분마다)",
         "interval": "Hourly (N시간마다)",
         "daily": "Daily (매일)",
         "weekdays": "Weekdays (평일)",

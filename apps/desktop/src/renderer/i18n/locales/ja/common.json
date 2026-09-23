@@ -10904,7 +10904,7 @@
         "intervalChip": "完了後に計時 · {{schedule}}"
       },
       "scheduleMenu": {
-        "intervalMinutes": "分（毎時固定スロット）",
+        "intervalMinutes": "分（N 分ごと）",
         "interval": "Hourly（N 時間ごと）",
         "daily": "Daily（毎日）",
         "weekdays": "Weekdays（平日）",

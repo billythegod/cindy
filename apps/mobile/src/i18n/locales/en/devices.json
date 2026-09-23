@@ -594,7 +594,7 @@
       },
       "boundSessionA11y": "Bind session {{name}}",
       "intervalPlaceholder": "Leave empty to use cron",
-      "intervalHint": "For minute intervals, use 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, or 30 minutes. For 60 minutes or more, use whole hours.",
+      "intervalHint": "For minute intervals, use 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, or 30 minutes. For whole-hour intervals, enter a multiple of 60 from 60 to 1380 minutes (1–23 hours).",
       "intervalPreservedHint": "This task's exact interval is {{duration}} and will be preserved until you edit or clear it.",
       "workspace": {
         "project": "Project",

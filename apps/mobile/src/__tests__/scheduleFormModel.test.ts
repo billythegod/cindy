@@ -96,6 +96,12 @@ describe('mobile schedule form model', () => {
     expect(buildMobileScheduleInput({ ...claude, name: 'Claude', prompt: 'run' })).not.toHaveProperty('fastMode');
   });
 
+  it.each(['60', '1380'])('accepts the advertised whole-hour boundary of %s minutes', (intervalMinutes) => {
+    const draft = { ...createMobileScheduleDraft(null), name: 'Boundary', prompt: 'run', intervalMinutes };
+    expect(validateMobileScheduleDraft(draft)).toBeNull();
+    expect(buildMobileScheduleInput(draft).intervalMs).toBe(Number(intervalMinutes) * 60_000);
+  });
+
   it('validates required fields and supported interval-style cron presets', () => {
     const draft = createMobileScheduleDraft(null);
     expect(validateMobileScheduleDraft(draft)).toMatchObject({ field: 'name' });
@@ -107,7 +113,7 @@ describe('mobile schedule form model', () => {
     })).toMatchObject({
       field: 'intervalMinutes',
     });
-    for (const intervalMinutes of ['7', '28', '59']) {
+    for (const intervalMinutes of ['7', '28', '59', '1440']) {
       expect(validateMobileScheduleDraft({
         ...draft,
         name: 'Bad',
