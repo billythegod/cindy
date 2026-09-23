@@ -75,7 +75,9 @@ function getLatestManifest(): Promise<Manifest | null> {
 function latestVersionFor(kind: AgentBinaryKind, manifest: Manifest | null): string | null {
   if (!manifest) return null;
   if (kind === 'claude-code') return manifest.claudeCode?.version ?? null;
-  if (kind === 'codex') return manifest.codexPackage?.version ?? manifest.codex?.version ?? null;
+  // Install reads CONFIG.codex.manifestField (`codexPackage`) only. A legacy
+  // `codex` field cannot be downloaded, so it must not offer a relaunch.
+  if (kind === 'codex') return manifest.codexPackage?.version ?? null;
   return manifest.pi?.version ?? null;
 }
 

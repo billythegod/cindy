@@ -82,6 +82,15 @@ describe('maker:agent:binary-version', () => {
     });
   });
 
+  it('does not offer an update from a legacy codex manifest field the installer cannot consume', async () => {
+    h.versions.set('/managed/codex', 'codex-cli 0.145.0');
+    h.fetchManifest.mockResolvedValue({ codex: { version: '0.146.0' } });
+    await expect(invoke('codex', { checkLatest: true })).resolves.toMatchObject({
+      latestVersion: null,
+      updateAvailable: false,
+    });
+  });
+
   it.each(['0.145.0', '0.144.9'])('does not offer a no-op update when the channel has %s', async (latest) => {
     h.versions.set('/managed/codex', 'codex-cli 0.145.0');
     h.fetchManifest.mockResolvedValue({ codexPackage: { version: latest } });
