@@ -393,7 +393,17 @@ export async function readFile(
       if (bytesRead === 0) break; // 真 EOF(文件被并发截断):按实际读到的返回
       filled += bytesRead;
     }
-    if (filled < readLen) buf = buf.subarray(0, filled);
+    let size = st.size;
+    let isTruncated = truncated;
+    if (filled < readLen) {
+      // 提前 EOF = 文件在 stat 之后被并发缩短。此时返回的 content 已是当前
+      // 文件的全部内容,必须同步修正元数据:保留旧 stat 的 truncated:true /
+      // size 会让渲染端错误显示截断提示、禁止编辑,远程路径还会触发多余的
+      // 完整文件拉取(Greptile review P1)。
+      buf = buf.subarray(0, filled);
+      size = filled;
+      isTruncated = false;
+    }
     // Quick binary detection: NULL byte in first 4 KiB (PNG/FBX/DLL etc.) or a
     // PDF header in a `.pdf` file (see isBinaryProbe). UTF-16 text files contain
     // NULL bytes too but are rare in dev workflows; renderer can still fall back
@@ -407,9 +417,9 @@ export async function readFile(
     return {
       relPath: sub,
       content: buf.toString('utf8'),
-      size: st.size,
+      size,
       mtimeMs: st.mtimeMs,
-      truncated,
+      truncated: isTruncated,
     };
   } finally {
     await handle.close();

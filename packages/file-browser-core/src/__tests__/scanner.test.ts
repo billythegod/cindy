@@ -5,6 +5,8 @@ import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+const realStat = fsp.stat.bind(fsp);
+
 import {
   createFile,
   createFolder,
@@ -61,6 +63,40 @@ describe('file-browser scanner readFile short reads', () => {
         expect(result.truncated).toBe(false);
       } finally {
         openSpy.mockRestore();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports fresh size/truncated when the file shrinks between stat and read', async () => {
+    // Greptile review P1:文件在 stat 后被并发缩短时,读循环会提前撞上真 EOF;
+    // 此时返回的已是当前文件的全部内容,但按旧 stat 算出的 truncated:true 与
+    // 旧 size 若不修正,渲染端会错误显示截断提示并禁止编辑。
+    const root = await mkdtemp(path.join(os.tmpdir(), 'xdt-file-browser-'));
+    try {
+      const content = 'short-lived content';
+      await fsWriteFile(path.join(root, 'shrinking.txt'), content, 'utf8');
+
+      // stat 撒谎:报告 3MiB(> 2MiB 上限 → truncated 应为 true);真实
+      // open/read 只能读到 100 字节不到的真 EOF。
+      const statSpy = vi.spyOn(fsp, 'stat').mockImplementation(async (p: Parameters<typeof fsp.stat>[0]) => {
+        const real = await realStat(p);
+        if (typeof p === 'string' && p.endsWith('shrinking.txt')) {
+          return Object.assign(Object.create(Object.getPrototypeOf(real)), real, {
+            size: 3 * 1024 * 1024,
+          });
+        }
+        return real;
+      });
+
+      try {
+        const result = await readFile(root, 'shrinking.txt');
+        expect(result.content).toBe(content);
+        expect(result.size).toBe(Buffer.byteLength(content, 'utf8'));
+        expect(result.truncated).toBe(false);
+      } finally {
+        statSpy.mockRestore();
       }
     } finally {
       await rm(root, { recursive: true, force: true });
