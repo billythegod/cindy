@@ -41,7 +41,7 @@ vi.mock('@/session/sessionList', () => ({ formatRemoteSessionSidebarTime: () => 
 vi.mock('@/utils/useMinuteNow', () => ({ useMinuteNow: () => 0 }));
 vi.mock('@/utils/useGuardedPush', () => ({ useGuardedPush: () => h.push }));
 vi.mock('@/device-link/focusedTopicSubscription', () => ({ startFocusedTopicSubscription: () => () => {} }));
-vi.mock('@/device-link/remoteResourceAvailability', () => ({ isRemoteResourceHostOnline: () => true, readRemoteCollectionCache: () => [], writeRemoteCollectionCache: () => {} }));
+vi.mock('@/device-link/remoteResourceAvailability', async (original) => ({ ...await original<typeof import('@/device-link/remoteResourceAvailability')>(), isRemoteResourceHostOnline: () => true, readRemoteCollectionCache: () => [], writeRemoteCollectionCache: () => {} }));
 vi.mock('@/device-link/remoteResourceCache', () => ({
   cacheRemoteResourceItems: vi.fn(), readRemoteResourceSnapshot: async () => ({ items: {} }),
   isRemoteResourceUnread: () => true, markRemoteResourceRead: h.markRead,

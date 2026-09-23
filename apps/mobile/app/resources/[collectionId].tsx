@@ -23,7 +23,7 @@ import { RemoteCompanionAvatar } from '@/components/RemoteCompanionAvatar';
 import { MainWindowEmptyState, StatusDot } from '@/components/MobilePrimitives';
 import { SimpleStackHeader, simpleScreenSafeAreaEdges } from '@/platform/chrome';
 import { useAuth } from '@/auth/AuthContext';
-import { isRemoteResourceHostOnline, readRemoteCollectionCache, writeRemoteCollectionCache } from '@/device-link/remoteResourceAvailability';
+import { remoteResourceConnectionState, isRemoteResourceHostOnline, readRemoteCollectionCache, writeRemoteCollectionCache } from '@/device-link/remoteResourceAvailability';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
 import {
   type HostedRemoteCollectionItem,
@@ -219,6 +219,7 @@ export default function RemoteCollectionScreen() {
       />
       {collectionId === 'teammates' ? <TeammateList
         items={itemsAccount === accountGeneration ? items : []} loading={loading} refreshing={refreshing} error={error}
+        connectionState={host => remoteResourceConnectionState(relayStatus, getPresenceAvailability(host.deviceId))}
         isOnline={host => isRemoteResourceHostOnline(relayStatus, getPresenceAvailability(host.deviceId), replyEpochs[host.deviceId], connectionEpoch)}
         onRefresh={() => void load(true)} onSelect={openItem} /> : loading && items.length === 0 ? (
         <View style={styles.center}>

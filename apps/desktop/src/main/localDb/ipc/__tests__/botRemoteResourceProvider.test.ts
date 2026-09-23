@@ -1,6 +1,10 @@
 import { expect, it, vi } from 'vitest';
 import type { BotRemoteResourceSource } from '../bots.js';
 
+const activity = vi.hoisted(() => ({ snapshot: vi.fn(), subscribe: vi.fn(), invalidate: vi.fn() }));
+vi.mock('../../../agent-island/service.js', () => ({ getAgentIslandService: () => ({ getSessionActivitySnapshot: activity.snapshot, subscribeSessionActivity: activity.subscribe }) }));
+vi.mock('../../../maker-ipc/botRemoteResourceInvalidation.js', () => ({ scheduleBotRemoteResourceChangedForSession: activity.invalidate }));
+
 const db = vi.hoisted(() => ({ get: vi.fn(), list: vi.fn(), current: true }));
 vi.mock('../../../device-link/broadcast-tap.js', () => ({ captureDataOwnerBroadcastScope: () => ({}), isDataOwnerBroadcastScopeCurrent: () => db.current }));
 vi.mock('../bots.js', () => ({
@@ -27,6 +31,26 @@ it('rejects a previously discovered hidden companion and allows it again after r
   const client = { protocolVersion: 1, primitives: ['markdown'] };
   const list = () => remoteResourceRegistry.list(context, { client, collectionId: 'teammates' });
   const discovered = (await list()).items[0];
+  // Generation comes from host activity even when no controller has opened chat.
+  activity.snapshot.mockReturnValue({ phase: 'running', workingPhase: 'reading-memory', startedAtMs: 123 });
+  const running = (await list()).items[0];
+  expect(running.display.generation).toEqual({ phase: 'reading-memory', startedAt: 123 });
+  expect(running.revision).not.toEqual(discovered.revision);
+  const notify = activity.subscribe.mock.calls[0][0];
+  const previous = { phase: 'running', workingPhase: 'reading-memory', startedAtMs: 123 };
+  notify({ sessionId: 'session-1', previous, current: { ...previous, compactDetail: 'More private text' } });
+  expect(activity.invalidate).not.toHaveBeenCalled();
+  notify({ sessionId: 'session-1', previous, current: { phase: 'idle' } });
+  expect(activity.invalidate).toHaveBeenCalledWith('session-1');
+  for (const workingPhase of ['compacting', 'thinking', 'replying']) {
+    const current = { ...previous, workingPhase };
+    activity.snapshot.mockReturnValue(current);
+    notify({ sessionId: 'session-1', previous, current });
+    expect((await list()).items[0].display.generation).toEqual({ phase: workingPhase, startedAt: 123 });
+    expect(activity.invalidate).toHaveBeenCalledWith('session-1');
+  }
+  activity.snapshot.mockReturnValue({ phase: 'idle' });
+  expect((await list()).items[0].display.generation).toBeUndefined();
   const get = () => remoteResourceRegistry.get(context, { client, ref: discovered.ref });
 
   await expect(get()).resolves.toMatchObject({

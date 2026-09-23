@@ -1,3 +1,5 @@
+import { getAgentIslandService } from '../../agent-island/service.js';
+import { scheduleBotRemoteResourceChangedForSession } from '../../maker-ipc/botRemoteResourceInvalidation.js';
 import { getWorkingStatusCopy } from '../../maker-ipc/workingStatus.js';
 import { WORKING_PHASES } from '../../../shared/workingStatus.js';
 import { resolveSystemLocale } from '../../../shared/locale.js';
@@ -43,7 +45,15 @@ export function registerBotRemoteResourceProvider(management?: typeof botRemoteM
         : sources;
       const items = filtered
         .slice(0, request.limit ?? 200)
-        .map(botRemoteCollectionItemFromSource);
+        .map(source => {
+          const item = botRemoteCollectionItemFromSource(source);
+          const activity = source.canonicalSessionId ? getAgentIslandService()?.getSessionActivitySnapshot(source.canonicalSessionId) : null;
+          if (activity?.phase === 'running' && activity.workingPhase) {
+            item.display.generation = { phase: activity.workingPhase ?? 'processing', startedAt: activity.startedAtMs };
+            item.revision += `:${activity.startedAtMs}:${item.display.generation.phase}`;
+          }
+          return item;
+        });
       return {
         collectionId: TEAMMATES_REMOTE_COLLECTION_ID,
         revision: items.map((item) => item.revision).join('|'),
@@ -121,6 +131,10 @@ export function registerBotRemoteResourceProvider(management?: typeof botRemoteM
       });
       return { effects: [], teammateMessage };
     },
+  });
+  getAgentIslandService()?.subscribeSessionActivity(({ sessionId, previous, current }) => {
+    if (previous?.phase !== current?.phase || previous?.workingPhase !== current?.workingPhase
+      || previous?.startedAtMs !== current?.startedAtMs) scheduleBotRemoteResourceChangedForSession(sessionId);
   });
   registered = true;
 }

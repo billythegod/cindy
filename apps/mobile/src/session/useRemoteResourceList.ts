@@ -9,7 +9,7 @@ import {
   cacheRemoteResourceItems, readRemoteResourceSnapshot,
   remoteResourceCacheRevision, subscribeRemoteResourceCache,
 } from '@/device-link/remoteResourceCache';
-import { isRemoteResourceHostOnline, readRemoteCollectionCache, writeRemoteCollectionCache } from '@/device-link/remoteResourceAvailability';
+import { remoteResourceConnectionState, isRemoteResourceHostOnline, readRemoteCollectionCache, writeRemoteCollectionCache } from '@/device-link/remoteResourceAvailability';
 import { listRemoteCollection, mergeRemoteCollectionHostShards, normalizeRemoteCollectionItems,
   type HostedRemoteCollectionItem, type RemoteResourceHostTarget } from '@/device-link/remoteResources';
 import { formatRemoteError } from '@/device-link/remoteStatus';
@@ -114,5 +114,6 @@ export function useRemoteResourceList(collectionId: string, targets: readonly Re
     refreshing: ownState && state.refreshing,
     error: ownState ? state.error : null,
     isOnline, refresh,
+    connectionState: (host: RemoteResourceHostTarget) => ownState ? remoteResourceConnectionState(status, getPresenceAvailability(host.deviceId)) : null,
   };
 }
