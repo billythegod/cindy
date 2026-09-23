@@ -29,7 +29,8 @@ import {
   normalizeBinaryVersion,
   parseBinaryVersionOutput,
 } from '../agent-binaries/binary-version-probe.js';
-import { fetchManifest, type Manifest } from '../manifestService.js';
+import { getVendorAsset, vendorAssetMatchesPlatform } from '../agent-binaries/manifest.js';
+import { fetchManifest, getPlatformKey, type Manifest } from '../manifestService.js';
 
 import { MAKER_INVOKE } from './channels.js';
 
@@ -72,13 +73,19 @@ function getLatestManifest(): Promise<Manifest | null> {
   return latestManifestPromise;
 }
 
+// Same fields as agent-binaries CONFIG. Only an asset the installer can
+// actually consume (complete metadata, this platform) may advertise an update.
+const MANIFEST_FIELD: Record<AgentBinaryKind, string> = {
+  'claude-code': 'claudeCode',
+  codex: 'codexPackage',
+  pi: 'pi',
+};
+
 function latestVersionFor(kind: AgentBinaryKind, manifest: Manifest | null): string | null {
   if (!manifest) return null;
-  if (kind === 'claude-code') return manifest.claudeCode?.version ?? null;
-  // Install reads CONFIG.codex.manifestField (`codexPackage`) only. A legacy
-  // `codex` field cannot be downloaded, so it must not offer a relaunch.
-  if (kind === 'codex') return manifest.codexPackage?.version ?? null;
-  return manifest.pi?.version ?? null;
+  const asset = getVendorAsset(manifest, MANIFEST_FIELD[kind]);
+  if (!asset || !vendorAssetMatchesPlatform(asset, getPlatformKey())) return null;
+  return asset.version;
 }
 
 // Same ordering the startup installer uses to keep a local runtime that is not
@@ -104,6 +111,7 @@ function parseOptions(value: unknown): AgentBinaryVersionOptions {
 
 async function probeLocalVersion(
   agentKind: AgentBinaryKind,
+  options?: { bypassCache?: boolean },
 ): Promise<Omit<AgentBinaryVersionResult, 'latestVersion' | 'updateAvailable'>> {
   const binaryPath = resolveBinaryPath(agentKind);
   // 执行前复核路径确为受管二进制(CodeQL js/command-line-injection 防御纵深)
@@ -111,7 +119,9 @@ async function probeLocalVersion(
     return { kind: agentKind, binaryPath: null, version: null, error: 'binary_not_ready' };
   }
 
-  const cached = agentKind === 'pi' ? undefined : versionCache.get(binaryPath);
+  // Pi is always live. checkLatest also skips the process cache so an in-place
+  // self-update is compared against the manifest instead of a stale --version.
+  const cached = agentKind === 'pi' || options?.bypassCache ? undefined : versionCache.get(binaryPath);
   if (cached) {
     return { kind: agentKind, binaryPath, version: cached };
   }
@@ -181,7 +191,7 @@ export function registerMakerBinaryVersionIpc(): void {
       }
       // Start before probing so concurrent About rows join one in-flight lookup.
       const onlineManifest = getLatestManifest();
-      const local = await probeLocalVersion(agentKind);
+      const local = await probeLocalVersion(agentKind, { bypassCache: true });
       const latestVersion = latestVersionFor(agentKind, await onlineManifest);
       return { ...local, latestVersion, updateAvailable: isUpdateAvailable(agentKind, local.version, latestVersion) };
     },

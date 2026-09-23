@@ -25,7 +25,10 @@ vi.mock('../../logger.js', () => ({
   createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() }),
 }));
 vi.mock('../pi-kernel.js', () => ({ registerPiKernelIpc: vi.fn() }));
-vi.mock('../../manifestService.js', () => ({ fetchManifest: h.fetchManifest }));
+vi.mock('../../manifestService.js', () => ({
+  fetchManifest: h.fetchManifest,
+  getPlatformKey: () => 'darwin-arm64',
+}));
 vi.mock('../../agent-binaries/index.js', () => ({
   getReadyBinaryPath: (kind: string) => `/managed/${kind}`,
   getCachedBinaryStatus: () => ({ binaryReady: false, binaryPath: null }),
@@ -34,6 +37,10 @@ vi.mock('../../agent-binaries/index.js', () => ({
 
 const { registerMakerBinaryVersionIpc } = await import('../binary-version.js');
 const { MAKER_INVOKE } = await import('../channels.js');
+
+function installable(version: string, file = `runtime/${version}/pkg`) {
+  return { version, file, sha256: 'a'.repeat(64), size: 7 };
+}
 
 function invoke(kind: unknown, options?: unknown) {
   const handler = h.handlers.get(MAKER_INVOKE.AGENT_BINARY_VERSION);
@@ -75,7 +82,7 @@ describe('maker:agent:binary-version', () => {
 
   it('reports an update only when the channel version is strictly newer', async () => {
     h.versions.set('/managed/codex', 'codex-cli 0.145.0');
-    h.fetchManifest.mockResolvedValue({ codexPackage: { version: '0.146.0' } });
+    h.fetchManifest.mockResolvedValue({ codexPackage: installable('0.146.0') });
     await expect(invoke('codex', { checkLatest: true })).resolves.toMatchObject({
       latestVersion: '0.146.0',
       updateAvailable: true,
@@ -93,7 +100,7 @@ describe('maker:agent:binary-version', () => {
 
   it.each(['0.145.0', '0.144.9'])('does not offer a no-op update when the channel has %s', async (latest) => {
     h.versions.set('/managed/codex', 'codex-cli 0.145.0');
-    h.fetchManifest.mockResolvedValue({ codexPackage: { version: latest } });
+    h.fetchManifest.mockResolvedValue({ codexPackage: installable(latest) });
     await expect(invoke('codex', { checkLatest: true })).resolves.toMatchObject({
       latestVersion: latest,
       updateAvailable: false,
@@ -102,7 +109,7 @@ describe('maker:agent:binary-version', () => {
 
   it('never offers the About update for Pi, which has its own kernel manager', async () => {
     h.versions.set('/managed/pi', 'pi 0.84.4');
-    h.fetchManifest.mockResolvedValue({ pi: { version: '0.90.0' } });
+    h.fetchManifest.mockResolvedValue({ pi: installable('0.90.0') });
     await expect(invoke('pi', { checkLatest: true })).resolves.toMatchObject({ updateAvailable: false });
   });
 
@@ -111,6 +118,43 @@ describe('maker:agent:binary-version', () => {
     h.fetchManifest.mockRejectedValue(new Error('offline'));
     await expect(invoke('claude-code', { checkLatest: true })).resolves.toMatchObject({
       version: '2.1.258 (Claude Code)',
+      latestVersion: null,
+      updateAvailable: false,
+    });
+  });
+
+
+  it('re-probes on checkLatest instead of comparing a cached --version', async () => {
+    h.versions.set('/managed/codex', 'codex-cli 0.145.0');
+    h.fetchManifest.mockResolvedValue({ codexPackage: installable('0.146.0') });
+    await expect(invoke('codex', { checkLatest: true })).resolves.toMatchObject({
+      version: 'codex-cli 0.145.0',
+      updateAvailable: true,
+    });
+
+    h.versions.set('/managed/codex', 'codex-cli 0.146.0');
+    await expect(invoke('codex')).resolves.toMatchObject({ version: 'codex-cli 0.145.0' });
+    await expect(invoke('codex', { checkLatest: true })).resolves.toMatchObject({
+      version: 'codex-cli 0.146.0',
+      latestVersion: '0.146.0',
+      updateAvailable: false,
+    });
+  });
+
+  it('does not advertise an update the installer would reject', async () => {
+    h.versions.set('/managed/codex', 'codex-cli 0.145.0');
+    h.fetchManifest.mockResolvedValue({
+      codexPackage: { version: '0.146.0', file: 'runtime/0.146.0/pkg' },
+    });
+    await expect(invoke('codex', { checkLatest: true })).resolves.toMatchObject({
+      latestVersion: null,
+      updateAvailable: false,
+    });
+
+    h.fetchManifest.mockResolvedValue({
+      codexPackage: installable('0.146.0', 'codex/win32-x64/0.146.0/pkg'),
+    });
+    await expect(invoke('codex', { checkLatest: true })).resolves.toMatchObject({
       latestVersion: null,
       updateAvailable: false,
     });
