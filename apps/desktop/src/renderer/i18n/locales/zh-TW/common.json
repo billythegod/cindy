@@ -1092,6 +1092,7 @@
       "harnessUpdateDescription": "Cindy 將重新啟動，並在啟動時更新 {{name}}。目前版本 {{currentVersion}}，線上版本 {{latestVersion}}。",
       "harnessUpdateConfirm": "重新啟動並更新",
       "harnessUpdateCancel": "取消",
+      "harnessUpdateBusyDescription": "目前有任務進行中，重新啟動會中斷它們。確定要立即重新啟動並更新嗎？",
       "harnessUpdateFailed": "無法安排 Agent 更新，請稍後再試。",
       "logsDirLabel": "日誌目錄",
       "openLogsDir": "開啟",

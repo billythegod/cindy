@@ -166,6 +166,26 @@ function AgentVersionRow({
     });
     if (!confirmed) return;
 
+    // Same gate as the app-update banner and the beta-channel restart: a logical
+    // turn, Claude background activity, or Ghost card action must not be killed
+    // by a generic confirmation. A failed probe means we cannot tell, so fail
+    // closed into the interruption warning instead of relaunching.
+    let hasInFlight = true;
+    try {
+      hasInFlight = await window.electronAPI.anyActivityBlockingRelaunch();
+    } catch {
+      hasInFlight = true;
+    }
+    if (hasInFlight) {
+      const interrupt = await confirm({
+        title: t('settings.about.harnessUpdateTitle', { name: label }),
+        description: t('settings.about.harnessUpdateBusyDescription', { name: label }),
+        confirmText: t('settings.about.harnessUpdateConfirm'),
+        cancelText: t('settings.about.harnessUpdateCancel'),
+      });
+      if (!interrupt) return;
+    }
+
     try {
       await window.electronAPI.relaunchForHarnessUpdate(kind);
     } catch {

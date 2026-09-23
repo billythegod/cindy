@@ -1092,6 +1092,7 @@
       "harnessUpdateDescription": "将重启 Cindy，并在启动时更新 {{name}}。当前版本 {{currentVersion}}，线上版本 {{latestVersion}}。",
       "harnessUpdateConfirm": "重启并更新",
       "harnessUpdateCancel": "取消",
+      "harnessUpdateBusyDescription": "当前有任务正在进行中，重启会打断它们。确定要立即重启并更新吗？",
       "harnessUpdateFailed": "无法安排 Agent 更新，请稍后重试。",
       "logsDirLabel": "日志目录",
       "openLogsDir": "打开",

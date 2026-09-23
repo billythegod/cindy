@@ -16,6 +16,7 @@ import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog-provider';
 const getBinaryVersion = vi.fn();
 const getState = vi.fn();
 const relaunchForHarnessUpdate = vi.fn();
+const anyActivityBlockingRelaunch = vi.fn();
 
 function versionResult(
   kind: string,
@@ -38,8 +39,10 @@ describe('AboutSection agent binary versions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getState.mockResolvedValue({ currentVersion: '0.84.4', restartRequired: false, official: { release: null }, upstream: { release: null }, operation: null });
+    anyActivityBlockingRelaunch.mockResolvedValue(false);
     (window as unknown as { electronAPI: unknown }).electronAPI = {
       relaunchForHarnessUpdate,
+      anyActivityBlockingRelaunch,
       maker: {
         piKernel: { getState },
         agent: {
@@ -140,5 +143,53 @@ describe('AboutSection agent binary versions', () => {
     expect(relaunchForHarnessUpdate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateConfirm' }));
     await waitFor(() => expect(relaunchForHarnessUpdate).toHaveBeenCalledExactlyOnceWith('codex'));
+  });
+
+  it('asks again before a harness restart would interrupt in-flight work', async () => {
+    getBinaryVersion.mockImplementation((kind: string, options?: { checkLatest?: boolean }) =>
+      Promise.resolve(
+        versionResult(kind, options, kind === 'codex' ? { latestVersion: '1.1.0', updateAvailable: true } : null),
+      ),
+    );
+    anyActivityBlockingRelaunch.mockResolvedValue(true);
+    relaunchForHarnessUpdate.mockResolvedValue({ accepted: true });
+
+    renderRows();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'settings.about.harnessUpdateButton' })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateButton' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateConfirm' }));
+    await waitFor(() => {
+      expect(screen.getByText('settings.about.harnessUpdateBusyDescription')).toBeTruthy();
+    });
+    expect(relaunchForHarnessUpdate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateConfirm' }));
+    await waitFor(() => expect(relaunchForHarnessUpdate).toHaveBeenCalledExactlyOnceWith('codex'));
+  });
+
+  it('does not relaunch when the busy probe fails and the interruption warning is declined', async () => {
+    getBinaryVersion.mockImplementation((kind: string, options?: { checkLatest?: boolean }) =>
+      Promise.resolve(
+        versionResult(kind, options, kind === 'codex' ? { latestVersion: '1.1.0', updateAvailable: true } : null),
+      ),
+    );
+    anyActivityBlockingRelaunch.mockRejectedValue(new Error('ipc channel closed'));
+
+    renderRows();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'settings.about.harnessUpdateButton' })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateButton' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateConfirm' }));
+    await waitFor(() => {
+      expect(screen.getByText('settings.about.harnessUpdateBusyDescription')).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateCancel' }));
+    await waitFor(() => expect(anyActivityBlockingRelaunch).toHaveBeenCalled());
+    expect(relaunchForHarnessUpdate).not.toHaveBeenCalled();
   });
 });
