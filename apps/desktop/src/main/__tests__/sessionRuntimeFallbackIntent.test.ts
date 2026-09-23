@@ -19,7 +19,7 @@ function harness() {
   const current = { agentKind: 'codex', model: 'current', providerId: 'openai', effort: 'high', fastMode: false };
   const candidate = { ...current, agentKind: 'claude-code', model: 'fallback' };
   const readCandidate = vi.fn(async (): Promise<{ isBot: boolean; candidate: typeof candidate | null }> => ({ isBot: true, candidate }));
-  const switchAgent = vi.fn(async () => ({ switched: true }));
+  const switchAgent = vi.fn(async () => ({ switched: true, engineReady: true }));
   const accept = vi.fn();
   const withLock = vi.fn(async (_id: string, task: () => Promise<unknown>) => task());
   const apply = vi.fn(async (): Promise<{ deferred: boolean; superseded: boolean; generation?: number; contextWindowConfirmationRequired?: number }> => ({ deferred: false, superseded: false }));
@@ -65,6 +65,16 @@ function harness() {
 }
 
 describe('automatic runtime selection respects the user send boundary', () => {
+  it('stops after a committed harness switch whose engine failed to start', async () => {
+    const h = harness();
+    h.switchAgent.mockResolvedValue({ switched: true, engineReady: false });
+    expect(await h.run('session', 1, 1, true)).toMatchObject({ outcome: 'failed' });
+    expect(h.accept).toHaveBeenCalledWith(expect.objectContaining({ profile: h.candidate }));
+    expect(h.readCandidate).toHaveBeenCalledOnce();
+    expect(h.failed).not.toHaveBeenCalled();
+    expect(h.apply).not.toHaveBeenCalled();
+  });
+
   it('reports chain exhaustion distinctly from a switched runtime', async () => {
     const h = harness();
     h.readCandidate.mockResolvedValue({ isBot: true, candidate: null });

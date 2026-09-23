@@ -8,15 +8,16 @@ export function isBotCandidateUnavailable(signals: InterruptedTurnErrorSignals):
   if (reason && ![
     'pi-gateway-drop', 'upstream-overload', 'empty-response', 'turn-failed',
     'provider_auth_or_access', 'provider_quota_limit', 'provider_rate_limit',
-    'provider_server_error', 'model_unavailable', 'agent-start-failed',
+    'provider_server_error', 'model_unavailable', 'user_model_access_denied', 'agent-start-failed',
   ].includes(reason)) return false;
   if (reason && reason !== 'turn-failed') return true;
   const tag = signals.sdkError ?? '';
   if (['authentication_failed', 'authentication_error', 'rate_limit', 'billing_error',
-    'model_not_found', 'agent_start_failed'].includes(tag)) return true;
+    'model_not_found', 'user_model_access_denied', 'agent_start_failed'].includes(tag)) return true;
   const message = signals.message ?? '';
-  if (/permission denied|user (?:denied|rejected)|approval (?:denied|required)|context.{0,20}(?:overflow|too long)|prompt too long/i.test(message)) return false;
+  if (/user (?:denied|rejected)|approval (?:denied|required)|context.{0,20}(?:overflow|too long)|prompt too long/i.test(message)) return false;
   if ([401, 402, 403, 429, 500, 502, 503, 504, 529].includes(signals.errorStatus ?? 0)) return true;
+  if (/permission denied/i.test(message)) return false;
   return isNetworkishErrorMessage(message) || isOverloadErrorMessage(message, signals.errorStatus)
     || /invalid api key|missing bearer token|no available oauth accounts|credit balance too low|insufficient_quota|quota exceeded|rate.limit exceeded|model.{0,80}(?:not found|does not exist|unavailable)|(?:failed to (?:start|spawn)|could not start) (?:the )?(?:agent|pi|codex|claude)/i.test(message);
 }

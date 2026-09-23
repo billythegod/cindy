@@ -11730,6 +11730,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               if (await advanceConfiguredBotRoute(selected)) continue;
               return { session: runtimeSession, outcome: 'exhausted' };
             }
+            // The route transaction has already committed, including a new
+            // generation. Its failed bootstrap must not resume input or advance
+            // candidates using the pre-switch profile/generation captured above.
+            if (!result.engineReady) return { session: runtimeSession, outcome: 'failed' };
           } catch (error) {
             if (await advanceConfiguredBotRoute(selected)) continue;
             throw error;

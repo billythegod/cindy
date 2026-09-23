@@ -46,6 +46,10 @@ function harness(bot = true) {
 describe('Bot candidate recovery', () => {
   it.each([
     { reason: 'pi-gateway-drop', message: 'Connection error.' },
+    { reason: 'user_model_access_denied', sdkError: 'user_model_access_denied', errorStatus: 403 },
+    { sdkError: 'user_model_access_denied' },
+    { errorStatus: 403, message: 'Permission denied' },
+    { reason: 'turn-failed', errorStatus: 403, message: 'Permission denied' },
     { errorStatus: 401 }, { errorStatus: 402 }, { errorStatus: 429 }, { errorStatus: 503 },
     { sdkError: 'authentication_failed' }, { sdkError: 'billing_error' },
     { message: 'model deepseek does not exist' }, { message: 'Failed to start agent' },
@@ -57,6 +61,10 @@ describe('Bot candidate recovery', () => {
   it.each([
     { reason: 'tool_use_loop_detected', message: 'Connection error.' },
     { reason: 'context_overflow', errorStatus: 503 },
+    { reason: 'user_denied', errorStatus: 403, message: 'Permission denied' },
+    { message: 'Permission denied' },
+    { message: 'User rejected permission', errorStatus: 403 },
+    { message: 'Approval required', errorStatus: 403 },
     { message: 'User rejected permission' }, { message: 'Tool business failure' },
     { sdkError: 'invalid_request', message: 'prompt too long' },
     { message: 'invalid encrypted content' }, { message: 'thread not found' },

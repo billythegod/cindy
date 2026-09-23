@@ -128,6 +128,7 @@ harness + provider + model + effort + fastMode
   候选耗尽、切换失败或需要换窗确认时交还错误，不继续重试失效路由；复用现有恢复额度和退避，
   不覆盖用户的新选择。实现与回归见 `maker-ipc/botCandidateRecovery.ts`、
   `maker-ipc/__tests__/botCandidateRecovery.test.ts` 和 `sessionRuntimeFallbackIntent.test.ts`。
+  跨 harness 路由已提交但新引擎启动失败时停止自动恢复并显示错误；不使用提交前的路由代次继续推进候选。
 - 用户拒绝授权、工具业务失败、参数错误和已经产生副作用后的失败不得触发透明重放。
 - 同一轮最多按生效候选链各尝试一次；不得循环。用户显式配置的链不得追加目录候选。
 - 同 harness 可在安全边界切模型；跨 harness 必须走既有 agent-switch / 交接重建事务。
