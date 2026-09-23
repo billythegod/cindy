@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react';
+import { readFileSync } from 'node:fs';
+import { parseAgentErrorCode } from '@cindy/maker-shared/error-redaction';
+import { unclassifiedAgentErrorI18nKey, requiresAgentErrorConfigurationChange } from '@/session/agentErrorI18n';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { i18n } from '@/i18n';
@@ -80,3 +83,80 @@ describe.each(SUPPORTED_LOCALES)('mobile errors in %s', locale => {
     expect(host.textContent).not.toContain('private-test-value');
   });
 });
+
+
+describe.each(SUPPORTED_LOCALES)('known mobile remote errors in %s', locale => {
+  it('has every desktop bracket-code translation without relying on fallback languages', async () => {
+    await i18n.changeLanguage(locale);
+    const desktop = JSON.parse(readFileSync(`../desktop/src/renderer/i18n/locales/${locale}/common.json`, 'utf8'));
+    for (const [code, translation] of Object.entries(desktop.chat.remoteError)) {
+      if (!parseAgentErrorCode(`[${code}] diagnostic`)) continue;
+      const key = `session.remoteError.${code}`;
+      const translated = i18n.getResource(locale, 'common', key);
+      expect(translated).toBeTypeOf('string');
+      expect(translated.length).toBeGreaterThan(0);
+      expect(translated.match(/{{[^}]+}}/g) ?? []).toEqual((translation as string).match(/{{[^}]+}}/g) ?? []);
+      expect(unclassifiedAgentErrorI18nKey(`[${code}] diagnostic`)).toBe(key);
+    }
+    expect(unclassifiedAgentErrorI18nKey('[REMOTE_FUTURE] private diagnostic')).toBe('session.tail.replyFailed');
+    expect(unclassifiedAgentErrorI18nKey('[CUSTOM_ERROR] private diagnostic')).toBe('session.tail.replyFailed');
+  });
+
+  it.each(['REMOTE_LOCAL_ONLY_PROVIDER', 'DEVICE_LINK_MEDIA_TRANSFER_FAILED', 'MCP_APPROVAL_CONFIRMATION_TIMEOUT'])(
+    'preserves %s guidance across history, live and tail, including language changes', async code => {
+      await i18n.changeLanguage(locale);
+      const message = `Error invoking remote method 'maker:send': Error: [${code}] upstream diagnostic; api_key=private-test-value`;
+      const key = `session.remoteError.${code}`;
+      const [historical] = normalizeRemoteMessages([row(message)]);
+      expect(historical.body).toBe(i18n.t(key));
+      expect(historical.errorSummaryKey).toBe(key);
+      expect(historical.rawError).toBe(message);
+      const state = resolveSessionTailBanner({ messages: [row(message)], session: null, projection: { error: null, credentialSwitchWait: null }, isSessionStreaming: false, continuationInFlight: false, sessionMetadataSyncedForConnection: true, interruptAcked: false, hiddenErrorClientIds: new Set() });
+      expect(state?.kind).toBe('error-tail');
+      const retryable = code !== 'REMOTE_LOCAL_ONLY_PROVIDER';
+      expect(state?.kind === 'error-tail' && state.retryable).toBe(retryable);
+      for (const surface of ['live', 'tail'] as const) {
+        await i18n.changeLanguage(locale);
+        const retry = vi.fn();
+        const clear = vi.fn();
+        await act(async () => root.render(surface === 'live'
+          ? <InlineQueueSection projection={{ error: message, errorRetryText: 'original user message' } as InputProjection} readOnlyReason={null} errorRecoveryReadOnlyReason={null} onRetryError={retry} onClearError={clear} onResume={vi.fn()} />
+          : <SessionTailBanner state={state!} onContinue={retry} onDismiss={clear} />));
+        expect(host.textContent).toContain(i18n.t(key));
+        expect(host.textContent).not.toContain('upstream diagnostic');
+        expect(host.textContent).not.toContain(i18n.t('session.tail.replyFailed'));
+        await act(async () => clickText(i18n.t('session.tail.showErrorDetails')));
+        expect(host.textContent).toContain('upstream diagnostic');
+        expect(host.textContent).not.toContain('private-test-value');
+        await act(async () => clickText(i18n.t('session.tail.hideErrorDetails')));
+        await act(async () => { await i18n.changeLanguage(locale === 'en' ? 'ja' : 'en'); });
+        expect(host.textContent).toContain(i18n.t(key));
+        expect(host.textContent).toContain(i18n.t('session.tail.showErrorDetails'));
+        const retryButton = host.querySelector<HTMLButtonElement>(`[data-testid="${surface === 'live' ? 'queue.inline.retryButton' : 'session.tailBanner.continue'}"]`);
+        if (retryable) {
+          expect(retryButton).toBeTruthy();
+          await act(async () => retryButton!.click());
+          expect(retry).toHaveBeenCalledOnce();
+        } else {
+          expect(retryButton).toBeNull();
+          expect(retry).not.toHaveBeenCalled();
+        }
+        const clearButton = host.querySelector<HTMLButtonElement>(`[data-testid="${surface === 'live' ? 'queue.inline.clearErrorButton' : 'session.tailBanner.dismiss'}"]`);
+        expect(clearButton).toBeTruthy();
+        await act(async () => clearButton!.click());
+        expect(clear).toHaveBeenCalledOnce();
+      }
+    },
+  );
+});
+
+it.each(['REMOTE_LOCAL_ONLY_PROVIDER', 'REMOTE_COMPAT_MODE_UNSUPPORTED', 'REMOTE_LOCAL_ATTACHMENT_UNSUPPORTED', 'DEVICE_LINK_CONTROL_DISABLED'])(
+  'does not suggest resending unchanged content for %s', code => {
+    expect(requiresAgentErrorConfigurationChange(`[${code}] diagnostic`)).toBe(true);
+  },
+);
+it.each(['REMOTE_DAEMON_CLOSED', 'REMOTE_GATEWAY_ENDPOINT_UNAVAILABLE', 'DEVICE_LINK_MEDIA_TRANSFER_FAILED', 'MCP_APPROVAL_CONFIRMATION_TIMEOUT', 'REMOTE_FUTURE'])(
+  'preserves retry for recoverable or unclassified %s', code => {
+    expect(requiresAgentErrorConfigurationChange(`[${code}] diagnostic`)).toBe(false);
+  },
+);

@@ -31,6 +31,7 @@ import { i18n } from '@/i18n';
 import type { InputProjection, QueuedRemoteMessage, RemoteMessage, RemoteSession } from '@/session/types';
 import {
   localizeAgentError,
+  requiresAgentErrorConfigurationChange,
   localizeUnclassifiedAgentError,
   unclassifiedAgentErrorI18nKey,
   parseMobileToolLoopErrorDetails,
@@ -112,7 +113,7 @@ export function resolveSessionTailBanner(input: ResolveSessionTailBannerInput): 
       rawError: tail.text,
       ...(!nonRetryableGuidance && !agentErrorGuidance ? { summaryKey: unclassifiedAgentErrorI18nKey(tail.text) } : {}),
       continueKind: tail.reason === APP_EXIT_INTERRUPTED_REASON ? 'interrupted' : 'error',
-      retryable: nonRetryableGuidance === null,
+      retryable: nonRetryableGuidance === null && !requiresAgentErrorConfigurationChange(tail.text),
     };
   }
   // 历史中断行优先;无 error-tail 才轮到 session 双时间戳判定(对齐桌面互斥渲染)。

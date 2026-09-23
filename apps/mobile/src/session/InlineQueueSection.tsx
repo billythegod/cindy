@@ -26,7 +26,7 @@ import { Pause, Play } from 'lucide-react-native';
 import { describeAgentAuthError } from '@/device-link/remoteStatus';
 import type { InputProjection } from '@/session/types';
 import { inputProjectionErrorI18nKey } from '@/session/inputProjectionError';
-import { localizeAgentError, localizeUnclassifiedAgentError } from '@/session/agentErrorI18n';
+import { localizeAgentError, localizeUnclassifiedAgentError, requiresAgentErrorConfigurationChange } from '@/session/agentErrorI18n';
 import {
   fontWeight,
   iconSize,
@@ -70,6 +70,7 @@ export function InlineQueueSection({
   const controlsDisabled = busy || !!readOnlyReason;
   const errorDisabledReason = errorRecoveryReadOnlyReason
     || (busy ? t('message.queuePresentation.row.busy') : null);
+  const retryable = !requiresAgentErrorConfigurationChange(projection.error ?? '');
   const retryDisabledReason = errorDisabledReason
     || (!projection.errorRetryText ? t('message.queue.noRetryContent') : null);
   const localizedAgentError = localizeAgentError(
@@ -94,14 +95,14 @@ export function InlineQueueSection({
           <Text style={styles.errorText}>{projectionError}</Text>
           <AgentErrorDetails message={projection.error} />
           <View style={styles.errorActions}>
-            <ActionPill
+            {retryable ? <ActionPill
               busy={busy}
               disabled={!!retryDisabledReason}
               disabledReason={retryDisabledReason}
               label={t('message.queue.retrySend')}
               onPress={onRetryError}
               testID="queue.inline.retryButton"
-            />
+            /> : null}
             <ActionPill
               busy={busy}
               disabled={!!errorDisabledReason}
@@ -111,7 +112,7 @@ export function InlineQueueSection({
               testID="queue.inline.clearErrorButton"
             />
           </View>
-          {retryDisabledReason ? (
+          {retryable && retryDisabledReason ? (
             <Text style={styles.disabledHint} testID="queue.inline.errorDisabledReason">
               {retryDisabledReason}
             </Text>
