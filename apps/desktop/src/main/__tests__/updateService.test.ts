@@ -330,17 +330,32 @@ describe('binary version checks after a user-requested update', () => {
     });
   });
 
-  it('schedules a one-time harness refresh before a graceful relaunch', async () => {
+  it('schedules a one-time refresh of only the confirmed harness before a graceful relaunch', async () => {
     const service = await freshUpdateService('darwin');
     const { consumeStartupBinaryUpdateMarker } = await import('../agent-binaries/startup-update');
     service.initUpdateService();
     try {
       const relaunch = ipcHandlers.get('update-harness-relaunch');
       expect(relaunch).toBeTypeOf('function');
-      expect(relaunch?.({ sender: { id: 1 } })).toEqual({ accepted: true });
+      expect(relaunch?.({ sender: { id: 1 } }, 'codex')).toEqual({ accepted: true });
       expect(appRelaunch).toHaveBeenCalledWith({ args: process.argv.slice(1) });
       expect(appQuit).toHaveBeenCalled();
-      expect(consumeStartupBinaryUpdateMarker(TEST_USER_DATA, appGetVersion())).toBe(true);
+      expect(consumeStartupBinaryUpdateMarker(TEST_USER_DATA, appGetVersion())).toEqual(['codex']);
+    } finally {
+      service.stopUpdateService();
+    }
+  });
+
+  it.each([undefined, 'pi', 'gemini'])('rejects a harness relaunch for %s without restarting', async (kind) => {
+    const service = await freshUpdateService('darwin');
+    const { consumeStartupBinaryUpdateMarker } = await import('../agent-binaries/startup-update');
+    service.initUpdateService();
+    try {
+      const relaunch = ipcHandlers.get('update-harness-relaunch');
+      expect(() => relaunch?.({ sender: { id: 1 } }, kind)).toThrow();
+      expect(appRelaunch).not.toHaveBeenCalled();
+      expect(appQuit).not.toHaveBeenCalled();
+      expect(consumeStartupBinaryUpdateMarker(TEST_USER_DATA, appGetVersion())).toBe(false);
     } finally {
       service.stopUpdateService();
     }

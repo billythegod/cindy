@@ -7,10 +7,12 @@
  * 设计:
  *   - Claude/Codex 在 prepare 成功后优先读 getReadyBinaryPath(),必要时可读受管缓存；
  *     Pi 是可选资产，只允许使用本次 prepare 成功的路径，失败时不能复用旧缓存。
- *   - 进程内按 binaryPath 缓存结果, 同一 binary 只 spawn 一次。
+ *   - Claude/Codex 按 binaryPath 缓存结果；Pi 现读，以反映受管／原生更新。
  *   - 5s 超时, 失败时返回 { error }。
+ *   - checkLatest 时再比较当前通道 manifest；普通调用不等网络。
  */
 
+import { registerPiKernelIpc } from './pi-kernel.js';
 import { ipcMain } from 'electron';
 import { execFile } from 'node:child_process';
 
@@ -22,6 +24,11 @@ import {
   type AgentBinaryKind,
 } from '../agent-binaries/index.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
+import {
+  isBinaryVersionNotOlder,
+  normalizeBinaryVersion,
+  parseBinaryVersionOutput,
+} from '../agent-binaries/binary-version-probe.js';
 import { fetchManifest, type Manifest } from '../manifestService.js';
 
 import { MAKER_INVOKE } from './channels.js';
@@ -32,16 +39,22 @@ export interface AgentBinaryVersionResult {
   kind: AgentBinaryKind;
   binaryPath: string | null;
   version: string | null;
-  /** Latest version published on the active update channel, when reachable. */
+  /** Latest version on the active update channel; only filled for `checkLatest`. */
   latestVersion: string | null;
+  /** The channel version is strictly newer than the local one (Claude/Codex only). */
+  updateAvailable: boolean;
   error?: string;
+}
+
+interface AgentBinaryVersionOptions {
+  checkLatest?: boolean;
 }
 
 const versionCache = new Map<string, string>();
 
 // About renders one request per managed agent. Share only the in-flight manifest
-// lookup so opening the page does not issue three identical requests, while a
-// later About visit (or a channel switch) always gets a fresh online comparison.
+// lookup so opening the page does not issue identical requests, while a later
+// About visit (or a channel switch) always gets a fresh online comparison.
 let latestManifestPromise: Promise<Manifest | null> | null = null;
 
 function getLatestManifest(): Promise<Manifest | null> {
@@ -64,6 +77,52 @@ function latestVersionFor(kind: AgentBinaryKind, manifest: Manifest | null): str
   if (kind === 'claude-code') return manifest.claudeCode?.version ?? null;
   if (kind === 'codex') return manifest.codexPackage?.version ?? manifest.codex?.version ?? null;
   return manifest.pi?.version ?? null;
+}
+
+// Same ordering the startup installer uses to keep a local runtime that is not
+// older than the manifest, so the About action never offers a no-op relaunch.
+function isUpdateAvailable(kind: AgentBinaryKind, version: string | null, latestVersion: string | null): boolean {
+  if (kind === 'pi' || !version || !latestVersion) return false;
+  const current = parseBinaryVersionOutput(version, '');
+  const latest = normalizeBinaryVersion(latestVersion);
+  return !!current && !!latest && !isBinaryVersionNotOlder(current, latest);
+}
+
+function parseOptions(value: unknown): AgentBinaryVersionOptions {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object') {
+    throwIpcError('INVALID_PARAMS', 'options must be an object');
+  }
+  const { checkLatest } = value as { checkLatest?: unknown };
+  if (checkLatest !== undefined && typeof checkLatest !== 'boolean') {
+    throwIpcError('INVALID_PARAMS', 'checkLatest must be a boolean');
+  }
+  return { checkLatest };
+}
+
+async function probeLocalVersion(
+  agentKind: AgentBinaryKind,
+): Promise<Omit<AgentBinaryVersionResult, 'latestVersion' | 'updateAvailable'>> {
+  const binaryPath = resolveBinaryPath(agentKind);
+  // 执行前复核路径确为受管二进制(CodeQL js/command-line-injection 防御纵深)
+  if (!binaryPath || !isVettedAgentBinaryPath(agentKind, binaryPath)) {
+    return { kind: agentKind, binaryPath: null, version: null, error: 'binary_not_ready' };
+  }
+
+  const cached = agentKind === 'pi' ? undefined : versionCache.get(binaryPath);
+  if (cached) {
+    return { kind: agentKind, binaryPath, version: cached };
+  }
+
+  try {
+    const version = await spawnVersion(binaryPath);
+    if (agentKind !== 'pi') versionCache.set(binaryPath, version);
+    return { kind: agentKind, binaryPath, version };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn(`${agentKind} --version failed: ${message}`);
+    return { kind: agentKind, binaryPath, version: null, error: message };
+  }
 }
 
 function isAgentBinaryKind(value: unknown): value is AgentBinaryKind {
@@ -102,43 +161,27 @@ function spawnVersion(binaryPath: string): Promise<string> {
 }
 
 export function registerMakerBinaryVersionIpc(): void {
+  registerPiKernelIpc();
   log.info('registering maker:agent:binary-version IPC handler');
 
   ipcMain.handle(
     MAKER_INVOKE.AGENT_BINARY_VERSION,
-    async (_e, agentKind: unknown): Promise<AgentBinaryVersionResult> => {
+    async (_e, agentKind: unknown, rawOptions: unknown): Promise<AgentBinaryVersionResult> => {
       if (!isAgentBinaryKind(agentKind)) {
         throwIpcError('INVALID_PARAMS', 'agentKind required (claude-code | codex | pi)');
       }
+      const { checkLatest } = parseOptions(rawOptions);
 
-      // Start this before probing the local binary so the three About rows all
-      // join the same in-flight online lookup even when their `--version`
-      // commands finish at different times.
+      // The plain call never waits on the network, so About shows the local
+      // version immediately even offline; the online comparison is a second call.
+      if (!checkLatest) {
+        return { ...(await probeLocalVersion(agentKind)), latestVersion: null, updateAvailable: false };
+      }
+      // Start before probing so concurrent About rows join one in-flight lookup.
       const onlineManifest = getLatestManifest();
-      const binaryPath = resolveBinaryPath(agentKind);
-      // 执行前复核路径确为受管二进制(CodeQL js/command-line-injection 防御纵深)
-      if (!binaryPath || !isVettedAgentBinaryPath(agentKind, binaryPath)) {
-        const latestVersion = latestVersionFor(agentKind, await onlineManifest);
-        return { kind: agentKind, binaryPath: null, version: null, latestVersion, error: 'binary_not_ready' };
-      }
-
-      const cached = versionCache.get(binaryPath);
-      if (cached) {
-        const latestVersion = latestVersionFor(agentKind, await onlineManifest);
-        return { kind: agentKind, binaryPath, version: cached, latestVersion };
-      }
-
-      try {
-        const version = await spawnVersion(binaryPath);
-        versionCache.set(binaryPath, version);
-        const latestVersion = latestVersionFor(agentKind, await onlineManifest);
-        return { kind: agentKind, binaryPath, version, latestVersion };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        log.warn(`${agentKind} --version failed: ${message}`);
-        const latestVersion = latestVersionFor(agentKind, await onlineManifest);
-        return { kind: agentKind, binaryPath, version: null, latestVersion, error: message };
-      }
+      const local = await probeLocalVersion(agentKind);
+      const latestVersion = latestVersionFor(agentKind, await onlineManifest);
+      return { ...local, latestVersion, updateAvailable: isUpdateAvailable(agentKind, local.version, latestVersion) };
     },
   );
 

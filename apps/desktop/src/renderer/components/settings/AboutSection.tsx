@@ -3,7 +3,8 @@
  *
  * 版本号:
  *   - 应用版本号:仅国内版显示,值由 window.electronAPI.appDisplayVersion 同步注入
- *   - Claude Code / Codex / Pi 版本号: spawn 当前应用使用的 binary `--version`
+ *   - Claude Code / Codex 版本号: spawn 当前应用使用的 binary `--version`,再比较线上版本
+ *   - Pi 版本号与内核更新由 PiKernelVersionRow 管理
  *
  * 卡片样式与 NotificationSection / FeishuBotSection 同级 (rounded-xl / Board border)。
  */
@@ -22,18 +23,22 @@ import { useAutoUpdateSettings } from '@/hooks/useAutoUpdateSettings';
 import { useAnalyticsSettings } from '@/hooks/useAnalyticsSettings';
 import { useLogUploadSettings } from '@/hooks/useLogUploadSettings';
 import { extractIpcError } from '@/utils/ipcError';
+import { PiKernelVersionRow } from './PiKernelVersionRow';
 import { DefaultOverrideControls } from './DefaultOverrideControls';
 import { CURRENT_CINDY_REGION } from '../../../shared/brandRegion';
 import { LEGAL_LINKS } from '../../../shared/legalLinks';
+
+type UpdatableAgentKind = 'claude-code' | 'codex';
 
 interface AgentVersionState {
   loading: boolean;
   version: string | null;
   latestVersion: string | null;
+  updateAvailable: boolean;
   error?: string;
 }
 
-const INITIAL: AgentVersionState = { loading: true, version: null, latestVersion: null };
+const INITIAL: AgentVersionState = { loading: true, version: null, latestVersion: null, updateAvailable: false };
 
 const DESKTOP_SOCIAL_LINKS = [
   {
@@ -56,26 +61,33 @@ const DESKTOP_SOCIAL_LINKS = [
   },
 ] as const;
 
-function useAgentBinaryVersion(kind: 'claude-code' | 'codex' | 'pi'): AgentVersionState {
+function useAgentBinaryVersion(kind: UpdatableAgentKind): AgentVersionState {
   const [state, setState] = useState<AgentVersionState>(INITIAL);
 
   useEffect(() => {
     let cancelled = false;
-    void window.electronAPI.maker.agent
-      .getBinaryVersion(kind)
+    const { getBinaryVersion } = window.electronAPI.maker.agent;
+    // Local first so the version shows immediately even offline; the online
+    // comparison follows and only ever adds the update action.
+    void getBinaryVersion(kind)
       .then((res) => {
         if (cancelled) return;
-        setState({
-          loading: false,
-          version: res.version,
-          latestVersion: res.latestVersion,
-          error: res.error,
-        });
+        setState({ loading: false, version: res.version, latestVersion: null, updateAvailable: false, error: res.error });
+        return getBinaryVersion(kind, { checkLatest: true }).then((latest) => {
+          if (cancelled) return;
+          setState({
+            loading: false,
+            version: latest.version,
+            latestVersion: latest.latestVersion,
+            updateAvailable: latest.updateAvailable,
+            error: latest.error,
+          });
+        }, () => undefined);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
-        setState({ loading: false, version: null, latestVersion: null, error: message });
+        setState({ loading: false, version: null, latestVersion: null, updateAvailable: false, error: message });
       });
     return () => {
       cancelled = true;
@@ -102,33 +114,33 @@ export function AgentVersionsRows() {
   const { t } = useTranslation();
   const claudeCode = useAgentBinaryVersion('claude-code');
   const codex = useAgentBinaryVersion('codex');
-  const pi = useAgentBinaryVersion('pi');
 
   return (
     <>
       <AgentVersionRow
+        kind="claude-code"
         label={t('settings.about.claudeCodeVersionLabel')}
         state={claudeCode}
       />
       <Divider />
       <AgentVersionRow
+        kind="codex"
         label={t('settings.about.codexVersionLabel')}
         state={codex}
       />
       <Divider />
-      <AgentVersionRow
-        label={t('settings.about.piVersionLabel')}
-        state={pi}
-      />
+      <PiKernelVersionRow />
       <Divider />
     </>
   );
 }
 
 function AgentVersionRow({
+  kind,
   label,
   state,
 }: {
+  kind: UpdatableAgentKind;
   label: string;
   state: AgentVersionState;
 }) {
@@ -136,7 +148,8 @@ function AgentVersionRow({
   const { confirm } = useConfirmDialog();
   const currentVersion = state.version ? extractSemver(state.version) : null;
   const latestVersion = state.latestVersion ? extractSemver(state.latestVersion) : null;
-  const updateAvailable = Boolean(currentVersion && latestVersion && currentVersion !== latestVersion);
+  // Main decides with the installer's semver ordering: a newer local build never offers a no-op relaunch.
+  const updateAvailable = Boolean(state.updateAvailable && currentVersion && latestVersion);
 
   const handleUpdate = async () => {
     if (!currentVersion || !latestVersion) return;
@@ -154,7 +167,7 @@ function AgentVersionRow({
     if (!confirmed) return;
 
     try {
-      await window.electronAPI.relaunchForHarnessUpdate();
+      await window.electronAPI.relaunchForHarnessUpdate(kind);
     } catch {
       toast.error(t('settings.about.harnessUpdateFailed'));
     }

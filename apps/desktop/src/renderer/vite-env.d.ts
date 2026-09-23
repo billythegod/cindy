@@ -583,6 +583,8 @@ interface AuthStateChangePayload {
   mode: 'signed-out' | 'local' | 'cloud';
   dataOwnerId: string | null;
   ownerGeneration: number;
+  /** Main marks the transient signed-out projection while an owner boundary is pending. */
+  ownerBoundaryPending?: boolean;
   canEnterApp: boolean;
   isAuthenticated: boolean;
   /** 当前账号是否加入 Canary 发布通道；由 main 的 feature-flags 同步结果驱动。 */
@@ -2140,6 +2142,7 @@ interface ElectronAPI {
     mode: 'signed-out' | 'local' | 'cloud';
     dataOwnerId: string | null;
     ownerGeneration: number;
+    ownerBoundaryPending?: boolean;
     canEnterApp: boolean;
     isAuthenticated: boolean;
     isCanary: boolean;
@@ -3812,8 +3815,8 @@ interface ElectronAPI {
   }>;
   /** 用户主动重启,让 beta 通道切换在下次冷启动前生效。 */
   relaunchForChannelChange: () => Promise<void>;
-  /** 用户确认后重启，并在下一次启动时更新受管 Agent 二进制。 */
-  relaunchForHarnessUpdate: () => Promise<{ accepted: true }>;
+  /** 用户确认后重启，下一次启动只更新所确认的受管 Harness（Pi 由内核管理单独处理）。 */
+  relaunchForHarnessUpdate: (kind: 'claude-code' | 'codex') => Promise<{ accepted: true }>;
   /** 打开 beta 前预检:探测 beta manifest 是否可达(HTTP 200)。 */
   probeBetaChannel: () => Promise<{ available: boolean }>;
   onUpdateChannelSettings: (
@@ -6554,6 +6557,11 @@ interface ElectronAPI {
       ) => () => void;
     };
 
+    piKernel: {
+      getState: (check?: boolean) => Promise<import('../shared/piKernel').PiKernelState>;
+      install: (request: import('../shared/piKernel').PiKernelInstallRequest) => Promise<import('../shared/piKernel').PiKernelState>;
+    };
+
     /* ── Agent 联合状态 (binary + auth, 取代老 codex.binary.getStatus) ── */
     agent: {
       getStatus: (agentKind: 'claude-code' | 'codex' | 'pi') => Promise<{
@@ -6563,11 +6571,17 @@ interface ElectronAPI {
         identity?: string;
       }>;
       /** spawn 当前应用使用的 binary `--version`, 进程内缓存。About 面板用。 */
-      getBinaryVersion: (agentKind: 'claude-code' | 'codex' | 'pi') => Promise<{
+      /** checkLatest 额外比较当前通道的线上版本；不传只读本地版本，离线也不等待。 */
+      getBinaryVersion: (
+        agentKind: 'claude-code' | 'codex' | 'pi',
+        options?: { checkLatest?: boolean },
+      ) => Promise<{
         kind: 'claude-code' | 'codex' | 'pi';
         binaryPath: string | null;
         version: string | null;
         latestVersion: string | null;
+        /** 线上版本严格高于本地版本时为 true（与启动安装的保留策略同口径）。 */
+        updateAvailable: boolean;
         error?: string;
       }>;
     };
