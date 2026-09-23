@@ -11,6 +11,8 @@ const h = vi.hoisted(() => ({
   fetchManifest: vi.fn(),
   execFile: vi.fn(),
   versions: new Map<string, string>(),
+  trust: vi.fn(),
+  isDeviceLink: vi.fn(() => false),
 }));
 
 vi.mock('electron', () => ({
@@ -25,6 +27,12 @@ vi.mock('../../logger.js', () => ({
   createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() }),
 }));
 vi.mock('../pi-kernel.js', () => ({ registerPiKernelIpc: vi.fn() }));
+vi.mock('../../security/trustedAppRenderer.js', () => ({
+  assertTrustedAppRendererEvent: (event: unknown) => h.trust(event),
+}));
+vi.mock('../../device-link/invoke-context.js', () => ({
+  isDeviceLinkInvoke: () => h.isDeviceLink(),
+}));
 vi.mock('../../manifestService.js', () => ({
   fetchManifest: h.fetchManifest,
   getPlatformKey: () => 'darwin-arm64',
@@ -57,6 +65,8 @@ describe('maker:agent:binary-version', () => {
     h.handlers.clear();
     h.fetchManifest.mockReset();
     h.versions.clear();
+    h.trust.mockReset().mockImplementation(() => {});
+    h.isDeviceLink.mockReset().mockReturnValue(false);
     h.execFile.mockReset().mockImplementation((
       binaryPath: string,
       _args: string[],
@@ -66,6 +76,30 @@ describe('maker:agent:binary-version', () => {
       callback(null, h.versions.get(binaryPath) ?? '', '');
     });
     registerMakerBinaryVersionIpc();
+  });
+
+
+  it('rejects an untrusted renderer before probing or fetching the manifest', async () => {
+    h.trust.mockImplementation(() => {
+      throw new Error('PERMISSION_DENIED');
+    });
+    h.versions.set('/managed/codex', 'codex-cli 0.145.0');
+    h.fetchManifest.mockReturnValue(new Promise(() => {}));
+
+    await expect(invoke('codex', { checkLatest: true })).rejects.toThrow('PERMISSION_DENIED');
+    expect(h.execFile).not.toHaveBeenCalled();
+    expect(h.fetchManifest).not.toHaveBeenCalled();
+  });
+
+  it('still serves a device-link invoke that has no renderer sender', async () => {
+    h.isDeviceLink.mockReturnValue(true);
+    h.trust.mockImplementation(() => {
+      throw new Error('PERMISSION_DENIED');
+    });
+    h.versions.set('/managed/codex', 'codex-cli 0.145.0');
+
+    await expect(invoke('codex')).resolves.toMatchObject({ version: 'codex-cli 0.145.0' });
+    expect(h.trust).not.toHaveBeenCalled();
   });
 
   it('returns the local version without touching the network', async () => {

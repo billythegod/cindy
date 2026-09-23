@@ -24,6 +24,8 @@ import {
   type AgentBinaryKind,
 } from '../agent-binaries/index.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
+import { assertTrustedAppRendererEvent } from '../security/trustedAppRenderer.js';
+import { isDeviceLinkInvoke } from '../device-link/invoke-context.js';
 import {
   isBinaryVersionNotOlder,
   normalizeBinaryVersion,
@@ -178,7 +180,11 @@ export function registerMakerBinaryVersionIpc(): void {
 
   ipcMain.handle(
     MAKER_INVOKE.AGENT_BINARY_VERSION,
-    async (_e, agentKind: unknown, rawOptions: unknown): Promise<AgentBinaryVersionResult> => {
+    async (event, agentKind: unknown, rawOptions: unknown): Promise<AgentBinaryVersionResult> => {
+      // Auxiliary preload windows must not spawn managed binaries or hit the
+      // update CDN. Device-link reuses this handler with a synthetic event after
+      // its own allowlist, so that path keeps the remote version read.
+      if (!isDeviceLinkInvoke()) assertTrustedAppRendererEvent(event);
       if (!isAgentBinaryKind(agentKind)) {
         throwIpcError('INVALID_PARAMS', 'agentKind required (claude-code | codex | pi)');
       }
