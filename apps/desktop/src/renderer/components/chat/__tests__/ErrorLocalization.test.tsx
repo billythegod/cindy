@@ -36,6 +36,33 @@ describe.each(SUPPORTED_LOCALES)('error presentation in %s', locale => {
     expect(screen.queryByText(locales[locale].chat.errorBanner.networkShowRaw)).toBeNull();
   });
 
+  it.each(['REMOTE_LOCAL_ONLY_PROVIDER', 'DEVICE_LINK_MEDIA_TRANSFER_FAILED', 'MCP_APPROVAL_CONFIRMATION_TIMEOUT'])('preserves curated %s guidance and follows language changes', async code => {
+    const i18n = createInstance();
+    await i18n.init({ lng: locale, fallbackLng: 'en', resources: Object.fromEntries(Object.entries(locales).map(([lng, common]) => [lng, { translation: common }])) });
+    const message = `Error invoking remote method device-link:invoke: Error: [${code}] upstream fallback api_key=private-test-value`;
+    render(<I18nextProvider i18n={i18n}><ErrorMessageCard message={message} /></I18nextProvider>);
+    const expected = locales[locale].chat.remoteError[code as keyof typeof en.chat.remoteError];
+    expect(typeof expected).toBe('string');
+    expect(screen.getByText(expected)).toBeTruthy();
+    expect(screen.queryByText(i18n.t('chat.errorBanner.replyFailed'))).toBeNull();
+    expect(screen.queryByText(/upstream fallback/)).toBeNull();
+    fireEvent.click(screen.getByText(i18n.t('chat.errorBanner.networkShowRaw')));
+    expect(screen.getByText(/upstream fallback/).textContent).toContain('[REDACTED]');
+    expect(screen.queryByText(/private-test-value/)).toBeNull();
+    const next = locale === 'en' ? 'ja' : 'en';
+    await act(async () => { await i18n.changeLanguage(next); });
+    expect(screen.getByText(i18n.t(`chat.remoteError.${code}`))).toBeTruthy();
+    expect(screen.queryByText(locales[locale].chat.remoteError[code as keyof typeof en.chat.remoteError])).toBeNull();
+  });
+
+  it('does not mistake an unknown remote-code fallback for localized guidance', async () => {
+    const i18n = createInstance();
+    await i18n.init({ lng: locale, fallbackLng: 'en', resources: { [locale]: { translation: locales[locale] } } });
+    render(<I18nextProvider i18n={i18n}><ErrorMessageCard message="[REMOTE_UNKNOWN] Arbitrary English diagnostics" /></I18nextProvider>);
+    expect(screen.getByText(locales[locale].chat.errorBanner.replyFailed)).toBeTruthy();
+    expect(screen.queryByText(/Arbitrary English/)).toBeNull();
+  });
+
   it.each(['live', 'tail', 'history'] as const)('localizes %s and keeps diagnostics collapsed, with existing recovery', async surface => {
     const i18n = createInstance();
     await i18n.init({ lng: locale, fallbackLng: 'en', resources: Object.fromEntries(Object.entries(locales).map(([lng, common]) => [lng, { translation: common }])) });

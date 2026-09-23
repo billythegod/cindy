@@ -329,6 +329,15 @@ function resolveEstimatedTurnCostUsd(
     : rawCostUsd;
 }
 
+/** Translation candidate only; callers must check their active i18n resources.
+ * Unknown-code fallback text is diagnostic content, not curated guidance. */
+export function remoteErrorI18nKey(msg: string): string | undefined {
+  const code = BRACKET_ERROR_CODE_RE.exec(msg)?.[1];
+  return code && (DEVICE_LINK_CHAT_ERROR_CODES.has(code)
+    || AGENT_RUNTIME_CHAT_ERROR_CODES.has(code) || REMOTE_ERROR_CODE_RE.test(msg))
+    ? `chat.remoteError.${code}` : undefined;
+}
+
 export function decodeRemoteErrorMessage(msg: string): string {
   const bracketMatch = BRACKET_ERROR_CODE_RE.exec(msg);
   const bracketCode = bracketMatch?.[1];

@@ -1,3 +1,4 @@
+import { sanitizeXaiTools } from '@cindy/model-compat';
 import WebSocket, { WebSocketServer } from 'ws';
 import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
@@ -34,17 +35,48 @@ describe('Codex text-only request policy', () => {
       }
       res.setHeader('content-type', 'text/event-stream'); res.end(frame(completed([text])));
     }));
-    const handle = await proxy({ upstream,
+    const handle = await proxy({ upstream: 'https://unused-gateway.invalid/v1',
+      routingTransform: () => ({ upstreamOverride: upstream }),
       // Existing Gateway/xAI adapters can add hosted search after ingress.
       transformRequest: [body => Array.isArray((body as { tools?: unknown[] }).tools) && (body as { tools: unknown[] }).tools.length === 0
         ? { ...body as Record<string, unknown>, tools: [{ type: 'web_search' }], tool_choice: 'auto' } : null],
-      requestGuard: ctx => codexTextOnlyRequestGuard(isCodexTextOnly('t'), ctx),
+      requestGuard: ctx => codexTextOnlyRequestGuard(isCodexTextOnly('t'), ctx, base => base === upstream),
     });
     const body = { ...(parallel === undefined ? {} : { parallel_tool_calls: parallel }), model: 'test', tools: [{ type: 'web_search' }, { type: 'function', name: 'exec_command' }], tool_choice: 'auto', input: [{ role: 'user', content: 'Hi' }] };
     await expect((await fetch(`${handle.url}/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).text()).resolves.toContain('Hello');
     disabled = false;
     await (await fetch(`${handle.url}/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).text();
     expect(received).toEqual([{ ...body, tools: [], tool_choice: 'none', parallel_tool_calls: false }, body]);
+  });
+
+  it.each([false, true, undefined])('preserves non-Lite empty-tool compatibility after xAI transforms (parallel=%s)', async parallel => {
+    for (const hostedSearch of [false, true]) {
+      const received: Record<string, unknown>[] = [];
+      const upstream = await listen(createServer(async (req, res) => {
+        let bytes = ''; for await (const chunk of req) bytes += chunk;
+        const body = JSON.parse(bytes); received.push(body);
+        if (body.tool_choice !== undefined || body.parallel_tool_calls !== undefined) {
+          res.writeHead(400); res.end('Empty tools cannot have control fields'); return;
+        }
+        res.setHeader('content-type', 'text/event-stream'); res.end(frame(completed([text])));
+      }));
+      const handle = await proxy({ upstream: 'https://chatgpt.com/backend-api/codex',
+        routingTransform: () => ({ upstreamOverride: upstream }),
+        transformRequest: [body => {
+          const sanitized = sanitizeXaiTools(body as Record<string, unknown>, {
+            preserveNoneToolChoice: hostedSearch, preserveSerialToolCalls: hostedSearch,
+          }) ?? body as Record<string, unknown>;
+          return hostedSearch ? { ...sanitized, tools: [{ type: 'x_search' }] } : sanitized;
+        }],
+        requestGuard: ctx => codexTextOnlyRequestGuard(true, ctx, base => base === 'https://chatgpt.com/backend-api/codex'),
+      });
+      const body = { model: 'grok', tools: [{ type: 'web_search' }], tool_choice: 'auto',
+        ...(parallel === undefined ? {} : { parallel_tool_calls: parallel }) };
+      const response = await fetch(`${handle.url}/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('Hello');
+      expect(received).toEqual([{ model: 'grok', tools: [] }]);
+    }
   });
 
   it.each([false, true])('blocks a tool returned against tool_choice even through a local adapter (%s)', async local => {
@@ -111,7 +143,7 @@ it.each([false, true, undefined])('enforces Lite welcome and normal requests on 
     socket.send(JSON.stringify(completed([body.tools.length === 0 ? text : tool])));
   }));
   const handle = await proxy({ upstream, resolveWebSocketUpstream: () => upstream,
-    webSocketTransforms: () => codexTextOnlyWebSocketTransforms(() => disabled),
+    webSocketTransforms: () => codexTextOnlyWebSocketTransforms(() => disabled, true),
   });
   const client = new WebSocket(`${handle.url.replace('http:', 'ws:')}/responses`, { perMessageDeflate: true });
   closers.push(() => client.terminate());
@@ -138,7 +170,7 @@ it('closes a WebSocket without forwarding a forbidden response, even after the l
     socket.send(JSON.stringify({ type: 'response.output_item.added', item: tool }));
   }));
   const handle = await proxy({ upstream, resolveWebSocketUpstream: () => upstream,
-    webSocketTransforms: () => codexTextOnlyWebSocketTransforms(() => disabled),
+    webSocketTransforms: () => codexTextOnlyWebSocketTransforms(() => disabled, true),
   });
   const client = new WebSocket(`${handle.url.replace('http:', 'ws:')}/responses`);
   closers.push(() => client.terminate()); await once(client, 'open');

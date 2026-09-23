@@ -24,7 +24,7 @@ import { isCindyGatewayProxyTokenInvalidError, isResponsesLiteParallelToolCallsE
 import {
   isStreamInterruptedErrorMessage,
 } from '@/utils/streamInterruptError';
-import { decodeRemoteErrorMessage } from '../../lib/makerChatStore';
+import { decodeRemoteErrorMessage, remoteErrorI18nKey } from '../../lib/makerChatStore';
 import { ERROR_REASON_I18N_KEYS } from './errorReasonI18n';
 import { getToolLoopI18nKey } from './toolLoopI18n';
 import type { ToolLoopErrorDetails } from '@cindy/maker-core';
@@ -44,9 +44,11 @@ export function ErrorMessageCard({
   /** Structured details for a tool-loop terminal error (optional for legacy rows). */
   toolLoop?: ToolLoopErrorDetails;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [showRaw, setShowRaw] = useState(false);
   const decoded = decodeRemoteErrorMessage(message);
+  const remoteKey = remoteErrorI18nKey(message);
+  const remoteGuidance = remoteKey && i18n.exists(remoteKey) ? t(remoteKey) : undefined;
   const i18nKey = reason ? ERROR_REASON_I18N_KEYS[reason] : undefined;
   const isStreamInterrupted = isStreamInterruptedErrorMessage(message, reason);
   const isGatewayProxyTokenInvalid = isCindyGatewayProxyTokenInvalidError({
@@ -69,7 +71,7 @@ export function ErrorMessageCard({
         ? t('chat.errorBanner.streamInterruptedNoRetry')
         : isGatewayProxyTokenInvalid
           ? t('chat.errorBanner.gatewayProxyTokenInvalidNoRetry')
-          : localizedReasonError ?? t('chat.errorBanner.replyFailed');
+          : localizedReasonError ?? remoteGuidance ?? t('chat.errorBanner.replyFailed');
   const showRawToggle = kind === 'reply-error' && Boolean(decoded);
 
   useEffect(() => {
@@ -98,7 +100,7 @@ export function ErrorMessageCard({
             </button>
             {showRaw && (
               <span className="mt-0.5 block text-xs break-all opacity-70 text-[var(--error-fg)]">
-                {redactSensitiveText(decoded)}
+                {redactSensitiveText(message)}
               </span>
             )}
           </>
