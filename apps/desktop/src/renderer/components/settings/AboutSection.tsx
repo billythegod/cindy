@@ -10,12 +10,13 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ExternalLink, FolderOpen, Upload } from 'lucide-react';
+import { Download, ExternalLink, FolderOpen, Upload } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
+import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import { useExperimentalFlag } from '@/hooks/useExperimentalFeatures';
 import { useAutoUpdateSettings } from '@/hooks/useAutoUpdateSettings';
 import { useAnalyticsSettings } from '@/hooks/useAnalyticsSettings';
@@ -28,10 +29,11 @@ import { LEGAL_LINKS } from '../../../shared/legalLinks';
 interface AgentVersionState {
   loading: boolean;
   version: string | null;
+  latestVersion: string | null;
   error?: string;
 }
 
-const INITIAL: AgentVersionState = { loading: true, version: null };
+const INITIAL: AgentVersionState = { loading: true, version: null, latestVersion: null };
 
 const DESKTOP_SOCIAL_LINKS = [
   {
@@ -63,12 +65,17 @@ function useAgentBinaryVersion(kind: 'claude-code' | 'codex' | 'pi'): AgentVersi
       .getBinaryVersion(kind)
       .then((res) => {
         if (cancelled) return;
-        setState({ loading: false, version: res.version, error: res.error });
+        setState({
+          loading: false,
+          version: res.version,
+          latestVersion: res.latestVersion,
+          error: res.error,
+        });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
-        setState({ loading: false, version: null, error: message });
+        setState({ loading: false, version: null, latestVersion: null, error: message });
       });
     return () => {
       cancelled = true;
@@ -99,25 +106,89 @@ export function AgentVersionsRows() {
 
   return (
     <>
-      <InfoRow
+      <AgentVersionRow
         label={t('settings.about.claudeCodeVersionLabel')}
-        value={renderVersion(claudeCode, t)}
-        dim={!claudeCode.version}
+        state={claudeCode}
       />
       <Divider />
-      <InfoRow
+      <AgentVersionRow
         label={t('settings.about.codexVersionLabel')}
-        value={renderVersion(codex, t)}
-        dim={!codex.version}
+        state={codex}
       />
       <Divider />
-      <InfoRow
+      <AgentVersionRow
         label={t('settings.about.piVersionLabel')}
-        value={renderVersion(pi, t)}
-        dim={!pi.version}
+        state={pi}
       />
       <Divider />
     </>
+  );
+}
+
+function AgentVersionRow({
+  label,
+  state,
+}: {
+  label: string;
+  state: AgentVersionState;
+}) {
+  const { t } = useTranslation();
+  const { confirm } = useConfirmDialog();
+  const currentVersion = state.version ? extractSemver(state.version) : null;
+  const latestVersion = state.latestVersion ? extractSemver(state.latestVersion) : null;
+  const updateAvailable = Boolean(currentVersion && latestVersion && currentVersion !== latestVersion);
+
+  const handleUpdate = async () => {
+    if (!currentVersion || !latestVersion) return;
+    const confirmed = await confirm({
+      title: t('settings.about.harnessUpdateTitle', { name: label }),
+      description: t('settings.about.harnessUpdateDescription', {
+        name: label,
+        currentVersion,
+        latestVersion,
+      }),
+      confirmText: t('settings.about.harnessUpdateConfirm'),
+      cancelText: t('settings.about.harnessUpdateCancel'),
+      autoFocusConfirm: true,
+    });
+    if (!confirmed) return;
+
+    try {
+      await window.electronAPI.relaunchForHarnessUpdate();
+    } catch {
+      toast.error(t('settings.about.harnessUpdateFailed'));
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-3 px-[18px] py-4">
+      <span className="text-13 text-[var(--settings-section-sublabel)]">{label}</span>
+      <div className="flex min-w-0 items-center justify-end gap-2">
+        <span
+          className={cn(
+            'truncate text-13 font-medium',
+            !state.version
+              ? 'text-[var(--settings-section-sublabel)] opacity-70'
+              : 'text-[var(--settings-section-title)]',
+          )}
+        >
+          {renderVersion(state, t)}
+        </span>
+        {updateAvailable && (
+          <Button
+            aria-label={t('settings.about.harnessUpdateButton', { name: label })}
+            className="gap-1 px-3 text-12"
+            onClick={() => void handleUpdate()}
+            size="md"
+            title={t('settings.about.harnessUpdateButton', { name: label })}
+            variant="secondary"
+          >
+            <Download aria-hidden size={12} strokeWidth={1.8} />
+            {t('settings.about.harnessUpdateButton', { name: label })}
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 

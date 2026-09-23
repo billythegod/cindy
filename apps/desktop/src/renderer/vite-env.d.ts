@@ -3812,6 +3812,8 @@ interface ElectronAPI {
   }>;
   /** 用户主动重启,让 beta 通道切换在下次冷启动前生效。 */
   relaunchForChannelChange: () => Promise<void>;
+  /** 用户确认后重启，并在下一次启动时更新受管 Agent 二进制。 */
+  relaunchForHarnessUpdate: () => Promise<{ accepted: true }>;
   /** 打开 beta 前预检:探测 beta manifest 是否可达(HTTP 200)。 */
   probeBetaChannel: () => Promise<{ available: boolean }>;
   onUpdateChannelSettings: (
@@ -6565,6 +6567,7 @@ interface ElectronAPI {
         kind: 'claude-code' | 'codex' | 'pi';
         binaryPath: string | null;
         version: string | null;
+        latestVersion: string | null;
         error?: string;
       }>;
     };

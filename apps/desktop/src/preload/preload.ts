@@ -2612,6 +2612,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     isCustomized?: boolean;
   }> => ipcRenderer.invoke('update-channel-settings-reset'),
   relaunchForChannelChange: (): Promise<void> => ipcRenderer.invoke('update-channel-relaunch'),
+  /** Restart once; the next startup refreshes managed Agent binaries first. */
+  relaunchForHarnessUpdate: (): Promise<{ accepted: true }> =>
+    ipcRenderer.invoke('update-harness-relaunch'),
   probeBetaChannel: (): Promise<{ available: boolean }> =>
     ipcRenderer.invoke('update-channel-probe-beta'),
   setUpdateRelaunchTheme: (theme: 'light' | 'dark'): void => {
@@ -7310,6 +7313,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         kind: 'claude-code' | 'codex' | 'pi';
         binaryPath: string | null;
         version: string | null;
+        latestVersion: string | null;
         error?: string;
       }> => ipcRenderer.invoke('maker:agent:binary-version', agentKind),
     },

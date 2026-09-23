@@ -22,6 +22,7 @@ import {
   type AgentBinaryKind,
 } from '../agent-binaries/index.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
+import { fetchManifest, type Manifest } from '../manifestService.js';
 
 import { MAKER_INVOKE } from './channels.js';
 
@@ -31,10 +32,39 @@ export interface AgentBinaryVersionResult {
   kind: AgentBinaryKind;
   binaryPath: string | null;
   version: string | null;
+  /** Latest version published on the active update channel, when reachable. */
+  latestVersion: string | null;
   error?: string;
 }
 
 const versionCache = new Map<string, string>();
+
+// About renders one request per managed agent. Share only the in-flight manifest
+// lookup so opening the page does not issue three identical requests, while a
+// later About visit (or a channel switch) always gets a fresh online comparison.
+let latestManifestPromise: Promise<Manifest | null> | null = null;
+
+function getLatestManifest(): Promise<Manifest | null> {
+  if (latestManifestPromise) return latestManifestPromise;
+  const request = fetchManifest(8_000).catch(() => null);
+  latestManifestPromise = request;
+  void request.then(
+    () => {
+      if (latestManifestPromise === request) latestManifestPromise = null;
+    },
+    () => {
+      if (latestManifestPromise === request) latestManifestPromise = null;
+    },
+  );
+  return latestManifestPromise;
+}
+
+function latestVersionFor(kind: AgentBinaryKind, manifest: Manifest | null): string | null {
+  if (!manifest) return null;
+  if (kind === 'claude-code') return manifest.claudeCode?.version ?? null;
+  if (kind === 'codex') return manifest.codexPackage?.version ?? manifest.codex?.version ?? null;
+  return manifest.pi?.version ?? null;
+}
 
 function isAgentBinaryKind(value: unknown): value is AgentBinaryKind {
   return value === 'claude-code' || value === 'codex' || value === 'pi';
@@ -81,25 +111,33 @@ export function registerMakerBinaryVersionIpc(): void {
         throwIpcError('INVALID_PARAMS', 'agentKind required (claude-code | codex | pi)');
       }
 
+      // Start this before probing the local binary so the three About rows all
+      // join the same in-flight online lookup even when their `--version`
+      // commands finish at different times.
+      const onlineManifest = getLatestManifest();
       const binaryPath = resolveBinaryPath(agentKind);
       // 执行前复核路径确为受管二进制(CodeQL js/command-line-injection 防御纵深)
       if (!binaryPath || !isVettedAgentBinaryPath(agentKind, binaryPath)) {
-        return { kind: agentKind, binaryPath: null, version: null, error: 'binary_not_ready' };
+        const latestVersion = latestVersionFor(agentKind, await onlineManifest);
+        return { kind: agentKind, binaryPath: null, version: null, latestVersion, error: 'binary_not_ready' };
       }
 
       const cached = versionCache.get(binaryPath);
       if (cached) {
-        return { kind: agentKind, binaryPath, version: cached };
+        const latestVersion = latestVersionFor(agentKind, await onlineManifest);
+        return { kind: agentKind, binaryPath, version: cached, latestVersion };
       }
 
       try {
         const version = await spawnVersion(binaryPath);
         versionCache.set(binaryPath, version);
-        return { kind: agentKind, binaryPath, version };
+        const latestVersion = latestVersionFor(agentKind, await onlineManifest);
+        return { kind: agentKind, binaryPath, version, latestVersion };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log.warn(`${agentKind} --version failed: ${message}`);
-        return { kind: agentKind, binaryPath, version: null, error: message };
+        const latestVersion = latestVersionFor(agentKind, await onlineManifest);
+        return { kind: agentKind, binaryPath, version: null, latestVersion, error: message };
       }
     },
   );

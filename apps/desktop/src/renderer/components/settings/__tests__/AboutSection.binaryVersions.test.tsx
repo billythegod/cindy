@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-i18next', () => ({
@@ -10,10 +10,19 @@ vi.mock('react-i18next', () => ({
 }));
 
 import { AgentVersionsRows } from '../AboutSection';
+import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog-provider';
 
 const getBinaryVersion = vi.fn();
+const relaunchForHarnessUpdate = vi.fn();
 
 describe('AboutSection agent binary versions', () => {
+  const renderRows = () =>
+    render(
+      <ConfirmDialogProvider>
+        <AgentVersionsRows />
+      </ConfirmDialogProvider>,
+    );
+
   beforeEach(() => {
     vi.clearAllMocks();
     (window as unknown as { electronAPI: unknown }).electronAPI = {
@@ -44,7 +53,7 @@ describe('AboutSection agent binary versions', () => {
       }),
     );
 
-    render(<AgentVersionsRows />);
+    renderRows();
 
     await waitFor(() => expect(getBinaryVersion).toHaveBeenCalledTimes(3));
     expect(getBinaryVersion).toHaveBeenCalledWith('claude-code');
@@ -67,8 +76,50 @@ describe('AboutSection agent binary versions', () => {
       ),
     );
 
-    render(<AgentVersionsRows />);
+    renderRows();
 
     await waitFor(() => expect(screen.getByText('settings.about.version.notReady')).toBeTruthy());
+  });
+
+  it('shows an update button only when the online version differs', async () => {
+    getBinaryVersion.mockImplementation((kind: string) =>
+      Promise.resolve({
+        kind,
+        binaryPath: `/${kind}`,
+        version: '1.0.0',
+        latestVersion: kind === 'codex' ? '1.1.0' : '1.0.0',
+      }),
+    );
+
+    renderRows();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'settings.about.harnessUpdateButton' })).toBeTruthy();
+    });
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+  });
+
+  it('requires confirmation before scheduling the harness relaunch', async () => {
+    getBinaryVersion.mockImplementation((kind: string) =>
+      Promise.resolve({
+        kind,
+        binaryPath: `/${kind}`,
+        version: '1.0.0',
+        latestVersion: kind === 'codex' ? '1.1.0' : '1.0.0',
+      }),
+    );
+    relaunchForHarnessUpdate.mockResolvedValue({ accepted: true });
+    (window as unknown as { electronAPI: { relaunchForHarnessUpdate: typeof relaunchForHarnessUpdate } })
+      .electronAPI.relaunchForHarnessUpdate = relaunchForHarnessUpdate;
+
+    renderRows();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'settings.about.harnessUpdateButton' })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateButton' }));
+    expect(relaunchForHarnessUpdate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateConfirm' }));
+    await waitFor(() => expect(relaunchForHarnessUpdate).toHaveBeenCalledOnce());
   });
 });
