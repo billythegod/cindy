@@ -4310,6 +4310,8 @@ describe('anthropic-compat-proxy thread minted-id cache LRU touch', () => {
     expect(cache.has('thread-0')).toBe(true);
     expect(cache.has('thread-1')).toBe(false);
     expect(cache.has(`thread-${MAX_CACHED_THREADS}`)).toBe(true);
+    // 触底重插必须保留原 Set:此前见过的 id 仍参与重复检测(Greptile review)。
+    expect(cache.get('thread-0')).toContain('id-0-a');
     expect(cache.get('thread-0')).toContain('id-0-b');
   });
 });
