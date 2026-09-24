@@ -116,8 +116,9 @@ async function sendFileToUser(deps: WechatMcpDeps, args: Record<string, unknown>
   let safePath: string;
   try {
     // 调用期解析:Codex/Pi factory ctx 的工作目录恒为空, 静态绑定会让该工具在
-    // 这些 harness 上必然 WORKING_DIR_UNAVAILABLE。
-    const workingDir = deps.getWorkingDir ? deps.getWorkingDir() : deps.workingDir;
+    // 这些 harness 上必然 WORKING_DIR_UNAVAILABLE。回调解析为空时回落静态值
+    // (Greptile review:兑现 deps 注释声明的回退契约)。
+    const workingDir = deps.getWorkingDir?.() || deps.workingDir;
     safePath = await resolveFileWithinWorkingDir(parsed.data.absPath, workingDir);
   } catch (error) {
     const errorCode =
