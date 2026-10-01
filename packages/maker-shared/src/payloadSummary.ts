@@ -579,7 +579,11 @@ function looksLikeQuotedSourceLiteral(text: string, index: number, end: number):
     // swallow the quoted delivery as source. `,` / `(` stay out of the anchor:
     // they open prose ("Done,", "(value)") far more often than they carry a
     // ternary; missing those rare forms only over-delivers, never drops.
-    || (prefix.endsWith(':') && /(?:=>|=|\breturn|\|\||&&)(?:[^;\r\n]|\r?\n[ \t])*\?(?:[^;\r\n]|\r?\n[ \t])*:$/.test(prefix))
+    // The `?` must also be detached from the preceding word (whitespace before
+    // it): code styles the ternary with spaces ("enabled ? x :"), while prose
+    // attaches the question mark to its word — so "Status = ready? File:"
+    // stays a prose label even though the line carries an `=`.
+    || (prefix.endsWith(':') && /(?:=>|=|\breturn|\|\||&&)(?:[^;\r\n]|\r?\n[ \t])*\s\?(?:[^;\r\n]|\r?\n[ \t])*:$/.test(prefix))
     || /[{,]\s*(?:[\w$]+|["'][^"']+["'])\s*:$/.test(prefix)
     || (after === before && /^\s*;/.test(text.slice(end + 1)));
 }

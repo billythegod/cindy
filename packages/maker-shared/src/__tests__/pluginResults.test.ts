@@ -310,6 +310,7 @@ describe('portable plugin results', () => {
       'Where is it? File: ' + literal,
       'Done, ok? Label: ' + literal,
       'Search "key (value)"? Path: ' + literal,
+      'Status = ready? File: ' + literal,
     ]) {
       expect(files(source)).toEqual([{ url, title: 'question.pdf' }]);
       expect(files(JSON.stringify({ note: source }))).toEqual([{ url, title: 'question.pdf' }]);
