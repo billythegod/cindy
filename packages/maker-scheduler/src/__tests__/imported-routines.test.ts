@@ -82,7 +82,7 @@ it('preserves the saved interval anchor when an edit omits it', async () => {
   // 回归:writeRoutine 的"旧客户端省略可选字段保留已存选择"合并只对顶层可选
   // 字段生效 —— triggers 数组整体替换, 未回显 anchorMs 的编辑(旧宿主/MCP 侧重
   // 建 triggers)会把导入例程的相位锚点静默丢掉, 下次触发退化为"编辑时间+间隔"。
-  let now = 1000; let seq = 0; let state: RoutineState | null = null;
+  const now = 1000; let seq = 0; let state: RoutineState | null = null;
   const execute = vi.fn(async () => ({ resultText: 'tick' }));
   const deps = { load: async () => structuredClone(state), save: async (value: RoutineState) => { state = structuredClone(value); }, execute, id: () => `id-${++seq}`, now: () => now, changed() {}, onError(error: unknown) { throw error; } };
   const engine = new RoutineEngine(deps); await engine.start();
