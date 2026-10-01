@@ -572,7 +572,14 @@ function looksLikeQuotedSourceLiteral(text: string, index: number, end: number):
   return /(?:[=\[(,?]|=>|&&|\|\||\breturn)$/.test(prefix)
     // A colon alone is also a prose label ("File:"). Require a preceding
     // conditional, allowing indented continuation lines but not new prose.
-    || (prefix.endsWith(':') && /\?(?:[^;\r\n]|\r?\n[ \t])*:$/.test(prefix))
+    // The `?` itself must sit in source syntax: a strong operator earlier in
+    // the span distinguishes a real ternary (`= enabled ? x :`, `return a ?
+    // b :`) from prose where a question mark merely shares the line ("Where is
+    // it? File:", "Done, ok? Label:") — the question-mark variant used to
+    // swallow the quoted delivery as source. `,` / `(` stay out of the anchor:
+    // they open prose ("Done,", "(value)") far more often than they carry a
+    // ternary; missing those rare forms only over-delivers, never drops.
+    || (prefix.endsWith(':') && /(?:=>|=|\breturn|\|\||&&)(?:[^;\r\n]|\r?\n[ \t])*\?(?:[^;\r\n]|\r?\n[ \t])*:$/.test(prefix))
     || /[{,]\s*(?:[\w$]+|["'][^"']+["'])\s*:$/.test(prefix)
     || (after === before && /^\s*;/.test(text.slice(end + 1)));
 }
