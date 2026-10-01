@@ -323,6 +323,8 @@ describe('portable plugin results', () => {
       'Archived /tmp/* into xdt-file:///tmp/backup.zip',
       'See https://cindy.app/*new* and open xdt-file:///tmp/report.pdf',
       'Moved /tmp//cache away; open xdt-file:///tmp/report.pdf',
+      'Archived /tmp/releases-/* into xdt-file:///tmp/backup.zip',
+      '归档 文件/* 到 xdt-file:///tmp/backup.zip',
     ]) {
       const expected = text.includes('backup.zip')
         ? [{ url: 'xdt-file:///tmp/backup.zip', title: 'backup.zip' }]

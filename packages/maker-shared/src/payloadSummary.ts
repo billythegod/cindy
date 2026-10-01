@@ -513,7 +513,9 @@ function* sourceContextTokens(text: string): Generator<{
     // punctuation, line start), mirroring the scheme guards below; real code
     // comments after `)`, `;`, whitespace and at line start keep masking.
     const before = index > 0 ? text[index - 1] : '';
-    const commentOpener = before !== '/' && before !== ':' && !/[\w$]/.test(before);
+    // Path continuations end in more than word chars: '-', '+', '~', '=' and
+    // non-ASCII segments ('releases-/*', '文件/*') are globs, not comments.
+    const commentOpener = before !== '/' && before !== ':' && !/[\w$\-+=~\u0080-\uFFFF]/.test(before);
     const quote = text[index];
     if (quote === '"' || quote === "'" || quote === '`') {
       // Python triple quotes delimit one literal, including internal single or
