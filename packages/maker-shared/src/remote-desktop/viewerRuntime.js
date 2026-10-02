@@ -24,11 +24,12 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       fy,
       fillHeight = false,
     ) {
-      const scale =
-        (fillHeight
-          ? vh / Math.max(1, dh)
-          : Math.min(vw / Math.max(1, dw), vh / Math.max(1, dh))) *
-        Math.max(1, Math.min(5, zoom));
+      const fit = fillHeight
+        ? vh / Math.max(1, dh)
+        : Math.min(vw / Math.max(1, dw), vh / Math.max(1, dh));
+      // Pinch stops at two viewer points per desktop point, never below fit.
+      const maxZoom = Math.max(1, 2 / fit);
+      const scale = fit * Math.max(1, Math.min(maxZoom, zoom));
       const width = dw * scale;
       const height = dh * scale;
       const x =
@@ -39,7 +40,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
         height <= vh
           ? (vh - height) / 2
           : Math.min(0, Math.max(vh - height, vh / 2 - fy * height));
-      return { x, y, width, height, scale };
+      return { x, y, width, height, scale, maxZoom };
     };
   /* END TRANSFORM */ const networkStats =
     /* BEGIN NETWORK_STATS */
@@ -142,6 +143,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
   const cursorImage = find("cursor-image");
   let pending = [],
+    pendingSince = 0,
     sending = false,
     cx = 0.5,
     cy = 0.5,
@@ -287,6 +289,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
             scale: desktopScale,
             width: dw * desktopScale,
             height: dh * desktopScale,
+            maxZoom: 1,
           }
         : transform(
             keyboardFitWidth?.stageWidth === stage.clientWidth
@@ -306,6 +309,11 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       y: viewportHeight() / 2 + verticalOffset(r.height) - fy * r.height,
     };
   };
+  // 0 at fit, 1 at the pinch limit for the current viewport and display.
+  const zoomProgress = (r = layout()) =>
+    r.maxZoom > 1
+      ? Math.max(0, Math.min(1, (zoom - 1) / (r.maxZoom - 1)))
+      : 0;
   // The backdrop uses 5% / 90% / 5% source segments. The middle 90%
   // keeps the fitted picture's scale; each outer 5% stretches uniformly
   // to fill the remaining space, horizontally or vertically as needed.
@@ -337,6 +345,25 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       return { axis: "y", s, w, h, left, centerH, centerY, sideH };
     }
     return null;
+  }
+  // Native video renders beneath this WebView, so z-order cannot hide the
+  // status behind the picture; cut the picture's rectangle out instead.
+  // Measure the status only after its text or the stage changes, not per frame.
+  let statusOrigin = null;
+  function clipNetworkStatus(r = layout()) {
+    const status = find("network-status");
+    if (!status) return;
+    if (!nativeVideoActive || status.style.display === "none") {
+      status.style.clipPath = "";
+      return;
+    }
+    if (!statusOrigin)
+      statusOrigin = { x: status.offsetLeft, y: status.offsetTop };
+    const left = r.x - statusOrigin.x,
+      top = r.y - statusOrigin.y,
+      right = left + r.width,
+      bottom = top + r.height;
+    status.style.clipPath = `polygon(evenodd,0 0,100% 0,100% 100%,0 100%,0 0,${left}px ${top}px,${right}px ${top}px,${right}px ${bottom}px,${left}px ${bottom}px,${left}px ${top}px)`;
   }
   function paintBackground() {
     if (nativeVideoActive) {
@@ -515,7 +542,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       vh = viewportHeight();
     // Grow extra resting travel continuously from zero at fit to 180 screen
     // points at maximum zoom. Never count the unused space of a fitting axis.
-    const clearance = (180 * (Math.max(1, Math.min(5, zoom)) - 1)) / 4;
+    const clearance = 180 * zoomProgress(r);
     const axis = (viewport, content) =>
       content <= viewport
         ? {
@@ -551,7 +578,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
   function rubber(v, min, max, inverse = false) {
     const edge = bounded(v, min, max),
       d = v - edge;
-    const reach = 40 + 10 * (Math.max(1, Math.min(5, zoom)) - 1);
+    const reach = 40 + 40 * zoomProgress();
     return (
       edge +
       Math.sign(d) *
@@ -678,6 +705,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       el.style.left = r.x + "px";
       el.style.top = r.y + "px";
     }
+    clipNetworkStatus(r);
     paintBackground();
     if (remoteCursor) {
       cursor.style.width = remoteCursor.width + "px";
@@ -803,6 +831,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
   }
   function queue(event) {
     if (!control) return;
+    if (!pending.length) pendingSince = performance.now();
     if (config.desktop && (event.kind === "button" || event.kind === "scroll"))
       flushClipboardModifier();
     // Remote visibility can remain hidden after synthetic mouse movement. Wake
@@ -830,7 +859,21 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
     }
   }
   function flush() {
-    if (!pending.length || sending) return;
+    if (!pending.length) return;
+    // Input is an intent about the picture the user saw, not durable work.
+    // Never replay old clicks/typing after a stalled ACK or data channel drains.
+    if (performance.now() - pendingSince >= 2000) {
+      pending = [];
+      control = false;
+      release();
+      updateMouseButtons();
+      post({ type: "inputOverflow" });
+      return;
+    }
+    if (sending) return;
+    // Do not route around a congested live data channel: the relay could
+    // overtake its already-buffered key/button events and reorder input.
+    if (pc?.connectionState === "connected" && dc?.readyState === "open" && dc.bufferedAmount >= 16384) return;
     const events = pending.splice(0, 64),
       sequence = ++seq;
     if (
@@ -839,7 +882,14 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       dc.readyState === "open" &&
       dc.bufferedAmount < 16384
     ) {
-      dc.send(JSON.stringify({ sequence, events }));
+      try {
+        dc.send(JSON.stringify({ sequence, events }));
+      } catch {
+        pending = [];
+        control = false;
+        release();
+        post({ type: "inputOverflow" });
+      }
     } else {
       sending = true;
       post({ type: "input", sequence, events });
@@ -1151,9 +1201,13 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
     if (multi.kind === "pinch") {
       manualViewMoved = true;
       cursorNeedsEntry = true;
+      const { maxZoom } = layout();
       zoom = Math.max(
         1,
-        Math.min(5, (multi.zoom * next.d) / Math.max(1, multi.d)),
+        Math.min(
+          maxZoom,
+          (Math.min(maxZoom, multi.zoom) * next.d) / Math.max(1, multi.d),
+        ),
       );
       const r = layout();
       fx =
@@ -1452,14 +1506,22 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
         }
         return;
       }
-      if (
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        (e.key?.length === 1 || e.key === "Process" || e.key === "Dead")
-      )
-        return;
     }
+    // The focused textarea delivers characters through input (and editing
+    // keys through beforeinput). Forwarding their keydown too types twice on
+    // iOS, where the software keyboard reports both events.
+    if (
+      (config.desktop || keyboardEnabled) &&
+      document.activeElement === keyboardInput &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      (e.key?.length === 1 ||
+        e.key === "Process" ||
+        e.key === "Dead" ||
+        (keyboardEnabled && ["Backspace", "Enter"].includes(e.code)))
+    )
+      return;
     if (control && validKeys.has(normalizedKey(e.code))) {
       e.preventDefault();
       flushClipboardModifier();
@@ -1472,7 +1534,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
     if (config.desktop && control && deferredClipboardModifier === code) {
       flushClipboardModifier();
     }
-    if (config.desktop && !hardwareKeys.delete(code)) return;
+    if (!hardwareKeys.delete(code)) return;
     if (control && validKeys.has(code)) {
       e.preventDefault();
       queue({ kind: "key", code, down: false });
@@ -1495,6 +1557,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
     });
   }
   const observer = new ResizeObserver(() => {
+    statusOrigin = null;
     reportViewport();
     release();
     settlePan();
@@ -2039,7 +2102,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
         }
         break;
       case "networkStatus": {
-        const status = document.getElementById("network-status");
+        const status = find("network-status");
         if (!status) break;
         status.textContent =
           typeof message.text === "string" ? message.text : "";
@@ -2050,6 +2113,8 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
         }
         if (/^#[0-9a-f]{3,8}$/i.test(message.color))
           status.style.color = message.color;
+        statusOrigin = null;
+        clipNetworkStatus();
         break;
       }
       case "nativeTouchpad": {
@@ -2246,6 +2311,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
         if (!config.nativeMedia || message.epoch !== epoch) break;
         nativeVideoActive = message.active === true;
         image.style.visibility = nativeVideoActive ? "hidden" : "visible";
+        clipNetworkStatus();
         paintBackground();
         break;
       case "nativeCursor":
@@ -2289,6 +2355,10 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       }
       case "control":
         release();
+        // A new control intent abandons the previous relay batch. Advance the
+        // existing sequence fence so a late old ACK cannot unlock a new batch.
+        seq++;
+        sending = false;
         control = message.enabled;
         if (!control) showKeyboard(false);
         pending = [];

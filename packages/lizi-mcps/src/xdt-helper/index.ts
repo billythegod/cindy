@@ -9,6 +9,7 @@
  */
 
 export { registerGetCapabilitiesTool } from './get_capabilities.js';
+export { registerAppUpdateTools, type AppUpdateCallbacks } from './app_update.js';
 export { registerGrokLoginTools, type GrokLoginCallbacks, type GrokLoginState } from './grok_login.js';
 export { registerSkillhubTools, type SkillhubAgentCallback, type SkillhubAgentRequest } from './skillhub.js';
 export {
@@ -140,6 +141,25 @@ export {
   type BotSkillSummaryWire,
   type BotSkillToolDeps,
 } from './bot_skills.js';
+export {
+  registerBotWorkbenchTools,
+  WORKBENCH_BATCH_MAX,
+  WORKBENCH_MESSAGE_MAX_CHARS,
+  type BotWorkbenchCallbacks,
+  type BotWorkbenchSnapshotWire,
+  type BotWorkbenchToolDeps,
+  type WorkbenchAutomationWire,
+  type WorkbenchDigestWire,
+  type WorkbenchItemWire,
+  type WorkbenchJudgmentInputWire,
+  type WorkbenchJudgmentWire,
+  type WorkbenchProjectBriefWire,
+  type WorkbenchProjectWire,
+  type WorkbenchTaskStateWire,
+  type WorkbenchTaskWire,
+  type WorkbenchTranscriptWire,
+  type WorkbenchVerdictWire,
+} from './bot_workbench.js';
 export {
   registerCreateTeammateTool,
   type CreateTeammateCallbacks,

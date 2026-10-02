@@ -5,7 +5,11 @@ import {
   deriveOptimisticSessionTitle,
 } from '@cindy/maker-shared/session-title';
 import { i18n } from '@/i18n';
-import type { CreateSessionOptions, RemoteDirectoryEntry } from '@/device-link/mobileMakerTransport';
+import type {
+  CreateSessionOptions,
+  RemoteDirectoryDrive,
+  RemoteDirectoryEntry,
+} from '@/device-link/mobileMakerTransport';
 import type { DeviceProvidersPayload } from '@/device-link/deviceProvidersCache';
 import type { MobileModelOption } from './agentCapabilities';
 import { effectiveSourceIdForModel } from '@cindy/model-providers/registry';
@@ -280,6 +284,41 @@ export function filterRemoteDirectoryEntries(
 ): readonly RemoteDirectoryEntry[] {
   if (showHiddenDirectories) return entries;
   return entries.filter((entry) => !entry.name.startsWith('.'));
+}
+
+/**
+ * 远端目录浏览的盘符切换项(Windows 被控端 fs:list-dir 的可选 `drives`)。旧被控端缺省、
+ * 字段畸形或只有一个盘时返回空数组——没有可切换的目标就不显示盘符切换。
+ */
+export function normalizeRemoteDirectoryDrives(value: unknown): RemoteDirectoryDrive[] {
+  if (!Array.isArray(value)) return [];
+  const drives: RemoteDirectoryDrive[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const { name, path, current } = item as Record<string, unknown>;
+    if (typeof path !== 'string' || !path || seen.has(path)) continue;
+    seen.add(path);
+    drives.push({ name: typeof name === 'string' && name ? name : path, path, current: current === true });
+  }
+  return drives.length > 1 ? drives : [];
+}
+
+/** 目录请求是否仍属于当前被控电脑;切电脑后旧请求即使序号未变也不能写回。 */
+export function isCurrentRemoteBrowseRequest(
+  request: { seq: number; deviceId: string },
+  current: { seq: number; deviceId: string },
+): boolean {
+  return Boolean(request.deviceId)
+    && request.deviceId === current.deviceId
+    && request.seq === current.seq;
+}
+
+/** 首次盘符枚举超时后,最多再拉几次当前目录;超过即停,避免空转。 */
+const REMOTE_BROWSE_DRIVE_RETRY_LIMIT = 3;
+
+export function shouldRetryRemoteBrowseDrives(drivesPending: unknown, attempt: number): boolean {
+  return drivesPending === true && attempt >= 0 && attempt < REMOTE_BROWSE_DRIVE_RETRY_LIMIT;
 }
 
 export function buildRecentWorkspaceOptions(
@@ -720,6 +759,69 @@ export function pickAgentDefaultRuntime(args: {
     ? reconcileEffortForModel(sectionModel, baseEffort)
     : catalogReady ? '' : baseEffort;
   return { agentKind, model, effort, providerId };
+}
+
+/**
+ * 「恢复上次选过的 agent」是否仍待落定:有记忆的 agent、模型尚未落定,且当前设备就是恢复
+ * 目标(没有偏好设备 = 不限设备)。
+ */
+export function isStoredAgentRestorePending(input: {
+  storedAgentKind: NewSessionAgentKind | null | undefined;
+  appliedStoredAgentKind: NewSessionAgentKind | null;
+  expectedDeviceId: string;
+  selectedDeviceId: string;
+}): boolean {
+  if (!input.storedAgentKind) return false;
+  if (input.appliedStoredAgentKind === input.storedAgentKind) return false;
+  return !input.expectedDeviceId || input.selectedDeviceId === input.expectedDeviceId;
+}
+
+/** 上次 agent 的恢复进度:agent = 已恢复 agent 与权限、模型仍是占位;done = 模型也已落定。 */
+export interface StoredAgentRestoreState {
+  agentKind: NewSessionAgentKind;
+  phase: 'agent' | 'done';
+}
+
+/**
+ * 恢复上次 agent 的下一步。不变量:agent 不依赖任何数据,偏好一到就恢复;只有模型要等
+ * 目录或该 agent 的最近任务(canResolveStoredAgentRuntime),且只补一次。
+ * - 'full':数据已够,agent + 权限 + 模型一次恢复;
+ * - 'agent':数据未到,先恢复 agent + 权限,模型用占位——否则目录一直拉不到时草稿停在
+ *   别的 agent,创建会建错 agent 并把它存成新偏好;
+ * - 'model':agent 已恢复、数据刚到,只补 model / effort / providerId,不动 agent 与权限;
+ * - null:已落定,或 agent 已恢复但数据仍未到。
+ */
+export function nextStoredAgentRestoreStep(input: {
+  storedAgentKind: NewSessionAgentKind;
+  restored: StoredAgentRestoreState | null;
+  modelReady: boolean;
+}): 'full' | 'agent' | 'model' | null {
+  const restored = input.restored?.agentKind === input.storedAgentKind ? input.restored : null;
+  if (restored?.phase === 'done') return null;
+  if (restored?.phase === 'agent') return input.modelReady ? 'model' : null;
+  return input.modelReady ? 'full' : 'agent';
+}
+
+/**
+ * 恢复上次的 agent 时,是否已有足够数据选模型(pickAgentDefaultRuntime 的输入):
+ * 供应商目录已就绪 / 被控端明确不支持目录,或该设备上已有这个 agent 的最近任务。
+ * 两者都没有时 pickAgentDefaultRuntime 只能落到内置兜底模型(Claude 为 Sonnet 4.6),
+ * 这时只先恢复 agent(见 nextStoredAgentRestoreStep),模型等数据到了再补。
+ * 不能用 `loading === false` 代替:useDeviceProviders 的 loading 初值就是 false,拉取失败后也是。
+ */
+export function canResolveStoredAgentRuntime(input: {
+  agentKind: NewSessionAgentKind;
+  sessions: readonly RemoteSession[];
+  deviceId: string;
+  catalogReady: boolean;
+  providersUnsupported: boolean;
+}): boolean {
+  if (!input.deviceId) return true;
+  if (input.catalogReady || input.providersUnsupported) return true;
+  return pickMostRecentSessionRuntime(input.sessions, {
+    deviceId: input.deviceId,
+    agentKind: input.agentKind,
+  }) !== null;
 }
 
 /**
