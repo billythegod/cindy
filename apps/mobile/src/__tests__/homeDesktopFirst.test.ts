@@ -558,9 +558,27 @@ describe('mobile home desktop-first surface', () => {
     expect(projectRowSource).not.toContain('<SquarePen');
     expect(projectRowSource).not.toContain('<Ellipsis');
     expect(projectRowSource).not.toContain('project.pendingInteractionCount');
+    // 收起组头汇总对齐桌面 ProjectNode:仅收起时计算,运行态走图标呼吸,右槽只放一颗点。
+    expect(desktopProjectNode).toContain('isCollapsed && lamp?.running');
+    expect(projectRowSource).toMatch(/collapsed\s*\?\s*resolveMobileCollapsedGroupStatus\(project\.sessions,/);
+    expect(projectRowSource).toContain('<SessionStatusPulse running={!!collapsedStatus?.running}>');
+    expect(projectRowSource).toContain('home.projectCollapsedStatus.');
+    // 组头按钮是单个无障碍元素:汇总状态必须挂在按钮自身,读屏才能读出。
+    expect(projectRowSource).toContain('accessibilityValue={collapsedStatusA11y ? { text: collapsedStatusA11y } : undefined}');
     expect(projectRowSource).not.toContain('project.subtitle');
     expect(sessionRowSource).toContain('titleTestIDPrefix = \'home.sessionRowTitle\'');
     expect(sessionRowSource).toContain('`home.sessionRowTitle.${item.session.id}`');
+    // 标签色球紧跟标题(与桌面侧栏一致):标题与色球同在一组,标题只取文字宽度,
+    // 不能再用 flex: 1 把色球挤到行尾贴着时间。
+    const titleCluster = sessionRowSource.slice(
+      sessionRowSource.indexOf('<View style={styles.sessionTitleCluster}>'),
+      sessionRowSource.indexOf('{sourceLabel ? ('),
+    );
+    expect(titleCluster).toMatch(/\{item\.title\}\s*<\/Text>\s*<TaskTagDots tags=\{item\.session\.tags\}/);
+    const listStyles = readSource('src/session/HomeListVisuals.tsx');
+    const titleStyle = listStyles.slice(listStyles.indexOf('  sessionTitle: {'), listStyles.indexOf('},', listStyles.indexOf('  sessionTitle: {')));
+    expect(titleStyle).toContain('flexShrink: 1');
+    expect(titleStyle).not.toContain('flex: 1');
     expect(sessionRowSource).toContain('ellipsizeMode="tail"');
     expect(sessionRowSource).toContain('numberOfLines={1}');
     expect(sessionRowSource).toContain('buildRemoteSessionCardPreview(');

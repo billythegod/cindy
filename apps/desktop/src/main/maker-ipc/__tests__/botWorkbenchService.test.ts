@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }));
 
+import { BOT_WORKBENCH_MAX_DIRECTORIES } from '../../../shared/botWorkbench.js';
 import { botProfileDir } from '../botProfileFolder.js';
 import {
   addBotWorkbenchDirectory,
@@ -50,13 +51,13 @@ describe('bot workbench storage', () => {
     expect(await readBotWorkbenchDirectoryPaths(root, 'bot-2')).toEqual([]);
   });
 
-  it('rejects missing folders and more than six projects', async () => {
+  it('rejects missing folders and only stops at the sanity bound, well past six projects', async () => {
     root = await mkdtemp(path.join(os.tmpdir(), 'bot-workbench-'));
     expect(await addBotWorkbenchDirectory(root, 'bot-1', path.join(root, 'missing'))).toEqual({
       ok: false,
       errorCode: 'NOT_A_DIRECTORY',
     });
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < BOT_WORKBENCH_MAX_DIRECTORIES; index += 1) {
       const dir = path.join(root, `p${index}`);
       await mkdir(dir);
       expect(await addBotWorkbenchDirectory(root, 'bot-1', dir)).toEqual({ ok: true });
@@ -104,10 +105,10 @@ describe('bot workbench storage', () => {
         { path: 'relative/path' },
         { path: '/a', addedAt: 7 },
         { path: '/a' },
-        ...Array.from({ length: 8 }, (_, index) => ({ path: `/p${index}`, addedAt: 'x' })),
+        ...Array.from({ length: BOT_WORKBENCH_MAX_DIRECTORIES + 5 }, (_, index) => ({ path: `/p${index}`, addedAt: 'x' })),
       ],
     });
-    expect(normalized?.directories).toHaveLength(6);
+    expect(normalized?.directories).toHaveLength(BOT_WORKBENCH_MAX_DIRECTORIES);
     expect(normalized?.directories[0]).toEqual({ path: '/a', addedAt: new Date(0).toISOString() });
   });
 });
@@ -216,5 +217,21 @@ describe('bot workbench write-chain failure hygiene', () => {
     expect(await addBotWorkbenchDirectory(root, 'bot-1', proj, new Date('2026-10-01T03:00:00.000Z'))).toEqual({ ok: true });
     const state = await readBotWorkbenchState(root, 'bot-1');
     expect(state.directories[0]).toBe(path.resolve(proj));
+  });
+});
+
+describe('bot workbench directory removal normalization', () => {
+  it('removes a handed-over project addressed by an equivalent, differently-spelled path', async () => {
+    // 回归:add 存 path.resolve 后的路径, remove 曾按原始串比较 —— 尾分隔符、
+    // ./、../ 等等价写法会静默漏删, 广播后 UI 里项目仍在。
+    root = await mkdtemp(path.join(os.tmpdir(), 'bot-workbench-'));
+    const proj = path.join(root, 'proj');
+    const nested = path.join(proj, 'inner');
+    await mkdir(nested, { recursive: true });
+    await addBotWorkbenchDirectory(root, 'bot-1', proj, new Date('2026-10-01T01:00:00.000Z'));
+
+    // 等价写法:inner/.. 投影回 proj, 再补一个尾分隔符。
+    await removeBotWorkbenchDirectory(root, 'bot-1', `${nested}${path.sep}..${path.sep}`);
+    expect((await readBotWorkbenchState(root, 'bot-1')).directories).toEqual([]);
   });
 });
