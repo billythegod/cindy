@@ -96,12 +96,15 @@ import {
   presetDisplayName,
   sortPresetsForRegion,
 } from '@cindy/model-providers';
-import type {
-  AgentKind,
-  CustomProviderConfig,
-  ProviderPreset,
-  ProviderRuntimeModelConfig,
-  ProviderWireProtocol,
+import {
+  defaultEffortForCapabilities,
+  PI_REASONING_EFFORTS,
+  type AgentKind,
+  type CustomProviderConfig,
+  type PiReasoningEffort,
+  type ProviderPreset,
+  type ProviderRuntimeModelConfig,
+  type ProviderWireProtocol,
 } from '@cindy/model-providers';
 import { SettingsTextInput } from './SettingsTextInput';
 import { CURRENT_CINDY_REGION } from '@/../shared/brandRegion';
@@ -167,6 +170,12 @@ interface ImageGenerationReloadConfirmation {
   keys: RuntimeKeys;
   busyCount: number;
 }
+
+/** 新增模型的默认思考梯子:low–max(不含 minimal);默认档 medium。 */
+const DEFAULT_NEW_MODEL_EFFORT_TIERS: readonly PiReasoningEffort[] = PI_REASONING_EFFORTS.filter(
+  (tier) => tier !== 'minimal',
+);
+const NEW_MODEL_EFFORT_TIERS: readonly PiReasoningEffort[] = PI_REASONING_EFFORTS;
 
 type ModelRow = ProviderRuntimeModelConfig;
 interface ModelPickerState {
@@ -440,6 +449,31 @@ export function ProviderConnectionDialog({
   }, [fieldError]);
   const [name, setName] = useState(initial?.name ?? '');
   const [manualModel, setManualModel] = useState('');
+  // 新增模型的可选思考强度:默认梯子 low–max(不含 minimal,匹配用户惯例),
+  // 默认档 medium(与 defaultEffortForCapabilities 的优先序一致)。开启后写入
+  // 新增行的 reasoning / reasoningEfforts / reasoningDefaultEffort;关闭时保持
+  // 既有「未声明」语义(#5535:unknown ≠ 明确无档,投影层打 effortsUnknown)。
+  // 本次会话新增的模型行(agent:id):保存时对这些行应用思考默认;
+  // 已保存连接的既有行即使 reasoning 未声明也不动(用户没要求改它们)。
+  const sessionAddedModelIdsRef = useRef<Set<string>>(new Set());
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  const [thinkingTiers, setThinkingTiers] = useState<readonly PiReasoningEffort[]>(DEFAULT_NEW_MODEL_EFFORT_TIERS);
+  const [thinkingDefault, setThinkingDefault] = useState<PiReasoningEffort>('medium');
+  const withThinkingDefaults = (row: Partial<ModelRow> = {}): Partial<ModelRow> => {
+    if (!thinkingEnabled || thinkingTiers.length === 0) return row;
+    // reasoningDefaultEffort 必须包含在 reasoningEfforts 内(类型合同):
+    // 默认档被取消勾选时回落到梯子里最接近 medium 的一档。
+    const tiers = [...thinkingTiers];
+    const defaultTier = tiers.includes(thinkingDefault)
+      ? thinkingDefault
+      : defaultEffortForCapabilities(tiers) ?? tiers[0];
+    return {
+      ...row,
+      reasoning: true,
+      reasoningEfforts: tiers,
+      ...(defaultTier ? { reasoningDefaultEffort: defaultTier } : {}),
+    };
+  };
   const [rt, setRt] = useState<Record<DialogAgentKind, RuntimeFields>>(() => initRuntimes(initial));
   const [activeTab, setActiveTab] = useState<DialogAgentKind>(
     () =>
@@ -1460,6 +1494,13 @@ export function ProviderConnectionDialog({
     if (!picker) return;
     const chosen = picker.models.filter((m) => picker.selected.has(m.id));
     if (chosen.length === 0) return;
+    // 首次进入该 runtime 的选中项 = 会话新增行,登记 id 供保存时应用思考默认。
+    const previousModelIds = new Set(
+      rtRef.current[picker.agent].models.map((m) => m.id.trim()).filter(Boolean),
+    );
+    for (const m of chosen) {
+      if (!previousModelIds.has(m.id)) sessionAddedModelIdsRef.current.add(`${picker.agent}:${m.id}`);
+    }
     const pickerIds = new Set(picker.models.map((m) => m.id));
     // 重映射靠 id 而不是行号:picker 确认会任意增删/重排该 runtime 的行,旧行号
     // 不能直接套到新数组。合并结果必须同步算出一份普通数组,同时喂给状态更新和
@@ -1479,13 +1520,18 @@ export function ProviderConnectionDialog({
       const contextWindow = latest?.contextWindow ?? m.contextWindow;
       const defaultEnabled = latest?.defaultEnabled ?? m.defaultEnabled;
       const supportsImageInput = latest ? latest.supportsImageInput : m.supportsImageInput;
-      const reasoning = latest ? latest.reasoning : m.reasoning;
-      const reasoningEfforts = latest ? latest.reasoningEfforts : m.reasoningEfforts;
+      // 思考默认只落到"既无旧行、发现元数据也没声明 reasoning"的新行上:
+      // 已有配置/发现结果优先,避免把用户清掉的档位又加回去。
+      const fallbackThinking = !latest && m.reasoning === undefined ? withThinkingDefaults({}) : {};
+      const reasoning = latest ? latest.reasoning : (m.reasoning ?? fallbackThinking.reasoning);
+      const reasoningEfforts = latest
+        ? latest.reasoningEfforts
+        : (m.reasoningEfforts ?? fallbackThinking.reasoningEfforts);
       const api = latest ? latest.api : m.api;
       const piApi = latest ? latest.piApi : m.piApi;
       const reasoningDefaultEffort = latest
         ? latest.reasoningDefaultEffort
-        : m.reasoningDefaultEffort;
+        : (m.reasoningDefaultEffort ?? fallbackThinking.reasoningDefaultEffort);
       return {
         id: m.id,
         name: latest?.name.trim() ? latest.name.trim() : m.name,
@@ -1614,7 +1660,16 @@ export function ProviderConnectionDialog({
         return;
       }
       const models = modelsAfterProviderEndpointEdit(rf.models, rf.modelRouteBaseUrl, rf.baseUrl)
-        .map((m) => ({
+        .map((raw) => {
+        // 会话新增行:开/关/调档可能发生在添加之后,保存在此统一应用;
+        // 既有连接的行(不在 session 集合)即使 reasoning 未声明也保持原样。
+        const rawId = raw.id.trim();
+        const m = thinkingEnabled
+          && raw.reasoning === undefined
+          && sessionAddedModelIdsRef.current.has(`${a}:${rawId}`)
+          ? { ...raw, ...withThinkingDefaults() }
+          : raw;
+        return ({
           id: m.id.trim(),
           name: m.name.trim(),
           mode: m.mode,
@@ -1640,7 +1695,8 @@ export function ProviderConnectionDialog({
                   : {}),
               }
             : {}),
-        }))
+        });
+        })
         .filter((m) => m.id && m.name);
       const requestPath = a === 'pi' ? '' : rf.requestPath.trim();
       if (requestPath && !isProviderRequestPath(requestPath)) {
@@ -2403,13 +2459,82 @@ export function ProviderConnectionDialog({
                   </FormField>
                   <Button variant="secondary" disabled={!manualModel.trim()} onClick={() => {
                     const ids = [...new Set(manualModel.split(/[,\n]/).map((id) => id.trim()).filter(Boolean))];
+                    for (const id of ids) sessionAddedModelIdsRef.current.add(`${activeTab}:${id}`);
                     patch(activeTab, (runtime) => ({ ...runtime, models: [
                       ...runtime.models.filter((model) => model.id.trim()),
-                      ...ids.filter((id) => !runtime.models.some((model) => model.id === id)).map((id) => ({ id, name: id })),
+                      ...ids.filter((id) => !runtime.models.some((model) => model.id === id)).map((id) => withThinkingDefaults({ id, name: id }) as ModelRow),
                     ] }));
                     setManualModel('');
                     setFieldError(null);
                   }}>{t('settings.providers.custom.fields.addModel')}</Button>
+                  {/* 新增模型的可选思考强度:开启后本次新增的模型带默认梯子(low–max)
+                      与默认档;关闭保持「未声明」语义(#5535),不会给不支持的端点导出档位。 */}
+                  <div className="mt-1 flex flex-col gap-2 rounded-lg bg-[var(--surface-elevated)] px-3 py-2.5">
+                    <label className="flex min-w-0 cursor-pointer items-center gap-2 text-[var(--settings-section-desc)]">
+                      <input
+                        type="checkbox"
+                        checked={thinkingEnabled}
+                        onChange={(event) => setThinkingEnabled(event.currentTarget.checked)}
+                        className="h-4 w-4 shrink-0 cursor-pointer accent-[var(--settings-menu-text-selected)]"
+                      />
+                      <span className="text-12 font-medium leading-5 text-[var(--settings-section-sublabel)]">
+                        {t('settings.providers.custom.fields.modelThinkingEnable')}
+                      </span>
+                    </label>
+                    {thinkingEnabled && (
+                      <div className="flex flex-col gap-2 pl-6">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {NEW_MODEL_EFFORT_TIERS.map((tier) => {
+                            const selected = thinkingTiers.includes(tier);
+                            return (
+                              <button
+                                key={tier}
+                                type="button"
+                                aria-pressed={selected}
+                                onClick={() => {
+                                  setThinkingTiers((current) => {
+                                    const next = current.filter((value) => value !== tier);
+                                    if (selected) return next.length > 0 ? next : current;
+                                    const ordered = NEW_MODEL_EFFORT_TIERS.filter(
+                                      (value) => value === tier || next.includes(value),
+                                    );
+                                    return ordered;
+                                  });
+                                }}
+                                className={cn(
+                                  'rounded-full border px-2.5 py-1 text-12 leading-none transition-colors',
+                                  selected
+                                    ? 'border-[var(--settings-menu-text-selected)] bg-[var(--settings-menu-text-selected)] text-[var(--settings-btn-secondary-bg)]'
+                                    : 'border-[var(--border-default)] text-[var(--settings-section-desc)] hover:text-[var(--settings-section-title)]',
+                                )}
+                              >
+                                {t(`effortLevels.${tier}`)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-12 text-[var(--settings-section-desc)]">
+                            {t('settings.providers.custom.fields.modelThinkingDefault')}
+                          </span>
+                          <select
+                            value={thinkingDefault}
+                            onChange={(event) => setThinkingDefault(event.currentTarget.value as PiReasoningEffort)}
+                            className="h-8 rounded-md border border-[var(--border-default)] bg-[var(--surface-elevated)] px-2 text-12 text-[var(--settings-section-title)]"
+                          >
+                            {NEW_MODEL_EFFORT_TIERS.filter((tier) => thinkingTiers.includes(tier)).map((tier) => (
+                              <option key={tier} value={tier}>
+                                {t(`effortLevels.${tier}`)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <span className="text-11 leading-4 text-[var(--text-tertiary)]">
+                          {t('settings.providers.custom.fields.modelThinkingHint')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* 请求头（可选） */}
