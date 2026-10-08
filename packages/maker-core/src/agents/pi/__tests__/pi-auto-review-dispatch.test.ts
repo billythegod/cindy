@@ -13,6 +13,7 @@
 
 import {
   promises as fs,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -98,16 +99,29 @@ vi.mock('../transport.js', () => ({
 vi.mock('../rpc-client.js', () => ({
   PiRpcProcess: class {
     isClosed = false;
+    private readonly onEvent: (event: unknown) => void;
+    private readonly nativeSettings: { compaction?: Record<string, unknown> };
     constructor(opts: {
       onEvent: (event: unknown) => void;
       onExit: (exit: { code: number | null; signal: string | null }) => void }) {
       captured.onEvent = opts.onEvent;
       captured.onExit = opts.onExit;
+      this.onEvent = opts.onEvent;
+      // Freeze local startup settings; the remote spawn-only fixture has no
+      // local settings file. Keep ACK delivery bound to this runtime instance.
+      const settingsPath = captured.env.PI_CODING_AGENT_DIR
+        ? path.join(captured.env.PI_CODING_AGENT_DIR, 'settings.json') : undefined;
+      this.nativeSettings = settingsPath && existsSync(settingsPath)
+        ? JSON.parse(readFileSync(settingsPath, 'utf8'))
+        : {};
     }
     async request(
       cmd: Record<string, unknown> & { type: string },
     ): Promise<{ success: boolean; command?: string; data?: unknown; error?: string }> {
       captured.requests.push(cmd);
+      if (cmd.type === 'refresh_models' || cmd.type === 'set_compaction_reserve_tokens') {
+        return { success: false, error: `Unknown command: ${cmd.type}` };
+      }
       if (cmd.type === 'set_model' && captured.holdSetModel) {
         await captured.holdSetModel;
       }
@@ -134,13 +148,27 @@ vi.mock('../rpc-client.js', () => ({
       if (cmd.type === 'steer' && captured.failSteer) {
         return { command: 'steer', success: false, error: 'receipt steer rejected' };
       }
+      if (cmd.type === 'prompt' && typeof cmd.message === 'string' &&
+          cmd.message.startsWith('/cindy-native-provider-refresh ')) {
+        const nonce = cmd.message.split(' ')[1];
+        this.onEvent({ type: 'extension_ui_request', method: 'input',
+          title: 'cindy:provider-refresh', id: nonce, placeholder: JSON.stringify({ nonce }) });
+        const response = captured.sent.findLast((message) => message.id === nonce);
+        const snapshot = JSON.parse(String(response?.value ?? '{}'));
+        this.onEvent({ type: 'extension_ui_request', method: 'input',
+          title: 'cindy:provider-refresh-ack', id: `${nonce}-ack`, placeholder: JSON.stringify({
+            nonce, ok: snapshot.nonce === nonce && snapshot.operation === 'inspect',
+            runtimeSettings: { version: '1.0.0', compaction: this.nativeSettings.compaction ?? {} },
+          }) });
+        return { command: 'prompt', success: true };
+      }
       if (cmd.type === 'prompt') captured.onPrompt?.(cmd);
-      if (cmd.type === 'get_commands' && captured.commandCatalog) {
+      if (cmd.type === 'get_commands') {
         return {
           type: 'response',
           command: 'get_commands',
           success: true,
-          data: { commands: captured.commandCatalog },
+          data: { commands: captured.commandCatalog ?? [{ name: 'cindy-native-provider-refresh', source: 'extension' }] },
         } as never;
       }
       if (cmd.type === 'get_state') {
@@ -284,7 +312,6 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
     /** 本会话「已注册」的桥接 MCP server 名(经 preparePiExtraSpawnConfig 下发)。 */
     serverNames?: string[];
     policy?: AgentDeps['getMcpToolApprovalPolicy'];
-    presentation?: AgentDeps['getMcpToolApprovalPresentation'];
   }
 
   function buildDeps(
@@ -294,9 +321,6 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
   ): AgentDeps {
     return {
       ...(mcp?.policy ? { getMcpToolApprovalPolicy: mcp.policy } : {}),
-      ...(mcp?.presentation
-        ? { getMcpToolApprovalPresentation: mcp.presentation }
-        : {}),
       ...(mcp?.serverNames
         ? {
           preparePiExtraSpawnConfig: async (_providers, context) => {
@@ -3204,12 +3228,10 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
         arg === '--extension' ? [captured.args[index + 1]] : []);
       expect(extensionPaths).toEqual(expect.arrayContaining([
         path.posix.join(captured.env.PI_CODING_AGENT_DIR!, 'internal-extensions', 'cindy-bridge.ts'),
-      ]));
-      // Bot 会话是产品人格,不是 coding harness:pi 原生 subagent 面必须不可见,
-      // 项目/全局 AGENTS.md 也不得从 cwd 链被吸进上下文。
-      expect(extensionPaths).not.toEqual(expect.arrayContaining([
         path.posix.join(captured.env.PI_CODING_AGENT_DIR!, 'internal-extensions', 'cindy-subagent.ts'),
       ]));
+      // Bot 共享普通任务的子代理能力，但仍保留独立人格和记忆，
+      // 不从 cwd 链加载项目/全局 AGENTS.md。
       expect(captured.args).toContain('--no-context-files');
       expect(deps.resolvePiGlobalContextHome).not.toHaveBeenCalled();
       const promptIndex = captured.args.indexOf('--append-system-prompt');
@@ -4734,38 +4756,6 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
       id: 'r21',
       confirmed: true,
     });
-  });
-
-  it('uses the host security disclosure for progressive MCP approvals', async () => {
-    const disclosure = {
-      title: 'Allow Xcode to build this project?',
-      description: 'Build scripts may access files outside the project, and output is returned to the Agent.',
-    };
-    const handle = await start('auto', async () => ({ verdict: 'ask' as const }), false, {
-      serverNames: ['cindy_ios_simulator'],
-      policy: () => 'prompt-each-time',
-      presentation: () => disclosure,
-    });
-    const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'deny' }) as const);
-    handle.setInteractionResolver?.(resolver as never);
-
-    firePermissionRequest('r-build', 'mcp__cindy_ios_simulator__call_tool', {
-      name: 'build_app',
-      args: {},
-    });
-
-    expect(await waitForResponse('r-build')).toEqual({
-      type: 'extension_ui_response',
-      id: 'r-build',
-      confirmed: false,
-    });
-    expect(resolver).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'permission',
-        title: disclosure.title,
-        description: disclosure.description,
-      }),
-    );
   });
 
   /**
