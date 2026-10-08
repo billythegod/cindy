@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  Modal,
+  AccessibilityInfo,
+  BackHandler,
   Pressable,
   ScrollView,
   StyleSheet,
   View,
   useWindowDimensions,
+  type Text as RNText,
 } from "react-native";
 import { Text } from "@/components/AppText";
 import Svg, { Circle, Path } from "react-native-svg";
@@ -16,6 +18,7 @@ import {
   recordRunningTokenRate,
   saveCachedRateHistory,
   RATE_SAMPLE_FRESH_MS,
+  type RateHistory,
 } from "@cindy/maker-shared/usage-format";
 import { useTheme, useThemedStyles, type ThemeColors } from "@/theme";
 import {
@@ -27,6 +30,7 @@ import {
   typeScale,
 } from "@/theme/tokens";
 import { usePaneViewport } from "@/platform/AdaptiveWindowContext";
+import { RootOverlay, useOutsideTap } from "@/platform/OutsideTap";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { LayoutRect } from "@/platform/windowGeometry";
 
@@ -51,6 +55,7 @@ export function RunningTokenRatePopover({
   label,
   availableRegion,
   enabled = true,
+  history: managedHistory,
 }: {
   sessionKey: string;
   startedAt: number | null;
@@ -61,6 +66,8 @@ export function RunningTokenRatePopover({
   label: string;
   availableRegion?: LayoutRect;
   enabled?: boolean;
+  /** When the status row already sampled, reuse that history instead of recording twice. */
+  history?: RateHistory;
 }) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
@@ -69,13 +76,15 @@ export function RunningTokenRatePopover({
   const window = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const anchorRef = useRef<View>(null);
-  const [anchor, setAnchor] = useState({ x: 0, y: 0, width: 0 });
+  const triggerRef = useRef<View>(null);
+  // Plain Views are not accessibility elements; focus the card's first label.
+  const cardFocusTarget = useRef<RNText>(null);
+  const [anchor, setAnchor] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [cardHeight, setCardHeight] = useState(0);
   const measureAnchor = () =>
-    anchorRef.current?.measureInWindow((x, y, width) => {
-      setAnchor({ x, y, width });
+    anchorRef.current?.measureInWindow((x, y, width, height) => {
+      setAnchor({ x, y, width, height });
     });
-  const outsideTouch = useRef({ x: 0, y: 0, moved: false });
   // The composer owns region selection, including folds, occlusions and keyboard.
   const region = availableRegion ?? {
     x: insets.left,
@@ -91,10 +100,7 @@ export function RunningTokenRatePopover({
       region.width - spacing.lg * 2,
     ),
   );
-  const maxCardHeight = Math.max(
-    1,
-    region.height - spacing.lg * 2,
-  );
+  const maxCardHeight = Math.max(1, region.height - spacing.lg * 2);
   const cardLeft = Math.max(
     region.x + spacing.lg,
     Math.min(
@@ -129,16 +135,70 @@ export function RunningTokenRatePopover({
       region.height,
     ],
   );
+  // Pinned cards float without a backdrop: the conversation keeps scrolling
+  // underneath, and only a tap outside the card and its trigger closes it.
+  const within = (
+    x: number,
+    y: number,
+    rect: { x: number; y: number; width: number; height: number },
+  ) =>
+    x >= rect.x &&
+    x <= rect.x + rect.width &&
+    y >= rect.y &&
+    y <= rect.y + rect.height;
+  useOutsideTap(
+    mode === "pinned",
+    (x, y) =>
+      within(x, y, anchor) ||
+      within(x, y, {
+        x: cardLeft,
+        y: cardTop,
+        width: cardWidth,
+        height: cardHeight,
+      }),
+    () => {
+      closedByOutsideTap.current = true;
+      setMode("closed");
+    },
+  );
+  // The card is not an accessibility modal, so the chat stays usable. Screen
+  // reader focus moves into it on open and, however it closes, back to the
+  // trigger; only an outside tap keeps focus wherever that tap went.
+  const cardFocused = useRef(false);
+  const closedByOutsideTap = useRef(false);
+  useEffect(() => {
+    if (mode === "pinned") return;
+    if (
+      cardFocused.current &&
+      !closedByOutsideTap.current &&
+      triggerRef.current
+    )
+      AccessibilityInfo.sendAccessibilityEvent(triggerRef.current, "focus");
+    cardFocused.current = false;
+    closedByOutsideTap.current = false;
+  }, [mode]);
+  useEffect(() => {
+    if (mode !== "pinned") return;
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        setMode("closed");
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [mode]);
   const longPressed = useRef(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
-  const [history, setHistory] = useState(() => {
+  const [internalHistory, setInternalHistory] = useState(() => {
     const cached = loadCachedRateHistory(sessionKey);
     return cached
       ? { ...cached, baseline: null, lastReport: null, latestRate: null }
       : emptyRateHistory(null);
   });
   useEffect(() => {
-    setHistory((previous) =>
+    if (managedHistory) return;
+    setInternalHistory((previous) =>
       recordRunningTokenRate(previous, {
         startedAt,
         outputTokens,
@@ -146,10 +206,18 @@ export function RunningTokenRatePopover({
         generationReliable,
       }),
     );
-  }, [startedAt, outputTokens, generationDurationMs, generationReliable]);
+  }, [
+    managedHistory,
+    startedAt,
+    outputTokens,
+    generationDurationMs,
+    generationReliable,
+  ]);
+  const history = managedHistory ?? internalHistory;
   useEffect(() => {
-    saveCachedRateHistory(sessionKey, history);
-  }, [sessionKey, history]);
+    if (managedHistory) return;
+    saveCachedRateHistory(sessionKey, internalHistory);
+  }, [managedHistory, sessionKey, internalHistory]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (history.latestSampleAt === undefined) return;
@@ -196,14 +264,27 @@ export function RunningTokenRatePopover({
       onStartShouldSetResponder={() => true}
       onAccessibilityEscape={() => setMode("closed")}
       testID="session.tokenRate.card"
-      onLayout={(event) => setCardHeight(event.nativeEvent.layout.height)}
+      onLayout={(event) => {
+        setCardHeight(event.nativeEvent.layout.height);
+        if (
+          mode === "pinned" &&
+          !cardFocused.current &&
+          cardFocusTarget.current
+        ) {
+          cardFocused.current = true;
+          AccessibilityInfo.sendAccessibilityEvent(
+            cardFocusTarget.current,
+            "focus",
+          );
+        }
+      }}
       style={[
         styles.card,
         {
           width: cardWidth,
           maxHeight: maxCardHeight,
-          left: cardLeft - (mode === "held" ? anchor.x : 0),
-          top: cardTop - (mode === "held" ? anchor.y : 0),
+          left: cardLeft,
+          top: cardTop,
           opacity: cardHeight > 0 ? 1 : 0,
         },
       ]}
@@ -215,7 +296,9 @@ export function RunningTokenRatePopover({
       >
         <View style={styles.top}>
           <View style={styles.metric}>
-            <Text style={styles.label}>{t("session.screen.currentRate")}</Text>
+            <Text ref={cardFocusTarget} style={styles.label}>
+              {t("session.screen.currentRate")}
+            </Text>
             <Text style={styles.value}>
               {formatTokenRate(recent)}{" "}
               <Text style={styles.label}>
@@ -287,6 +370,7 @@ export function RunningTokenRatePopover({
       onLayout={measureAnchor}
     >
       <Pressable
+        ref={triggerRef}
         accessibilityRole="button"
         accessibilityLabel={label}
         accessibilityState={{ expanded: mode !== "closed" }}
@@ -334,57 +418,15 @@ export function RunningTokenRatePopover({
       >
         {children}
       </Pressable>
-      {mode === "held" && card}
-      <Modal
-        supportedOrientations={[
-          "portrait",
-          "portrait-upside-down",
-          "landscape-left",
-          "landscape-right",
-        ]}
-        visible={mode === "pinned"}
-        transparent
-        animationType="none"
-        statusBarTranslucent
-        navigationBarTranslucent
-        onRequestClose={() => setMode("closed")}
-      >
-        <View style={styles.overlay}>
-          <Pressable
-            testID="session.tokenRate.backdrop"
-            style={StyleSheet.absoluteFill}
-            accessible={false}
-            onPressIn={(event) => {
-              outsideTouch.current = {
-                x: event.nativeEvent.pageX,
-                y: event.nativeEvent.pageY,
-                moved: false,
-              };
-            }}
-            onTouchMove={(event) => {
-              const start = outsideTouch.current;
-              if (
-                Math.hypot(
-                  event.nativeEvent.pageX - start.x,
-                  event.nativeEvent.pageY - start.y,
-                ) > 8
-              )
-                start.moved = true;
-            }}
-            onPress={() => {
-              if (!outsideTouch.current.moved) setMode("closed");
-            }}
-          />
-          {card}
-        </View>
-      </Modal>
+      {/* A window-sized host keeps the card hit-testable on Android, where
+          touches outside a parent's bounds never reach its children. */}
+      {mode !== "closed" && <RootOverlay>{card}</RootOverlay>}
     </View>
   );
 }
 
 const makeStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-    overlay: { flex: 1 },
     anchor: { position: "relative", flexShrink: 0 },
     trigger: {
       minHeight: 44,
@@ -415,12 +457,14 @@ const makeStyles = (colors: ThemeColors) =>
     value: {
       color: colors.textPrimary,
       fontSize: typeScale.headline,
+      lineHeight: lineHeight.headline,
       fontWeight: fontWeight.medium,
       fontVariant: ["tabular-nums"],
     },
     detail: {
       color: colors.textPrimary,
       fontSize: typeScale.caption,
+      lineHeight: lineHeight.caption,
       fontWeight: fontWeight.medium,
       fontVariant: ["tabular-nums"],
     },
