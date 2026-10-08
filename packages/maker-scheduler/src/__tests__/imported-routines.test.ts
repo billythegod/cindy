@@ -93,8 +93,10 @@ it('preserves the saved interval anchor when an edit omits it', async () => {
   const edited = await engine.put('bot', { name: 'Ticker', prompt: 'New report', enabled: true, triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }] }, created.id);
   expect(edited.triggers[0]).toMatchObject({ anchorMs: 10000 });
 
-  // 换 id 的触发器不继承旧锚点(显式重建相位)。
+  // 换 id 的触发器不继承旧锚点(显式重建相位)。收窄后再断言:anchorMs 只在
+  // interval 变体上存在(直取会 TS2339 —— review P1)。
   const rebuilt = await engine.put('bot', { name: 'Ticker', prompt: 'New report', enabled: true, triggers: [{ id: 'fresh', kind: 'interval', intervalMs: 60000 }] }, created.id);
-  expect(rebuilt.triggers[0].anchorMs).toBeUndefined();
+  const rebuiltTrigger = rebuilt.triggers[0];
+  expect(rebuiltTrigger.kind === 'interval' ? rebuiltTrigger.anchorMs : undefined).toBeUndefined();
   await engine.stop();
 });
