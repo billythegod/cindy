@@ -1933,6 +1933,29 @@ describe('ProviderConnectionDialog thinking effort for newly added models', () =
     });
   });
 
+  it('does not apply thinking effort when the toggle is turned off after adding models', async () => {
+    // 添加期不再写入设置;保存期按"保存时的开关状态"统一应用——
+    // 先开、加模型、再关,保存的模型必须保持未声明。
+    const { user } = await renderCreateDialogWithModel();
+    const enable = screen.getByRole('checkbox', {
+      name: 'settings.providers.custom.fields.modelThinkingEnable',
+    });
+    await user.click(enable);
+    await user.click(enable); // 再关掉
+    await user.click(screen.getByRole('button', { name: 'settings.providers.custom.save' }));
+    await waitFor(() =>
+      expect(customProviderMocks.createCustomProvider).toHaveBeenCalledOnce(),
+    );
+    const payload = customProviderMocks.createCustomProvider.mock.calls[0]?.[0];
+    const model = (Object.values(payload.runtimes) as Array<{
+      models?: Array<{ id: string }>;
+    }>)[0]?.models?.find((m) => m.id === 'thinking-model') as
+      | { reasoning?: boolean; reasoningEfforts?: string[]; reasoningDefaultEffort?: string }
+      | undefined;
+    expect(model?.reasoning).toBeUndefined();
+    expect(model?.reasoningEfforts).toBeUndefined();
+  });
+
   it('keeps the declared default tier inside the selected ladder when its tier is deselected', async () => {
     const { user } = await renderCreateDialogWithModel();
     await user.click(

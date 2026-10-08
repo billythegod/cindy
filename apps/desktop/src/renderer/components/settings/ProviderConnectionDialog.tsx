@@ -1520,18 +1520,14 @@ export function ProviderConnectionDialog({
       const contextWindow = latest?.contextWindow ?? m.contextWindow;
       const defaultEnabled = latest?.defaultEnabled ?? m.defaultEnabled;
       const supportsImageInput = latest ? latest.supportsImageInput : m.supportsImageInput;
-      // 思考默认只落到"既无旧行、发现元数据也没声明 reasoning"的新行上:
-      // 已有配置/发现结果优先,避免把用户清掉的档位又加回去。
-      const fallbackThinking = !latest && m.reasoning === undefined ? withThinkingDefaults({}) : {};
-      const reasoning = latest ? latest.reasoning : (m.reasoning ?? fallbackThinking.reasoning);
-      const reasoningEfforts = latest
-        ? latest.reasoningEfforts
-        : (m.reasoningEfforts ?? fallbackThinking.reasoningEfforts);
+      // 思考默认不在添加期写入(保存期对会话新增行统一应用),发现元数据原样保留。
+      const reasoning = latest ? latest.reasoning : m.reasoning;
+      const reasoningEfforts = latest ? latest.reasoningEfforts : m.reasoningEfforts;
       const api = latest ? latest.api : m.api;
       const piApi = latest ? latest.piApi : m.piApi;
       const reasoningDefaultEffort = latest
         ? latest.reasoningDefaultEffort
-        : (m.reasoningDefaultEffort ?? fallbackThinking.reasoningDefaultEffort);
+        : m.reasoningDefaultEffort;
       return {
         id: m.id,
         name: latest?.name.trim() ? latest.name.trim() : m.name,
@@ -1914,6 +1910,9 @@ export function ProviderConnectionDialog({
     showAdvanced,
     savedBaselineFor,
     t,
+    thinkingEnabled,
+    thinkingTiers,
+    thinkingDefault,
   ]);
 
   const saveWithImageGenerationRestartPolicy = useCallback(
@@ -2459,10 +2458,15 @@ export function ProviderConnectionDialog({
                   </FormField>
                   <Button variant="secondary" disabled={!manualModel.trim()} onClick={() => {
                     const ids = [...new Set(manualModel.split(/[,\n]/).map((id) => id.trim()).filter(Boolean))];
-                    for (const id of ids) sessionAddedModelIdsRef.current.add(`${activeTab}:${id}`);
+                    // 只登记真正会新增的 id:重复输入的既有 id(含编辑已有连接时的
+                    // 已保存模型)不是本次新增,保存时不得给它们写推理默认。
+                    const existing = new Set(rtRef.current[activeTab].models.map((m) => m.id));
+                    for (const id of ids) {
+                      if (!existing.has(id)) sessionAddedModelIdsRef.current.add(`${activeTab}:${id}`);
+                    }
                     patch(activeTab, (runtime) => ({ ...runtime, models: [
                       ...runtime.models.filter((model) => model.id.trim()),
-                      ...ids.filter((id) => !runtime.models.some((model) => model.id === id)).map((id) => withThinkingDefaults({ id, name: id }) as ModelRow),
+                      ...ids.filter((id) => !runtime.models.some((model) => model.id === id)).map((id) => ({ id, name: id })),
                     ] }));
                     setManualModel('');
                     setFieldError(null);
@@ -2494,11 +2498,22 @@ export function ProviderConnectionDialog({
                                 onClick={() => {
                                   setThinkingTiers((current) => {
                                     const next = current.filter((value) => value !== tier);
-                                    if (selected) return next.length > 0 ? next : current;
-                                    const ordered = NEW_MODEL_EFFORT_TIERS.filter(
+                                    if (selected) {
+                                      if (next.length === 0) return current;
+                                      // 取消的是当前默认档时同步回落,让下拉框显示值
+                                      // 与保存写入值一致(默认档必须仍在梯子内)。
+                                      if (thinkingDefault === tier) {
+                                        const fallback = defaultEffortForCapabilities(next);
+                                        if (fallback) setThinkingDefault(fallback);
+                                      }
+                                      return NEW_MODEL_EFFORT_TIERS.filter((value) =>
+                                        next.includes(value),
+                                      );
+                                    }
+                                    // 选中分支:next 不含 tier,显式并入后按固定序排列。
+                                    return NEW_MODEL_EFFORT_TIERS.filter(
                                       (value) => value === tier || next.includes(value),
                                     );
-                                    return ordered;
                                   });
                                 }}
                                 className={cn(
@@ -2518,6 +2533,7 @@ export function ProviderConnectionDialog({
                             {t('settings.providers.custom.fields.modelThinkingDefault')}
                           </span>
                           <select
+                            aria-label={t('settings.providers.custom.fields.modelThinkingDefault')}
                             value={thinkingDefault}
                             onChange={(event) => setThinkingDefault(event.currentTarget.value as PiReasoningEffort)}
                             className="h-8 rounded-md border border-[var(--border-default)] bg-[var(--surface-elevated)] px-2 text-12 text-[var(--settings-section-title)]"
